@@ -85,3 +85,41 @@ model User {
   employee    Employee?
   @@map("users")
 }
+
+model Employer {
+  id                String           @id @default(uuid())
+  companyName       String
+  companyCode       String           @unique
+  contactPerson     String
+  email             String
+  phone             String
+  payrollDate       Int
+  payrollCutoffDate Int
+  status            EmployerStatus
+  employees         Employee[]
+  salaryRequests    SalaryRequest[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  @@map("employers")
+}
+
+model Employee {
+  id              String          @id @default(uuid())
+  userId          String?         @unique
+  employerId      String
+  employeeCode    String
+  name            String
+  email           String
+  phone           String
+  salaryInHand    Decimal         @db.Decimal(12,2)
+  joiningDate     DateTime?
+  status          EmployeeStatus  @default(ACTIVE)
+  user            User?           @relation(fields: [userId], references: [id])
+  employer        Employer        @relation(fields: [employerId], references: [id])
+  salaryLimit     SalaryLimit?
+  salaryRequests  SalaryRequest[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  @@unique([employerId, employeeCode])
+  @@map("employees")
+}
