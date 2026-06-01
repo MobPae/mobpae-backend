@@ -6,3 +6,68 @@ datasource db {
   provider = "postgresql"
   url = env("DATABASE_URL")
 }
+
+enum Role {
+  ADMIN
+  EMPLOYER
+  EMPLOYEE
+}
+
+enum EmployerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ACTIVE
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SalaryRequestStatus {
+  SUBMITTED
+  EMPLOYER_APPROVED
+  EMPLOYER_REJECTED
+  READY_FOR_DISBURSAL
+  DISBURSED
+  REPAYMENT_SCHEDULED
+  REPAID
+}
+
+enum DisbursalStatus {
+  PENDING
+  DISBURSED
+  FAILED
+}
+
+enum RepaymentStatus {
+  SCHEDULED
+  PAID
+  OVERDUE
+}
+
+enum NotificationType {
+  SYSTEM
+  EMAIL
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum EmployerEnquiryStatus {
+  NEW
+  CONTACTED
+  APPROVED
+  REJECTED
+}
+
+enum KycDocumentType {
+  AADHAR
+  PAN
+  SALARY_SLIP
+  OTHER
+}
