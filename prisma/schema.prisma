@@ -183,3 +183,56 @@ model Repayment {
   @@map("repayments")
 }
 
+model EmployerEnquiry {
+  id               String                 @id @default(uuid())
+  companyName      String
+  contactPerson    String
+  email            String
+  phone            String
+  employeeCount    Int?
+  status           EmployerEnquiryStatus  @default(NEW)
+  remarks          String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  @@map("employer_enquiries")xs
+}
+
+model Notification {
+  id               String            @id @default(uuid())
+  userId           String
+  title            String
+  message          String
+  type             NotificationType
+  isRead           Boolean           @default(false)
+  user             User              @relation(fields: [userId], references: [id])
+  createdAt        DateTime          @default(now())
+  @@map("notifications")
+}
+
+model AuditLog {
+  id               String      @id @default(uuid())
+  userId           String?
+  action           String
+  entityType       String
+  entityId         String
+  oldValue         Json?
+  newValue         Json?
+  user             User?       @relation(fields: [userId], references: [id])
+  createdAt        DateTime    @default(now())
+  @@map("audit_logs")
+}
+
+model KycDocument {
+  id               String            @id @default(uuid())
+  employeeId       String
+  documentType     KycDocumentType
+  filePath         String
+  status           KycStatus         @default(PENDING)
+  verifiedBy       String?
+  verifiedAt       DateTime?
+  employee         Employee          @relation(fields: [employeeId], references: [id])
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  @@map("kyc_documents")
+}
+
