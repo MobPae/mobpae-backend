@@ -12,9 +12,10 @@ import { RepaymentsModule } from './repayments/repayments.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { CommonModule } from './common/common.module';
+import { EmployerEnquiriesModule } from './employer-enquiries/employer-enquiries.module';
 
 @Module({
-  imports: [AuthModule, UsersModule, EmployersModule, EmployeesModule, SalaryRequestsModule, SalaryLimitsModule, DisbursalsModule, RepaymentsModule, NotificationsModule, AuditLogsModule, CommonModule],
+  imports: [AuthModule, UsersModule, EmployersModule, EmployeesModule, SalaryRequestsModule, SalaryLimitsModule, DisbursalsModule, RepaymentsModule, NotificationsModule, AuditLogsModule, CommonModule, EmployerEnquiriesModule],
   controllers: [AppController],
   providers: [AppService],
 })
