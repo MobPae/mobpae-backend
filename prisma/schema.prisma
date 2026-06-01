@@ -71,3 +71,9 @@ enum KycDocumentType {
   SALARY_SLIP
   OTHER
 }
+
+enum NotificationType {
+  SYSTEM
+  EMAIL
+  SMS
+}
