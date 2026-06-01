@@ -47,11 +47,6 @@ enum RepaymentStatus {
   OVERDUE
 }
 
-enum NotificationType {
-  SYSTEM
-  EMAIL
-}
-
 enum KycStatus {
   PENDING
   VERIFIED
@@ -76,4 +71,17 @@ enum NotificationType {
   SYSTEM
   EMAIL
   SMS
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String
+  role        Role
+  isActive    Boolean  @default(true)
+  lastLogin   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  employee    Employee?
+  @@map("users")
 }
