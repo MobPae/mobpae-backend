@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -74,165 +74,185 @@ enum NotificationType {
 }
 
 model User {
-  id          String   @id @default(uuid())
-  email       String   @unique
-  password    String
-  role        Role
-  isActive    Boolean  @default(true)
-  lastLogin   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  employee    Employee?
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  role          Role
+  isActive      Boolean        @default(true)
+  lastLogin     DateTime?
+  employee      Employee?
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
   @@map("users")
 }
 
 model Employer {
-  id                String           @id @default(uuid())
+  id                String          @id @default(uuid())
   companyName       String
-  companyCode       String           @unique
+  companyCode       String          @unique
   contactPerson     String
-  email             String
+  email             String          @unique
   phone             String
   payrollDate       Int
   payrollCutoffDate Int
-  status            EmployerStatus
+  status            EmployerStatus  @default(PENDING)
   employees         Employee[]
   salaryRequests    SalaryRequest[]
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
   @@map("employers")
 }
 
 model Employee {
-  id              String          @id @default(uuid())
-  userId          String?         @unique
-  employerId      String
-  employeeCode    String
-  name            String
-  email           String
-  phone           String
-  salaryInHand    Decimal         @db.Decimal(12,2)
-  joiningDate     DateTime?
-  status          EmployeeStatus  @default(ACTIVE)
-  user            User?           @relation(fields: [userId], references: [id])
-  employer        Employer        @relation(fields: [employerId], references: [id])
-  salaryLimit     SalaryLimit?
-  salaryRequests  SalaryRequest[]
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  id             String          @id @default(uuid())
+  userId         String?         @unique
+  employerId     String
+  employeeCode   String
+  name           String
+  email          String
+  phone          String
+  salaryInHand   Decimal         @db.Decimal(12, 2)
+  joiningDate    DateTime?
+  status         EmployeeStatus  @default(ACTIVE)
+  user           User?           @relation(fields: [userId], references: [id])
+  employer       Employer        @relation(fields: [employerId], references: [id])
+  salaryLimit    SalaryLimit?
+  salaryRequests SalaryRequest[]
+  kycDocuments   KycDocument[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
   @@unique([employerId, employeeCode])
+  @@index([employerId])
   @@map("employees")
 }
 
 model SalaryLimit {
-  id                 String    @id @default(uuid())
-  employeeId         String    @unique
-  approvedLimit      Decimal   @db.Decimal(12,2)
+  id                  String   @id @default(uuid())
+  employeeId          String   @unique
+  approvedLimit       Decimal  @db.Decimal(12, 2)
   maxRequestsPerCycle Int      @default(1)
-  cooldownDays       Int       @default(0)
-  employee           Employee  @relation(fields: [employeeId], references: [id])
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  cooldownDays        Int      @default(0)
+  employee            Employee @relation(fields: [employeeId], references: [id])
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
   @@map("salary_limits")
 }
 
 model SalaryRequest {
-  id                String               @id @default(uuid())
-  employeeId        String
-  employerId        String
-  amount            Decimal              @db.Decimal(12,2)
-  reason            String?
-  remarks           String?
-  requestedAt       DateTime             @default(now())
-  repaymentDate     DateTime?
-  status            SalaryRequestStatus  @default(SUBMITTED)
-  employee          Employee             @relation(fields: [employeeId], references: [id])
-  employer          Employer             @relation(fields: [employerId], references: [id])
-  disbursal         Disbursal?
-  repayment         Repayment?
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
+  id             String              @id @default(uuid())
+  employeeId     String
+  employerId     String
+  amount         Decimal             @db.Decimal(12, 2)
+  approvedAmount Decimal?            @db.Decimal(12, 2)
+  approvedBy     String?
+  approvedAt     DateTime?
+  reason         String?
+  remarks        String?
+  requestedAt    DateTime            @default(now())
+  repaymentDate  DateTime?
+  status         SalaryRequestStatus @default(SUBMITTED)
+  employee       Employee            @relation(fields: [employeeId], references: [id])
+  employer       Employer            @relation(fields: [employerId], references: [id])
+  disbursal      Disbursal?
+  repayment      Repayment?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([employeeId])
+  @@index([employerId])
+  @@index([status])
   @@map("salary_requests")
 }
 
 model Disbursal {
-  id               String           @id @default(uuid())
-  salaryRequestId  String           @unique
-  amount           Decimal          @db.Decimal(12,2)
-  disbursedBy      String?
-  disbursedAt      DateTime?
-  status           DisbursalStatus  @default(PENDING)
-  remarks          String?
-  salaryRequest    SalaryRequest    @relation(fields: [salaryRequestId], references: [id])
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  id              String          @id @default(uuid())
+  salaryRequestId String          @unique
+  amount          Decimal         @db.Decimal(12, 2)
+  disbursedBy     String?
+  disbursedAt     DateTime?
+  status          DisbursalStatus @default(PENDING)
+  remarks         String?
+  salaryRequest   SalaryRequest   @relation(fields: [salaryRequestId], references: [id])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
   @@map("disbursals")
 }
 
 model Repayment {
-  id               String            @id @default(uuid())
-  salaryRequestId  String            @unique
-  amount           Decimal           @db.Decimal(12,2)
-  dueDate          DateTime
-  paidDate         DateTime?
-  status           RepaymentStatus   @default(SCHEDULED)
-  remarks          String?
-  salaryRequest    SalaryRequest     @relation(fields: [salaryRequestId], references: [id])
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id              String          @id @default(uuid())
+  salaryRequestId String          @unique
+  amount          Decimal         @db.Decimal(12, 2)
+  dueDate         DateTime
+  paidDate        DateTime?
+  status          RepaymentStatus @default(SCHEDULED)
+  remarks         String?
+  salaryRequest   SalaryRequest   @relation(fields: [salaryRequestId], references: [id])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
   @@map("repayments")
 }
 
 model EmployerEnquiry {
-  id               String                 @id @default(uuid())
-  companyName      String
-  contactPerson    String
-  email            String
-  phone            String
-  employeeCount    Int?
-  status           EmployerEnquiryStatus  @default(NEW)
-  remarks          String?
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
-  @@map("employer_enquiries")xs
+  id            String                @id @default(uuid())
+  companyName   String
+  contactPerson String
+  email         String
+  phone         String
+  employeeCount Int?
+  status        EmployerEnquiryStatus @default(NEW)
+  remarks       String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@map("employer_enquiries")
 }
 
 model Notification {
-  id               String            @id @default(uuid())
-  userId           String
-  title            String
-  message          String
-  type             NotificationType
-  isRead           Boolean           @default(false)
-  user             User              @relation(fields: [userId], references: [id])
-  createdAt        DateTime          @default(now())
+  id        String           @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      NotificationType @default(SYSTEM)
+  isRead    Boolean          @default(false)
+  user      User             @relation(fields: [userId], references: [id])
+  createdAt DateTime         @default(now())
+
   @@map("notifications")
 }
 
 model AuditLog {
-  id               String      @id @default(uuid())
-  userId           String?
-  action           String
-  entityType       String
-  entityId         String
-  oldValue         Json?
-  newValue         Json?
-  user             User?       @relation(fields: [userId], references: [id])
-  createdAt        DateTime    @default(now())
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  user       User?    @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now())
+
   @@map("audit_logs")
 }
 
 model KycDocument {
-  id               String            @id @default(uuid())
-  employeeId       String
-  documentType     KycDocumentType
-  filePath         String
-  status           KycStatus         @default(PENDING)
-  verifiedBy       String?
-  verifiedAt       DateTime?
-  employee         Employee          @relation(fields: [employeeId], references: [id])
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id           String          @id @default(uuid())
+  employeeId   String
+  documentType KycDocumentType
+  filePath     String
+  status       KycStatus       @default(PENDING)
+  verifiedBy   String?
+  verifiedAt   DateTime?
+  employee     Employee        @relation(fields: [employeeId], references: [id])
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
   @@map("kyc_documents")
 }
-
