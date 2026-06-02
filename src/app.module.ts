@@ -25,6 +25,7 @@ import { EmployerEnquiriesModule } from './employer-enquiries/employer-enquiries
 
 import { CommonModule } from './common/common.module';
 import { KycDocumentsModule } from './kyc-documents/kyc-documents.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -54,6 +55,8 @@ import { KycDocumentsModule } from './kyc-documents/kyc-documents.module';
     CommonModule,
 
     KycDocumentsModule,
+
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
