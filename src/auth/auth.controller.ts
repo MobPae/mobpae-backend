@@ -5,6 +5,10 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
+import { Role } from '../common/enums/role.enum';
+import { Roles } from './decorators/roles.decorator';
+import { RolesGuard } from './guards/roles.guard';
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -18,5 +22,14 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   getProfile(@Req() req: any) {
     return req.user;
+  }
+
+  @Get('admin-test')
+  @Roles(Role.ADMIN)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  adminTest() {
+    return {
+      message: 'Admin access granted',
+    };
   }
 }
