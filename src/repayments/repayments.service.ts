@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-
 import { PrismaService } from '../prisma/prisma.service';
-
 import { CreateRepaymentDto } from './dto/create-repayment.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class RepaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(dto: CreateRepaymentDto) {
     const salaryRequest = await this.prisma.salaryRequest.findUnique({
@@ -55,11 +57,11 @@ export class RepaymentsService {
    * 1. Validate repayment exists.
    * 2. Mark repayment as PAID.
    * 3. Update salary request status to REPAID.
+   * 4. Notify employee.
    *
    * Result:
    * Employee becomes eligible for future requests.
    */
-
   async pay(id: string) {
     const repayment = await this.prisma.repayment.update({
       where: {
@@ -79,6 +81,23 @@ export class RepaymentsService {
         status: 'REPAID',
       },
     });
+
+    const salaryRequest = await this.prisma.salaryRequest.findUnique({
+      where: {
+        id: repayment.salaryRequestId,
+      },
+      include: {
+        employee: true,
+      },
+    });
+
+    if (salaryRequest?.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        salaryRequest.employee.userId,
+        'Repayment Completed',
+        'Your salary advance repayment has been completed successfully.',
+      );
+    }
 
     return repayment;
   }

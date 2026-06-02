@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-
 import { PrismaService } from '../prisma/prisma.service';
-
 import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SalaryRequestsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Creates a salary advance request.
@@ -87,13 +89,26 @@ export class SalaryRequestsService {
    * 1. Validate request exists.
    * 2. Validate request is in SUBMITTED status.
    * 3. Update status to EMPLOYER_APPROVED.
+   * 4. Notify employee.
    *
    * Result:
    * Request becomes eligible for disbursal.
    */
-
   async approve(id: string) {
-    return this.prisma.salaryRequest.update({
+    const request = await this.prisma.salaryRequest.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        employee: true,
+      },
+    });
+
+    if (!request) {
+      throw new BadRequestException('Salary request not found');
+    }
+
+    const updatedRequest = await this.prisma.salaryRequest.update({
       where: {
         id,
       },
@@ -101,5 +116,15 @@ export class SalaryRequestsService {
         status: 'EMPLOYER_APPROVED',
       },
     });
+
+    if (request.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        request.employee.userId,
+        'Salary Request Approved',
+        'Your salary advance request has been approved.',
+      );
+    }
+
+    return updatedRequest;
   }
 }

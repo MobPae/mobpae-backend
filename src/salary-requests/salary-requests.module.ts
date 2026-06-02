@@ -4,9 +4,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 
 import { SalaryRequestsController } from './salary-requests.controller';
 import { SalaryRequestsService } from './salary-requests.service';
+import { NotificationsModule } from 'src/notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, NotificationsModule],
   controllers: [SalaryRequestsController],
   providers: [SalaryRequestsService],
 })
