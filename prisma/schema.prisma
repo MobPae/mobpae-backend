@@ -121,6 +121,7 @@ model Employee {
   user           User?           @relation(fields: [userId], references: [id])
   employer       Employer        @relation(fields: [employerId], references: [id])
   salaryLimit    SalaryLimit?
+  bankAccount    EmployeeBankAccount?
   salaryRequests SalaryRequest[]
   kycDocuments   KycDocument[]
   createdAt      DateTime        @default(now())
@@ -129,6 +130,21 @@ model Employee {
   @@unique([employerId, employeeCode])
   @@index([employerId])
   @@map("employees")
+}
+
+model EmployeeBankAccount {
+  id                String    @id @default(uuid())
+  employeeId        String    @unique
+  accountHolderName String
+  accountNumber     String
+  ifscCode          String
+  bankName          String?
+  upiId             String?
+  verified          Boolean   @default(false)
+  employee          Employee  @relation(fields: [employeeId], references: [id])
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  @@map("employee_bank_accounts")
 }
 
 model SalaryLimit {
