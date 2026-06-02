@@ -1,12 +1,16 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 import { CreateSalaryLimitDto } from './dto/create-salary-limit.dto';
 
 @Injectable()
 export class SalaryLimitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Creates a salary limit for an employee.
@@ -20,7 +24,6 @@ export class SalaryLimitsService {
    * 4. Employee bank account must be verified by Admin.
    * Only after all validations pass, a salary limit record is created for the employee.
    */
-
   async create(dto: CreateSalaryLimitDto) {
     const verifiedDocs = await this.prisma.kycDocument.findMany({
       where: {
@@ -64,7 +67,7 @@ export class SalaryLimitsService {
       throw new BadRequestException('Employee bank account is not verified');
     }
 
-    return this.prisma.salaryLimit.create({
+    const salaryLimit = await this.prisma.salaryLimit.create({
       data: {
         employeeId: dto.employeeId,
         approvedLimit: dto.approvedLimit,
@@ -72,8 +75,27 @@ export class SalaryLimitsService {
         cooldownDays: dto.cooldownDays,
       },
     });
+
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        id: dto.employeeId,
+      },
+    });
+
+    if (employee?.userId) {
+      await this.notificationsService.createSystemNotification(
+        employee.userId,
+        'Salary Limit Assigned',
+        `Your salary advance limit of ₹${dto.approvedLimit} has been approved.`,
+      );
+    }
+
+    return salaryLimit;
   }
 
+  /**
+   * Retrieves salary limit details for an employee.
+   */
   async findByEmployee(employeeId: string) {
     return this.prisma.salaryLimit.findUnique({
       where: {
