@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-
 import { PrismaService } from '../prisma/prisma.service';
-
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class DisbursalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(dto: CreateDisbursalDto) {
     const salaryRequest = await this.prisma.salaryRequest.findUnique({
@@ -47,11 +49,11 @@ export class DisbursalsService {
    * 2. Validate status is PENDING.
    * 3. Mark disbursal as DISBURSED.
    * 4. Update salary request status.
+   * 5. Notify employee.
    *
    * Result:
    * Employee receives advance salary.
    */
-
   async disburse(id: string) {
     const disbursal = await this.prisma.disbursal.update({
       where: {
@@ -71,6 +73,23 @@ export class DisbursalsService {
         status: 'DISBURSED',
       },
     });
+
+    const salaryRequest = await this.prisma.salaryRequest.findUnique({
+      where: {
+        id: disbursal.salaryRequestId,
+      },
+      include: {
+        employee: true,
+      },
+    });
+
+    if (salaryRequest?.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        salaryRequest.employee.userId,
+        'Salary Disbursed',
+        `₹${disbursal.amount} has been disbursed to your registered bank account.`,
+      );
+    }
 
     return disbursal;
   }
