@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateEmployerEnquiryDto } from './dto/create-employer-enquiry.dto';
 import { ApproveEmployerEnquiryDto } from './dto/approve-employer-enquiry.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class EmployerEnquiriesService {
@@ -38,6 +39,16 @@ export class EmployerEnquiriesService {
       throw new Error('Enquiry not found');
     }
 
+    const existingUser = await this.prisma.user.findUnique({
+      where: {
+        email: enquiry.email,
+      },
+    });
+
+    if (existingUser) {
+      throw new Error('User already exists');
+    }
+
     const employer = await this.prisma.employer.create({
       data: {
         companyName: enquiry.companyName,
@@ -51,6 +62,19 @@ export class EmployerEnquiriesService {
       },
     });
 
+    const defaultPassword = 'MobPae@123';
+
+    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+    await this.prisma.user.create({
+      data: {
+        email: enquiry.email,
+        password: hashedPassword,
+        role: 'EMPLOYER',
+        isActive: true,
+      },
+    });
+
     await this.prisma.employerEnquiry.update({
       where: { id },
       data: {
@@ -58,6 +82,12 @@ export class EmployerEnquiriesService {
       },
     });
 
-    return employer;
+    return {
+      employer,
+      credentials: {
+        email: enquiry.email,
+        password: defaultPassword,
+      },
+    };
   }
 }
