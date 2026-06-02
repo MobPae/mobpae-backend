@@ -1,8 +1,13 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
-
 import { EmployerEnquiriesService } from './employer-enquiries.service';
-
 import { CreateEmployerEnquiryDto } from './dto/create-employer-enquiry.dto';
+import { UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '../common/enums/role.enum';
+import { Param } from '@nestjs/common';
+import { ApproveEmployerEnquiryDto } from './dto/approve-employer-enquiry.dto';
 
 @Controller('employer-enquiries')
 export class EmployerEnquiriesController {
@@ -19,7 +24,16 @@ export class EmployerEnquiriesController {
   }
 
   @Get()
+  @Roles(Role.ADMIN)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   findAll() {
     return this.employerEnquiriesService.findAll();
+  }
+
+  @Post(':id/approve')
+  @Roles(Role.ADMIN)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  approve(@Param('id') id: string, @Body() dto: ApproveEmployerEnquiryDto) {
+    return this.employerEnquiriesService.approve(id, dto);
   }
 }
