@@ -8,7 +8,10 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
 import { Param } from '@nestjs/common';
 import { ApproveEmployerEnquiryDto } from './dto/approve-employer-enquiry.dto';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Employer Enquiries')
+@ApiBearerAuth()
 @Controller('employer-enquiries')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EmployerEnquiriesController {

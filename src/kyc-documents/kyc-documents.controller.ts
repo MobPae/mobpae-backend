@@ -1,15 +1,14 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-
 import { KycDocumentsService } from './kyc-documents.service';
-
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
-
 import { UseGuards } from '@nestjs/common';
-
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('KYC Documents')
+@ApiBearerAuth()
 @Controller('kyc-documents')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class KycDocumentsController {

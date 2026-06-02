@@ -1,15 +1,14 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-
 import { SalaryLimitsService } from './salary-limits.service';
-
 import { CreateSalaryLimitDto } from './dto/create-salary-limit.dto';
-
 import { UseGuards } from '@nestjs/common';
-
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Salary Limits')
+@ApiBearerAuth()
 @Controller('salary-limits')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SalaryLimitsController {
