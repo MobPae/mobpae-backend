@@ -10,6 +10,7 @@ import { Param } from '@nestjs/common';
 import { ApproveEmployerEnquiryDto } from './dto/approve-employer-enquiry.dto';
 
 @Controller('employer-enquiries')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class EmployerEnquiriesController {
   constructor(
     private readonly employerEnquiriesService: EmployerEnquiriesService,
@@ -25,14 +26,12 @@ export class EmployerEnquiriesController {
 
   @Get()
   @Roles(Role.ADMIN)
-  @UseGuards(JwtAuthGuard, RolesGuard)
   findAll() {
     return this.employerEnquiriesService.findAll();
   }
 
   @Post(':id/approve')
   @Roles(Role.ADMIN)
-  @UseGuards(JwtAuthGuard, RolesGuard)
   approve(@Param('id') id: string, @Body() dto: ApproveEmployerEnquiryDto) {
     return this.employerEnquiriesService.approve(id, dto);
   }
