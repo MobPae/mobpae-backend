@@ -1,7 +1,5 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
-
+import { Body, Controller, Get, Post, Param } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
-
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 
 @Controller('employees')
@@ -19,5 +17,10 @@ export class EmployeesController {
   @Get()
   findAll() {
     return this.employeesService.findAll();
+  }
+
+  @Get(':id/kyc-status')
+  getKycStatus(@Param('id') id: string) {
+    return this.employeesService.getKycStatus(id);
   }
 }

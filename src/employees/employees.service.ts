@@ -72,4 +72,28 @@ export class EmployeesService {
       },
     });
   }
+
+  async getKycStatus(employeeId: string) {
+    const documents = await this.prisma.kycDocument.findMany({
+      where: {
+        employeeId,
+        status: 'VERIFIED',
+      },
+    });
+
+    const pan = documents.some((doc) => doc.documentType === 'PAN');
+
+    const aadhar = documents.some((doc) => doc.documentType === 'AADHAR');
+
+    const salarySlip = documents.some(
+      (doc) => doc.documentType === 'SALARY_SLIP',
+    );
+
+    return {
+      pan,
+      aadhar,
+      salarySlip,
+      kycCompleted: pan && aadhar && salarySlip,
+    };
+  }
 }

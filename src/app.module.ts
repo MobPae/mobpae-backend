@@ -24,6 +24,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { EmployerEnquiriesModule } from './employer-enquiries/employer-enquiries.module';
 
 import { CommonModule } from './common/common.module';
+import { KycDocumentsModule } from './kyc-documents/kyc-documents.module';
 
 @Module({
   imports: [
@@ -51,6 +52,8 @@ import { CommonModule } from './common/common.module';
     EmployerEnquiriesModule,
 
     CommonModule,
+
+    KycDocumentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
