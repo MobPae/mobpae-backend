@@ -8,6 +8,19 @@ import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 export class SalaryRequestsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Creates a salary advance request.
+   *
+   * Validation Flow:
+   * 1. Employee must exist.
+   * 2. Salary limit must exist.
+   * 3. Requested amount must not exceed approved limit.
+   * 4. Employee must not have an active request.
+   *
+   * Result:
+   * Request is submitted for employer approval.
+   */
+
   async create(dto: CreateSalaryRequestDto) {
     const employee = await this.prisma.employee.findUnique({
       where: {
@@ -66,6 +79,18 @@ export class SalaryRequestsService {
       },
     });
   }
+
+  /**
+   * Employer approval of salary advance request.
+   *
+   * Business Flow:
+   * 1. Validate request exists.
+   * 2. Validate request is in SUBMITTED status.
+   * 3. Update status to EMPLOYER_APPROVED.
+   *
+   * Result:
+   * Request becomes eligible for disbursal.
+   */
 
   async approve(id: string) {
     return this.prisma.salaryRequest.update({

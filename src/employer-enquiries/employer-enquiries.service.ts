@@ -30,6 +30,19 @@ export class EmployerEnquiriesService {
     });
   }
 
+  /**
+   * Approves an employer enquiry.
+   *
+   * Business Flow:
+   * 1. Validate enquiry exists.
+   * 2. Create Employer record.
+   * 3. Create Employer User account.
+   * 4. Assign default password.
+   * 5. Mark enquiry as APPROVED.
+   *
+   * Result: Employer can login and start onboarding employees.
+   */
+
   async approve(id: string, dto: ApproveEmployerEnquiryDto) {
     const enquiry = await this.prisma.employerEnquiry.findUnique({
       where: { id },

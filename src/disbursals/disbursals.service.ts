@@ -39,6 +39,19 @@ export class DisbursalsService {
     });
   }
 
+  /**
+   * Marks a salary advance as disbursed.
+   *
+   * Business Flow:
+   * 1. Validate disbursal exists.
+   * 2. Validate status is PENDING.
+   * 3. Mark disbursal as DISBURSED.
+   * 4. Update salary request status.
+   *
+   * Result:
+   * Employee receives advance salary.
+   */
+
   async disburse(id: string) {
     const disbursal = await this.prisma.disbursal.update({
       where: {

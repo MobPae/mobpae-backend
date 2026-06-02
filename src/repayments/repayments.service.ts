@@ -48,6 +48,18 @@ export class RepaymentsService {
     });
   }
 
+  /**
+   * Marks repayment as completed.
+   *
+   * Business Flow:
+   * 1. Validate repayment exists.
+   * 2. Mark repayment as PAID.
+   * 3. Update salary request status to REPAID.
+   *
+   * Result:
+   * Employee becomes eligible for future requests.
+   */
+
   async pay(id: string) {
     const repayment = await this.prisma.repayment.update({
       where: {
