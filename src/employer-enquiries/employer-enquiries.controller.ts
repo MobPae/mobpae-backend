@@ -38,4 +38,10 @@ export class EmployerEnquiriesController {
   approve(@Param('id') id: string, @Body() dto: ApproveEmployerEnquiryDto) {
     return this.employerEnquiriesService.approve(id, dto);
   }
+
+  @Post(':id/reject')
+  @Roles(Role.ADMIN)
+  reject(@Param('id') id: string) {
+    return this.employerEnquiriesService.reject(id);
+  }
 }

@@ -103,4 +103,21 @@ export class EmployerEnquiriesService {
       },
     };
   }
+
+  async reject(id: string) {
+    const enquiry = await this.prisma.employerEnquiry.findUnique({
+      where: { id },
+    });
+
+    if (!enquiry) {
+      throw new Error('Enquiry not found');
+    }
+
+    return this.prisma.employerEnquiry.update({
+      where: { id },
+      data: {
+        status: 'REJECTED',
+      },
+    });
+  }
 }
