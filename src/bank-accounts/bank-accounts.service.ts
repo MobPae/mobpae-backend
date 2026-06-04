@@ -58,4 +58,19 @@ export class BankAccountsService {
       },
     });
   }
+
+  async findAllForAdmin() {
+    return this.prisma.employeeBankAccount.findMany({
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
 }

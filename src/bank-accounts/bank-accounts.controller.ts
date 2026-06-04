@@ -22,6 +22,11 @@ export class BankAccountsController {
     return this.bankAccountsService.create(dto);
   }
 
+  @Get()
+  @Roles('ADMIN')
+  findAll() {
+    return this.bankAccountsService.findAllForAdmin();
+  }
   @Get('employee/:employeeId')
   @Roles('ADMIN', 'EMPLOYEE')
   findByEmployee(@Param('employeeId') employeeId: string) {

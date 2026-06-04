@@ -273,3 +273,12 @@ model KycDocument {
 
   @@map("kyc_documents")
 }
+
+model Setting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("settings")
+}

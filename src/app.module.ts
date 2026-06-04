@@ -27,6 +27,7 @@ import { CommonModule } from './common/common.module';
 import { KycDocumentsModule } from './kyc-documents/kyc-documents.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -60,6 +61,8 @@ import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
     DashboardModule,
 
     BankAccountsModule,
+
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
