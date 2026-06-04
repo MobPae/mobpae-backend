@@ -101,4 +101,23 @@ export class RepaymentsService {
 
     return repayment;
   }
+
+  async findAllForAdmin() {
+    return this.prisma.repayment.findMany({
+      include: {
+        salaryRequest: {
+          include: {
+            employee: {
+              include: {
+                employer: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
 }

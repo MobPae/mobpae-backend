@@ -5,7 +5,7 @@ import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Salary Requests')
 @ApiBearerAuth()
@@ -21,6 +21,15 @@ export class SalaryRequestsController {
     dto: CreateSalaryRequestDto,
   ) {
     return this.salaryRequestsService.create(dto);
+  }
+
+  @Roles('ADMIN')
+  @Get()
+  @ApiOperation({
+    summary: 'Get all salary requests for admin',
+  })
+  findAllForAdmin() {
+    return this.salaryRequestsService.findAllForAdmin();
   }
 
   @Get('employee/:employeeId')

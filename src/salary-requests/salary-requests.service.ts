@@ -82,6 +82,23 @@ export class SalaryRequestsService {
     });
   }
 
+  async findAllForAdmin() {
+    return this.prisma.salaryRequest.findMany({
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+        disbursal: true,
+        repayment: true,
+      },
+      orderBy: {
+        requestedAt: 'desc',
+      },
+    });
+  }
+
   /**
    * Employer approval of salary advance request.
    *

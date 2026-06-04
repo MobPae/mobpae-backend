@@ -33,10 +33,21 @@ export class DisbursalsService {
     });
   }
 
-  async findAll() {
+  async findAllForAdmin() {
     return this.prisma.disbursal.findMany({
       include: {
-        salaryRequest: true,
+        salaryRequest: {
+          include: {
+            employee: {
+              include: {
+                employer: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
       },
     });
   }

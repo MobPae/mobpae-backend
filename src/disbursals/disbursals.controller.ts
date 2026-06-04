@@ -26,7 +26,7 @@ export class DisbursalsController {
   @Get()
   @Roles('ADMIN')
   findAll() {
-    return this.disbursalsService.findAll();
+    return this.disbursalsService.findAllForAdmin();
   }
 
   @Post(':id/disburse')

@@ -18,6 +18,7 @@ enum EmployerStatus {
   APPROVED
   REJECTED
   ACTIVE
+  SUSPENDED
 }
 
 enum EmployeeStatus {

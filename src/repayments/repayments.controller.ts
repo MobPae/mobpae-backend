@@ -23,6 +23,12 @@ export class RepaymentsController {
     return this.repaymentsService.create(dto);
   }
 
+  @Get()
+  @Roles('ADMIN')
+  findAll() {
+    return this.repaymentsService.findAllForAdmin();
+  }
+
   @Get('employee/:employeeId')
   @Roles('ADMIN', 'EMPLOYEE')
   findByEmployee(@Param('employeeId') employeeId: string) {
