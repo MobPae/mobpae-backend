@@ -80,10 +80,14 @@ model User {
   password      String
   role          Role
   isActive      Boolean        @default(true)
-  lastLogin     DateTime?
+
+  employer      Employer?
   employee      Employee?
+
   notifications Notification[]
   auditLogs     AuditLog[]
+
+  lastLogin     DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -91,7 +95,10 @@ model User {
 }
 
 model Employer {
-  id                String          @id @default(uuid())
+  id                String    @id @default(uuid())
+  userId            String    @unique
+  user              User     @relation(fields: [userId], references: [id])
+
   companyName       String
   companyCode       String          @unique
   contactPerson     String
@@ -99,9 +106,12 @@ model Employer {
   phone             String
   payrollDate       Int
   payrollCutoffDate Int
+
   status            EmployerStatus  @default(PENDING)
+
   employees         Employee[]
   salaryRequests    SalaryRequest[]
+
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

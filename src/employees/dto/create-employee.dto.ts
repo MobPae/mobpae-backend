@@ -1,9 +1,7 @@
 import { IsEmail, IsNumber, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateEmployeeDto {
-  @IsString()
-  employerId: string;
-
   @IsString()
   employeeCode: string;
 
@@ -16,6 +14,7 @@ export class CreateEmployeeDto {
   @IsString()
   phone: string;
 
+  @Type(() => Number)
   @IsNumber()
   salaryInHand: number;
 }

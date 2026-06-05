@@ -42,7 +42,6 @@ export class EmployerEnquiriesService {
    *
    * Result: Employer can login and start onboarding employees.
    */
-
   async approve(id: string, dto: ApproveEmployerEnquiryDto) {
     const enquiry = await this.prisma.employerEnquiry.findUnique({
       where: { id },
@@ -62,29 +61,34 @@ export class EmployerEnquiriesService {
       throw new Error('User already exists');
     }
 
-    const employer = await this.prisma.employer.create({
-      data: {
-        companyName: enquiry.companyName,
-        contactPerson: enquiry.contactPerson,
-        email: enquiry.email,
-        phone: enquiry.phone,
-        companyCode: dto.companyCode,
-        payrollDate: dto.payrollDate,
-        payrollCutoffDate: dto.payrollCutoffDate,
-        status: 'ACTIVE',
-      },
-    });
-
     const defaultPassword = 'MobPae@123';
 
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-    await this.prisma.user.create({
+    const user = await this.prisma.user.create({
       data: {
         email: enquiry.email,
         password: hashedPassword,
         role: 'EMPLOYER',
         isActive: true,
+      },
+    });
+
+    const employer = await this.prisma.employer.create({
+      data: {
+        userId: user.id,
+
+        companyName: enquiry.companyName,
+        contactPerson: enquiry.contactPerson,
+        email: enquiry.email,
+        phone: enquiry.phone,
+
+        companyCode: dto.companyCode,
+
+        payrollDate: 28,
+        payrollCutoffDate: 21,
+
+        status: 'ACTIVE',
       },
     });
 

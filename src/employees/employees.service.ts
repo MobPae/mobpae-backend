@@ -1,19 +1,17 @@
 import { Injectable } from '@nestjs/common';
-
 import * as bcrypt from 'bcrypt';
-
 import { PrismaService } from '../prisma/prisma.service';
-
 import { CreateEmployeeDto } from './dto/create-employee.dto';
+import { UpdateEmployeeDto } from './dto/update-employee.dto';
 
 @Injectable()
 export class EmployeesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateEmployeeDto) {
+  async create(dto: CreateEmployeeDto, userId: string) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        id: dto.employerId,
+        userId,
       },
     });
 
@@ -47,7 +45,7 @@ export class EmployeesService {
     const employee = await this.prisma.employee.create({
       data: {
         userId: user.id,
-        employerId: dto.employerId,
+        employerId: employer.id,
         employeeCode: dto.employeeCode,
         name: dto.name,
         email: dto.email,
@@ -69,6 +67,38 @@ export class EmployeesService {
     return this.prisma.employee.findMany({
       include: {
         employer: true,
+      },
+    });
+  }
+
+  async update(employeeId: string, dto: UpdateEmployeeDto, userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new Error('Employer not found');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        id: employeeId,
+        employerId: employer.id,
+      },
+    });
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    return this.prisma.employee.update({
+      where: {
+        id: employeeId,
+      },
+      data: {
+        ...dto,
       },
     });
   }
