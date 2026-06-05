@@ -103,6 +103,81 @@ export class EmployeesService {
     });
   }
 
+  async updateActivation(
+    employeeId: string,
+    appActivated: boolean,
+    userId: string,
+  ) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new Error('Employer not found');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        id: employeeId,
+        employerId: employer.id,
+      },
+    });
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    return this.prisma.employee.update({
+      where: {
+        id: employeeId,
+      },
+      data: {
+        appActivated,
+      },
+    });
+  }
+
+  async bulkActivation(
+    employeeIds: string[],
+    appActivated: boolean,
+    userId: string,
+  ) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    console.log('bulkActivation called', {
+      employeeIds,
+
+      appActivated,
+
+      userId,
+    });
+    if (!employer) {
+      throw new Error('Employer not found');
+    }
+
+    const result = await this.prisma.employee.updateMany({
+      where: {
+        id: {
+          in: employeeIds,
+        },
+        employerId: employer.id,
+      },
+      data: {
+        appActivated,
+      },
+    });
+
+    return {
+      updatedCount: result.count,
+    };
+  }
+
   async getKycStatus(employeeId: string) {
     const documents = await this.prisma.kycDocument.findMany({
       where: {

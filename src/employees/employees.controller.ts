@@ -7,6 +7,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { UpdateEmployeeActivationDto } from './dto/update-employee-activation.dto';
+import { BulkEmployeeActivationDto } from './dto/bulk-employee-activation.dto';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -31,6 +33,30 @@ export class EmployeesController {
   @Roles('ADMIN', 'EMPLOYEE')
   getKycStatus(@Param('id') id: string) {
     return this.employeesService.getKycStatus(id);
+  }
+
+  @Patch('bulk-activation')
+  @Roles('EMPLOYER')
+  bulkActivation(@Body() dto: BulkEmployeeActivationDto, @Req() req: any) {
+    return this.employeesService.bulkActivation(
+      dto.employeeIds,
+      dto.appActivated,
+      req.user.userId,
+    );
+  }
+
+  @Patch(':id/activation')
+  @Roles('EMPLOYER')
+  updateActivation(
+    @Param('id') id: string,
+    @Body() dto: UpdateEmployeeActivationDto,
+    @Req() req: any,
+  ) {
+    return this.employeesService.updateActivation(
+      id,
+      dto.appActivated,
+      req.user.userId,
+    );
   }
 
   @Patch(':id')

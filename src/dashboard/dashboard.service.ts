@@ -73,7 +73,7 @@ export class DashboardService {
       this.prisma.employee.count({
         where: {
           employerId,
-          status: 'ACTIVE',
+          employmentStatus: 'ACTIVE',
         },
       }),
 

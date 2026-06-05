@@ -128,7 +128,6 @@ model Employee {
   phone          String
   salaryInHand   Decimal         @db.Decimal(12, 2)
   joiningDate    DateTime?
-  status         EmployeeStatus  @default(ACTIVE)
   user           User?           @relation(fields: [userId], references: [id])
   employer       Employer        @relation(fields: [employerId], references: [id])
   salaryLimit    SalaryLimit?
@@ -137,6 +136,9 @@ model Employee {
   kycDocuments   KycDocument[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+
+  employmentStatus EmployeeStatus @default(ACTIVE)
+  appActivated Boolean @default(false)
 
   @@unique([employerId, employeeCode])
   @@index([employerId])
