@@ -51,12 +51,21 @@ export class KycDocumentsService {
   }
 
   async findPending() {
+    return this.findAll('PENDING');
+  }
+
+  async findAll(status?: 'PENDING' | 'VERIFIED' | 'REJECTED') {
     return this.prisma.kycDocument.findMany({
-      where: {
-        status: 'PENDING',
-      },
+      where: status ? { status } : undefined,
       include: {
-        employee: true,
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
       },
     });
   }

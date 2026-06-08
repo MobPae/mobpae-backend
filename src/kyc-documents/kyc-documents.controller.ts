@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { KycDocumentsService } from './kyc-documents.service';
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 import { UseGuards } from '@nestjs/common';
@@ -33,6 +33,12 @@ export class KycDocumentsController {
   @Roles('ADMIN')
   findPending() {
     return this.kycDocumentsService.findPending();
+  }
+
+  @Get()
+  @Roles('ADMIN')
+  findAll(@Query('status') status?: 'PENDING' | 'VERIFIED' | 'REJECTED') {
+    return this.kycDocumentsService.findAll(status);
   }
 
   @Post(':id/verify')
