@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { EmployerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { BadRequestException } from '@nestjs/common';
+import { UpdateEmployerProfileDto } from './dto/update-employer-profile.dto';
 
 @Injectable()
 export class EmployersService {
@@ -25,6 +27,76 @@ export class EmployersService {
       where: { id },
       data: {
         status,
+      },
+    });
+  }
+
+  async getProfile(userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+      include: {
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!employer) {
+      throw new BadRequestException('Employer not found');
+    }
+
+    return {
+      id: employer.id,
+
+      companyName: employer.companyName,
+      companyCode: employer.companyCode,
+
+      contactPerson: employer.contactPerson,
+      contactEmail: employer.email,
+      phone: employer.phone,
+
+      loginEmail: employer.user.email,
+
+      status: employer.status,
+      createdAt: employer.createdAt,
+    };
+  }
+
+  async updateProfile(userId: string, dto: UpdateEmployerProfileDto) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new BadRequestException('Employer not found');
+    }
+
+    return this.prisma.employer.update({
+      where: {
+        id: employer.id,
+      },
+      data: {
+        companyName: dto.companyName,
+        contactPerson: dto.contactPerson,
+        email: dto.email,
+        phone: dto.phone,
+      },
+      select: {
+        id: true,
+        companyName: true,
+        companyCode: true,
+        contactPerson: true,
+        email: true,
+        phone: true,
+        payrollDate: true,
+        payrollCutoffDate: true,
+        status: true,
       },
     });
   }

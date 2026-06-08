@@ -68,6 +68,10 @@ export class EmployeesService {
       include: {
         employer: true,
       },
+
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
   }
 

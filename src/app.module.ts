@@ -28,6 +28,7 @@ import { KycDocumentsModule } from './kyc-documents/kyc-documents.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { SettingsModule } from './settings/settings.module';
+import { PayrollModule } from './payroll/payroll.module';
 
 @Module({
   imports: [
@@ -63,6 +64,8 @@ import { SettingsModule } from './settings/settings.module';
     BankAccountsModule,
 
     SettingsModule,
+
+    PayrollModule,
   ],
   controllers: [AppController],
   providers: [AppService],

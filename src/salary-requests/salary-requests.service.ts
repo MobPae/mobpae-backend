@@ -144,4 +144,49 @@ export class SalaryRequestsService {
 
     return updatedRequest;
   }
+
+  async findAllForEmployer(userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new Error('Employer not found');
+    }
+
+    return this.prisma.salaryRequest.findMany({
+      where: {
+        employerId: employer.id,
+      },
+      include: {
+        employee: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async reject(id: string) {
+    const request = await this.prisma.salaryRequest.findUnique({
+      where: {
+        id,
+      },
+    });
+
+    if (!request) {
+      throw new Error('Salary request not found');
+    }
+
+    return this.prisma.salaryRequest.update({
+      where: {
+        id,
+      },
+      data: {
+        status: 'EMPLOYER_REJECTED',
+      },
+    });
+  }
 }

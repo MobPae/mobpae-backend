@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { Req } from '@nestjs/common';
 
 @ApiTags('Repayments')
 @ApiBearerAuth()
@@ -29,6 +30,11 @@ export class RepaymentsController {
     return this.repaymentsService.findAllForAdmin();
   }
 
+  @Get('employer')
+  @Roles('EMPLOYER')
+  findAllForEmployer(@Req() req: any) {
+    return this.repaymentsService.findAllForEmployer(req.user.userId);
+  }
   @Get('employee/:employeeId')
   @Roles('ADMIN', 'EMPLOYEE')
   findByEmployee(@Param('employeeId') employeeId: string) {

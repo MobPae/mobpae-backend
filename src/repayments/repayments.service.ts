@@ -120,4 +120,36 @@ export class RepaymentsService {
       },
     });
   }
+
+  async findAllForEmployer(userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new BadRequestException('Employer not found');
+    }
+
+    return this.prisma.repayment.findMany({
+      where: {
+        salaryRequest: {
+          employee: {
+            employerId: employer.id,
+          },
+        },
+      },
+      include: {
+        salaryRequest: {
+          include: {
+            employee: true,
+          },
+        },
+      },
+      orderBy: {
+        dueDate: 'asc',
+      },
+    });
+  }
 }
