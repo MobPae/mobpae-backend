@@ -29,6 +29,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { SettingsModule } from './settings/settings.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { MembershipModule } from './membership/membership.module';
 
 @Module({
   imports: [
@@ -66,6 +67,8 @@ import { PayrollModule } from './payroll/payroll.module';
     SettingsModule,
 
     PayrollModule,
+
+    MembershipModule,
   ],
   controllers: [AppController],
   providers: [AppService],

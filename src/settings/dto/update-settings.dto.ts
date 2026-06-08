@@ -52,4 +52,24 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsBoolean()
   bankVerificationAlert?: boolean;
+
+  @IsOptional()
+  @IsString()
+  membershipPlanName?: string;
+
+  @IsOptional()
+  @IsString()
+  membershipFee?: string;
+
+  @IsOptional()
+  @IsString()
+  membershipValidityLabel?: string;
+
+  @IsOptional()
+  @IsString()
+  membershipCouponCode?: string;
+
+  @IsOptional()
+  @IsString()
+  membershipCouponDeduction?: string;
 }
