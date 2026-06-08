@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SettingsService } from '../settings/settings.service';
 
 import { PayrollUtil } from '../common/utils/payroll.util';
 
@@ -14,6 +15,7 @@ export class SalaryRequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   /**
@@ -21,9 +23,10 @@ export class SalaryRequestsService {
    *
    * Validation Flow:
    * 1. Employee must exist.
-   * 2. Salary limit must exist.
-   * 3. Requested amount must not exceed approved limit.
-   * 4. Employee must not have an active request.
+   * 2. Admin advance settings define the available limit.
+   * 3. Requested amount must not exceed the calculated available advance.
+   * 4. KYC, bank verification, multiple request, and outstanding balance
+   *    settings are enforced before submission.
    *
    * Result:
    * Request is submitted for employer approval.
@@ -40,18 +43,95 @@ export class SalaryRequestsService {
       throw new BadRequestException('Employee not found');
     }
 
-    const salaryLimit = await this.prisma.salaryLimit.findUnique({
-      where: {
-        employeeId: dto.employeeId,
-      },
-    });
+    const settings = await this.settingsService.getAdvanceSettings();
+    const availableAdvance = this.settingsService.calculateAvailableAdvance(
+      Number(employee.salaryInHand),
+      settings,
+    );
 
-    if (!salaryLimit) {
-      throw new BadRequestException('Salary limit not assigned');
+    if (availableAdvance <= 0) {
+      throw new BadRequestException(
+        `Minimum salary required is ₹${settings.minimumSalary}`,
+      );
     }
 
-    if (Number(dto.amount) > Number(salaryLimit.approvedLimit)) {
-      throw new BadRequestException('Requested amount exceeds approved limit');
+    if (Number(dto.amount) > availableAdvance) {
+      throw new BadRequestException(
+        `Requested amount exceeds available advance of ₹${availableAdvance}`,
+      );
+    }
+
+    if (settings.requireKyc) {
+      const verifiedDocs = await this.prisma.kycDocument.findMany({
+        where: {
+          employeeId: dto.employeeId,
+          status: 'VERIFIED',
+        },
+      });
+
+      const kycCompleted = ['PAN', 'AADHAR', 'SALARY_SLIP'].every((type) =>
+        verifiedDocs.some((doc) => doc.documentType === type),
+      );
+
+      if (!kycCompleted) {
+        throw new BadRequestException('Employee KYC is not completed');
+      }
+    }
+
+    if (settings.requireBankVerification) {
+      const bankAccount = await this.prisma.employeeBankAccount.findUnique({
+        where: {
+          employeeId: dto.employeeId,
+        },
+      });
+
+      if (!bankAccount) {
+        throw new BadRequestException('Employee bank account not found');
+      }
+
+      if (!bankAccount.verified) {
+        throw new BadRequestException('Employee bank account is not verified');
+      }
+    }
+
+    if (!settings.allowMultipleRequestsPerCycle) {
+      const activeRequest = await this.prisma.salaryRequest.findFirst({
+        where: {
+          employeeId: dto.employeeId,
+          status: {
+            in: [
+              'SUBMITTED',
+              'EMPLOYER_APPROVED',
+              'READY_FOR_DISBURSAL',
+              'DISBURSED',
+              'REPAYMENT_SCHEDULED',
+            ],
+          },
+        },
+      });
+
+      if (activeRequest) {
+        throw new BadRequestException('Employee already has an active request');
+      }
+    }
+
+    if (!settings.allowRequestWithOutstandingBalance) {
+      const outstandingRepayment = await this.prisma.repayment.findFirst({
+        where: {
+          salaryRequest: {
+            employeeId: dto.employeeId,
+          },
+          status: {
+            in: ['SCHEDULED', 'OVERDUE'],
+          },
+        },
+      });
+
+      if (outstandingRepayment) {
+        throw new BadRequestException(
+          'Employee has an outstanding payment balance',
+        );
+      }
     }
 
     return this.prisma.salaryRequest.create({
@@ -211,13 +291,8 @@ export class SalaryRequestsService {
       throw new BadRequestException('Employee not found');
     }
 
-    const interestSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'ANNUAL_INTEREST_RATE',
-      },
-    });
-
-    const annualInterestRate = Number(interestSetting?.value ?? 36);
+    const settings = await this.settingsService.getAdvanceSettings();
+    const annualInterestRate = settings.interestChargePercentage;
 
     const repayment = PayrollUtil.calculateRepayment(
       amount,

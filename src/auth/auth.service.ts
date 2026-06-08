@@ -29,6 +29,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    let employeeId: string | undefined;
+
     if (user.role === 'EMPLOYEE') {
       const employee = await this.prisma.employee.findUnique({
         where: {
@@ -51,12 +53,15 @@ export class AuthService {
           'Your MobPae account has not been activated by your employer yet.',
         );
       }
+
+      employeeId = employee.id;
     }
 
     const payload = {
       sub: user.id,
       email: user.email,
       role: user.role,
+      employeeId,
     };
 
     return {

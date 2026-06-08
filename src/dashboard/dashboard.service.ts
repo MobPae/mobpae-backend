@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settingsService: SettingsService,
+  ) {}
 
   async getAdminDashboard() {
     const [
@@ -141,11 +145,15 @@ export class DashboardService {
       where: { id: employeeId },
     });
 
-    const salaryLimit = await this.prisma.salaryLimit.findUnique({
-      where: {
-        employeeId,
-      },
-    });
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    const advanceSettings = await this.settingsService.getAdvanceSettings();
+    const availableAdvance = this.settingsService.calculateAvailableAdvance(
+      Number(employee.salaryInHand),
+      advanceSettings,
+    );
 
     const latestRequest = await this.prisma.salaryRequest.findFirst({
       where: {
@@ -182,7 +190,9 @@ export class DashboardService {
     return {
       employeeName: employee?.name,
       kycCompleted,
-      approvedLimit: salaryLimit?.approvedLimit || 0,
+      approvedLimit: availableAdvance,
+      salaryInHand: Number(employee.salaryInHand),
+      advanceSettings,
       activeRequestStatus: latestRequest?.status || null,
       activeRepaymentStatus: repayment?.status || null,
     };
