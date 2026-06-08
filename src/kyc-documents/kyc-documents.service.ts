@@ -9,6 +9,27 @@ export class KycDocumentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateKycDocumentDto) {
+    const existingDocument = await this.prisma.kycDocument.findFirst({
+      where: {
+        employeeId: dto.employeeId,
+        documentType: dto.documentType,
+      },
+    });
+
+    if (existingDocument) {
+      return this.prisma.kycDocument.update({
+        where: {
+          id: existingDocument.id,
+        },
+        data: {
+          filePath: dto.filePath,
+          status: 'PENDING',
+          verifiedBy: null,
+          verifiedAt: null,
+        },
+      });
+    }
+
     return this.prisma.kycDocument.create({
       data: {
         employeeId: dto.employeeId,
