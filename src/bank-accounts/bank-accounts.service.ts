@@ -21,9 +21,25 @@ export class BankAccountsService {
       throw new BadRequestException('Employee not found');
     }
 
-    const account = await this.prisma.employeeBankAccount.create({
-      data: dto,
+    const existingAccount = await this.prisma.employeeBankAccount.findUnique({
+      where: {
+        employeeId: dto.employeeId,
+      },
     });
+
+    const account = existingAccount
+      ? await this.prisma.employeeBankAccount.update({
+          where: {
+            employeeId: dto.employeeId,
+          },
+          data: {
+            ...dto,
+            verified: false,
+          },
+        })
+      : await this.prisma.employeeBankAccount.create({
+          data: dto,
+        });
 
     return {
       ...account,
@@ -59,8 +75,9 @@ export class BankAccountsService {
     });
   }
 
-  async findAllForAdmin() {
+  async findAllForAdmin(verified?: boolean) {
     return this.prisma.employeeBankAccount.findMany({
+      where: verified === undefined ? undefined : { verified },
       include: {
         employee: {
           include: {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { BankAccountsService } from './bank-accounts.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -24,8 +24,10 @@ export class BankAccountsController {
 
   @Get()
   @Roles('ADMIN')
-  findAll() {
-    return this.bankAccountsService.findAllForAdmin();
+  findAll(@Query('verified') verified?: string) {
+    return this.bankAccountsService.findAllForAdmin(
+      verified === undefined ? undefined : verified === 'true',
+    );
   }
   @Get('employee/:employeeId')
   @Roles('ADMIN', 'EMPLOYEE')
