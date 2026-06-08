@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsEmail, IsNumber, IsOptional, IsString } from 'class-validator';
+import { EmployeeStatus } from '@prisma/client';
+import {
+  IsEmail,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class UpdateEmployeeDto {
   @IsOptional()
@@ -18,4 +25,8 @@ export class UpdateEmployeeDto {
   @Type(() => Number)
   @IsNumber()
   salaryInHand?: number;
+
+  @IsOptional()
+  @IsEnum(EmployeeStatus)
+  employmentStatus?: EmployeeStatus;
 }

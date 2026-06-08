@@ -63,7 +63,7 @@ export class PayrollService {
     });
 
     const totalRecoveryAmount = repayments.reduce(
-      (sum, repayment) => sum + Number(repayment.amount),
+      (sum, repayment) => sum + Number(repayment.totalAmount),
       0,
     );
 

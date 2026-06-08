@@ -5,7 +5,7 @@ import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { UpdateEmployeeActivationDto } from './dto/update-employee-activation.dto';
 import { BulkEmployeeActivationDto } from './dto/bulk-employee-activation.dto';
@@ -33,6 +33,20 @@ export class EmployeesController {
   @Roles('ADMIN', 'EMPLOYEE')
   getKycStatus(@Param('id') id: string) {
     return this.employeesService.getKycStatus(id);
+  }
+
+  @Post('bulk')
+  @Roles('EMPLOYER')
+  @ApiOperation({
+    summary: 'Bulk upload employees',
+  })
+  bulkCreate(
+    @Req() req: any,
+
+    @Body()
+    employees: CreateEmployeeDto[],
+  ) {
+    return this.employeesService.bulkCreate(req.user.userId, employees);
   }
 
   @Patch('bulk-activation')

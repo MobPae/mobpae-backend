@@ -77,7 +77,7 @@ export class EmployersService {
       throw new BadRequestException('Employer not found');
     }
 
-    return this.prisma.employer.update({
+    await this.prisma.employer.update({
       where: {
         id: employer.id,
       },
@@ -87,17 +87,8 @@ export class EmployersService {
         email: dto.email,
         phone: dto.phone,
       },
-      select: {
-        id: true,
-        companyName: true,
-        companyCode: true,
-        contactPerson: true,
-        email: true,
-        phone: true,
-        payrollDate: true,
-        payrollCutoffDate: true,
-        status: true,
-      },
     });
+
+    return this.getProfile(userId);
   }
 }

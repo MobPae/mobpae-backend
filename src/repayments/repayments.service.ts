@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRepaymentDto } from './dto/create-repayment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PayrollUtil } from '../common/utils/payroll.util';
 
 @Injectable()
 export class RepaymentsService {
@@ -15,21 +16,54 @@ export class RepaymentsService {
       where: {
         id: dto.salaryRequestId,
       },
+      include: {
+        employer: true,
+      },
     });
 
     if (!salaryRequest) {
       throw new BadRequestException('Salary request not found');
     }
 
+    const existingRepayment = await this.prisma.repayment.findUnique({
+      where: {
+        salaryRequestId: salaryRequest.id,
+      },
+    });
+
+    if (existingRepayment) {
+      throw new BadRequestException('Repayment already exists');
+    }
+
     if (salaryRequest.status !== 'DISBURSED') {
       throw new BadRequestException('Salary request is not disbursed');
     }
 
+    const interestSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'ANNUAL_INTEREST_RATE',
+      },
+    });
+
+    const annualInterestRate = Number(interestSetting?.value ?? 36);
+
+    const repaymentCalculation = PayrollUtil.calculateRepayment(
+      Number(salaryRequest.amount),
+      salaryRequest.requestedAt,
+      salaryRequest.employer.payrollCutoffDate,
+      salaryRequest.employer.payrollDate,
+      annualInterestRate,
+    );
+
     return this.prisma.repayment.create({
       data: {
         salaryRequestId: salaryRequest.id,
-        amount: salaryRequest.amount,
-        dueDate: new Date(dto.dueDate),
+        principalAmount: salaryRequest.amount,
+        interestAmount: repaymentCalculation.interestAmount,
+        totalAmount: repaymentCalculation.totalAmount,
+        interestRate: annualInterestRate,
+        interestDays: repaymentCalculation.interestDays,
+        dueDate: repaymentCalculation.dueDate,
       },
     });
   }
@@ -132,7 +166,7 @@ export class RepaymentsService {
       throw new BadRequestException('Employer not found');
     }
 
-    return this.prisma.repayment.findMany({
+    const repayments = await this.prisma.repayment.findMany({
       where: {
         salaryRequest: {
           employee: {
@@ -151,5 +185,26 @@ export class RepaymentsService {
         dueDate: 'asc',
       },
     });
+
+    return repayments.map((repayment) => ({
+      id: repayment.id,
+
+      principalAmount: repayment.principalAmount,
+      interestAmount: repayment.interestAmount,
+      totalAmount: repayment.totalAmount,
+
+      dueDate: repayment.dueDate,
+      status: repayment.status,
+
+      employee: {
+        id: repayment.salaryRequest.employee.id,
+        employeeCode: repayment.salaryRequest.employee.employeeCode,
+        name: repayment.salaryRequest.employee.name,
+      },
+
+      salaryRequest: {
+        id: repayment.salaryRequest.id,
+      },
+    }));
   }
 }

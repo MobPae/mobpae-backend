@@ -1,10 +1,13 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+
 import { DashboardService } from './dashboard.service';
-import { UseGuards } from '@nestjs/common';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+
+import { Role } from '../common/enums/role.enum';
 
 @ApiTags('Dashboard')
 @ApiBearerAuth()
@@ -13,21 +16,45 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
+  /**
+   * Admin Dashboard
+   */
   @Get('admin')
-  @Roles('ADMIN')
+  @Roles(Role.ADMIN)
   getAdminDashboard() {
     return this.dashboardService.getAdminDashboard();
   }
 
-  @Get('employer/:employerId')
-  @Roles('ADMIN', 'EMPLOYER')
-  getEmployerDashboard(@Param('employerId') employerId: string) {
-    return this.dashboardService.getEmployerDashboard(employerId);
+  /**
+   * Logged-in Employer Dashboard
+   */
+  @Get('employers/me')
+  @Roles(Role.EMPLOYER)
+  getMyEmployerDashboard(@Req() req: any) {
+    return this.dashboardService.getEmployerDashboard(req.user.userId);
   }
 
-  @Get('employee/:employeeId')
-  @Roles('ADMIN', 'EMPLOYEE')
-  getEmployeeDashboard(@Param('employeeId') employeeId: string) {
+  /**
+   * Admin View of Specific Employer Dashboard
+   */
+  @Get('employers/:employerId')
+  @Roles(Role.ADMIN)
+  getEmployerDashboard(
+    @Param('employerId')
+    employerId: string,
+  ) {
+    return this.dashboardService.getEmployerDashboardByEmployerId(employerId);
+  }
+
+  /**
+   * Employee Dashboard
+   */
+  @Get('employees/:employeeId')
+  @Roles(Role.ADMIN, Role.EMPLOYEE)
+  getEmployeeDashboard(
+    @Param('employeeId')
+    employeeId: string,
+  ) {
     return this.dashboardService.getEmployeeDashboard(employeeId);
   }
 }

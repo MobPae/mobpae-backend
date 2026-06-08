@@ -1,7 +1,13 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+
+import { PayrollUtil } from '../common/utils/payroll.util';
 
 @Injectable()
 export class SalaryRequestsService {
@@ -169,7 +175,7 @@ export class SalaryRequestsService {
     });
   }
 
-  async reject(id: string) {
+  async reject(id: string, remarks: string) {
     const request = await this.prisma.salaryRequest.findUnique({
       where: {
         id,
@@ -177,7 +183,7 @@ export class SalaryRequestsService {
     });
 
     if (!request) {
-      throw new Error('Salary request not found');
+      throw new NotFoundException('Salary request not found');
     }
 
     return this.prisma.salaryRequest.update({
@@ -186,7 +192,110 @@ export class SalaryRequestsService {
       },
       data: {
         status: 'EMPLOYER_REJECTED',
+        remarks,
       },
     });
+  }
+
+  async preview(userId: string, amount: number) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+      include: {
+        employer: true,
+      },
+    });
+
+    if (!employee) {
+      throw new BadRequestException('Employee not found');
+    }
+
+    const interestSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'ANNUAL_INTEREST_RATE',
+      },
+    });
+
+    const annualInterestRate = Number(interestSetting?.value ?? 36);
+
+    const repayment = PayrollUtil.calculateRepayment(
+      amount,
+      new Date(),
+      employee.employer.payrollCutoffDate,
+      employee.employer.payrollDate,
+      annualInterestRate,
+    );
+
+    return {
+      principalAmount: amount,
+      interestRate: annualInterestRate,
+      interestDays: repayment.interestDays,
+      interestAmount: repayment.interestAmount,
+      totalAmount: repayment.totalAmount,
+      dueDate: repayment.dueDate,
+    };
+  }
+
+  /**
+
+  * Get complete salary request details.
+  *
+  * Used by:
+  * - Employer Request Details screen
+  * - Admin Review screen
+  * - Future Request Tracking page
+  *
+  * Returns:
+  * - Salary request details
+  * - Employee details
+  * - Repayment details (if created)
+  * - Disbursal details (if disbursed)
+ */
+  async findOne(id: string) {
+    const salaryRequest = await this.prisma.salaryRequest.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+        repayment: true,
+        disbursal: true,
+      },
+    });
+
+    if (!salaryRequest) {
+      throw new NotFoundException('Salary request not found');
+    }
+
+    return {
+      id: salaryRequest.id,
+
+      amount: salaryRequest.amount,
+      approvedAmount: salaryRequest.approvedAmount,
+
+      status: salaryRequest.status,
+
+      requestedAt: salaryRequest.requestedAt,
+
+      remarks: salaryRequest.remarks,
+
+      employee: {
+        id: salaryRequest.employee.id,
+        employeeCode: salaryRequest.employee.employeeCode,
+        name: salaryRequest.employee.name,
+        email: salaryRequest.employee.email,
+        phone: salaryRequest.employee.phone,
+        salaryInHand: salaryRequest.employee.salaryInHand,
+      },
+
+      repayment: salaryRequest.repayment,
+
+      disbursal: salaryRequest.disbursal,
+    };
   }
 }

@@ -1,5 +1,4 @@
-import { Injectable } from '@nestjs/common';
-
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -56,24 +55,46 @@ export class DashboardService {
     };
   }
 
-  async getEmployerDashboard(employerId: string) {
+  async getEmployerDashboard(userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new NotFoundException('Employer not found');
+    }
+
+    return this.getEmployerDashboardByEmployerId(employer.id);
+  }
+
+  async getEmployerDashboardByEmployerId(employerId: string) {
     const [
-      employeeCount,
+      totalEmployees,
       activeEmployees,
-      pendingRequests,
+      appActivatedEmployees,
+      pendingSalaryRequests,
       approvedRequests,
-      disbursedRequests,
-      employer,
-      disbursedAggregate,
+      outstandingAmount,
     ] = await Promise.all([
       this.prisma.employee.count({
-        where: { employerId },
+        where: {
+          employerId,
+        },
       }),
 
       this.prisma.employee.count({
         where: {
           employerId,
           employmentStatus: 'ACTIVE',
+        },
+      }),
+
+      this.prisma.employee.count({
+        where: {
+          employerId,
+          appActivated: true,
         },
       }),
 
@@ -91,39 +112,27 @@ export class DashboardService {
         },
       }),
 
-      this.prisma.salaryRequest.count({
+      this.prisma.repayment.aggregate({
         where: {
-          employerId,
-          status: 'DISBURSED',
-        },
-      }),
-
-      this.prisma.employer.findUnique({
-        where: { id: employerId },
-      }),
-
-      this.prisma.salaryRequest.aggregate({
-        where: {
-          employerId,
-          status: 'DISBURSED',
+          salaryRequest: {
+            employerId,
+          },
+          status: 'SCHEDULED',
         },
         _sum: {
-          amount: true,
+          totalAmount: true,
         },
       }),
     ]);
 
     return {
-      employeeCount,
+      totalEmployees,
       activeEmployees,
-      pendingRequests,
+      appActivatedEmployees,
+      pendingSalaryRequests,
       approvedRequests,
-      disbursedRequests,
 
-      totalDisbursedAmount: disbursedAggregate._sum.amount || 0,
-
-      payrollDate: employer?.payrollDate,
-      payrollCutoffDate: employer?.payrollCutoffDate,
+      outstandingAmount: Number(outstandingAmount._sum?.totalAmount) || 0,
     };
   }
 

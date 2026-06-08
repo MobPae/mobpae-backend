@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -103,6 +103,11 @@ export class EmployeesService {
       },
       data: {
         ...dto,
+        ...(dto.employmentStatus === 'INACTIVE'
+          ? {
+              appActivated: false,
+            }
+          : {}),
       },
     });
   }
@@ -203,6 +208,125 @@ export class EmployeesService {
       aadhar,
       salarySlip,
       kycCompleted: pan && aadhar && salarySlip,
+    };
+  }
+
+  // Bulk Create employees with error handling and login id/password generation
+  async bulkCreate(userId: string, employees: CreateEmployeeDto[]) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new NotFoundException('Employer not found');
+    }
+
+    const defaultPassword = 'MobPae@123';
+
+    const created: {
+      employeeCode: string;
+      name: string;
+      email: string;
+      password: string;
+    }[] = [];
+
+    const errors: {
+      row: number;
+      employeeCode: string;
+      email: string;
+      message: string;
+    }[] = [];
+
+    for (let index = 0; index < employees.length; index++) {
+      const employee = employees[index];
+
+      try {
+        const existingEmployeeCode = await this.prisma.employee.findFirst({
+          where: {
+            employerId: employer.id,
+            employeeCode: employee.employeeCode,
+          },
+        });
+
+        if (existingEmployeeCode) {
+          errors.push({
+            row: index + 1,
+            employeeCode: employee.employeeCode,
+            email: employee.email,
+            message: 'Employee code already exists',
+          });
+
+          continue;
+        }
+
+        const existingUser = await this.prisma.user.findUnique({
+          where: {
+            email: employee.email,
+          },
+        });
+
+        if (existingUser) {
+          errors.push({
+            row: index + 1,
+            employeeCode: employee.employeeCode,
+            email: employee.email,
+            message: 'User already exists',
+          });
+
+          continue;
+        }
+
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+        const user = await this.prisma.user.create({
+          data: {
+            email: employee.email,
+            password: hashedPassword,
+            role: 'EMPLOYEE',
+            isActive: true,
+          },
+        });
+
+        await this.prisma.employee.create({
+          data: {
+            userId: user.id,
+            employerId: employer.id,
+
+            employeeCode: employee.employeeCode,
+            name: employee.name,
+            email: employee.email,
+            phone: employee.phone,
+
+            salaryInHand: Number(employee.salaryInHand),
+
+            employmentStatus: 'ACTIVE',
+            appActivated: false,
+          },
+        });
+
+        created.push({
+          employeeCode: employee.employeeCode,
+          name: employee.name,
+          email: employee.email,
+          password: defaultPassword,
+        });
+      } catch (error) {
+        errors.push({
+          row: index + 1,
+          employeeCode: employee.employeeCode,
+          email: employee.email,
+          message: 'Failed to create employee',
+        });
+      }
+    }
+
+    return {
+      successCount: created.length,
+      failureCount: errors.length,
+      created,
+      errors,
     };
   }
 }
