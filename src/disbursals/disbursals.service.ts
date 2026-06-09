@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -25,12 +25,28 @@ export class DisbursalsService {
       throw new BadRequestException('Salary request is not approved');
     }
 
-    return this.prisma.disbursal.create({
-      data: {
+    const disbursal = await this.prisma.disbursal.upsert({
+      where: {
         salaryRequestId: salaryRequest.id,
-        amount: salaryRequest.amount,
+      },
+      update: {},
+      create: {
+        salaryRequestId: salaryRequest.id,
+        amount: salaryRequest.approvedAmount ?? salaryRequest.amount,
       },
     });
+
+    await this.prisma.salaryRequest.update({
+      where: {
+        id: salaryRequest.id,
+      },
+      data: {
+        status: 'READY_FOR_DISBURSAL',
+        approvedAmount: salaryRequest.approvedAmount ?? salaryRequest.amount,
+      },
+    });
+
+    return disbursal;
   }
 
   async findAllForAdmin() {
@@ -66,6 +82,20 @@ export class DisbursalsService {
    * Employee receives advance salary.
    */
   async disburse(id: string) {
+    const existingDisbursal = await this.prisma.disbursal.findUnique({
+      where: {
+        id,
+      },
+    });
+
+    if (!existingDisbursal) {
+      throw new NotFoundException('Disbursal not found');
+    }
+
+    if (existingDisbursal.status !== 'PENDING') {
+      throw new BadRequestException('Disbursal is not pending');
+    }
+
     const disbursal = await this.prisma.disbursal.update({
       where: {
         id,
