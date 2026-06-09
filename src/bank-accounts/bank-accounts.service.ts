@@ -34,7 +34,9 @@ export class BankAccountsService {
           },
           data: {
             ...dto,
-            verified: false,
+            verified: this.didBankDetailsChange(existingAccount, dto)
+              ? false
+              : existingAccount.verified,
           },
         })
       : await this.prisma.employeeBankAccount.create({
@@ -47,6 +49,23 @@ export class BankAccountsService {
     };
   }
 
+  private didBankDetailsChange(
+    existingAccount: {
+      accountHolderName: string;
+      accountNumber: string;
+      ifscCode: string;
+      bankName: string | null;
+    },
+    dto: CreateBankAccountDto,
+  ) {
+    return (
+      existingAccount.accountHolderName !== dto.accountHolderName ||
+      existingAccount.accountNumber !== dto.accountNumber ||
+      existingAccount.ifscCode !== dto.ifscCode ||
+      (existingAccount.bankName ?? '') !== (dto.bankName ?? '')
+    );
+  }
+
   async findByEmployee(employeeId: string) {
     const account = await this.prisma.employeeBankAccount.findUnique({
       where: {
@@ -57,6 +76,22 @@ export class BankAccountsService {
     if (!account) {
       return null;
     }
+
+    return {
+      ...account,
+      accountNumber: this.maskAccountNumber(account.accountNumber),
+    };
+  }
+
+  async updateUpi(employeeId: string, upiId?: string) {
+    const account = await this.prisma.employeeBankAccount.update({
+      where: {
+        employeeId,
+      },
+      data: {
+        upiId: upiId?.trim() || null,
+      },
+    });
 
     return {
       ...account,

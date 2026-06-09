@@ -22,6 +22,15 @@ export class BankAccountsController {
     return this.bankAccountsService.create(dto);
   }
 
+  @Post('employee/:employeeId/upi')
+  @Roles('EMPLOYEE')
+  updateUpi(
+    @Param('employeeId') employeeId: string,
+    @Body('upiId') upiId?: string,
+  ) {
+    return this.bankAccountsService.updateUpi(employeeId, upiId);
+  }
+
   @Get()
   @Roles('ADMIN')
   findAll(@Query('verified') verified?: string) {
