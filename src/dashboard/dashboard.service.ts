@@ -150,7 +150,7 @@ export class DashboardService {
     }
 
     const advanceSettings = await this.settingsService.getAdvanceSettings();
-    const availableAdvance = this.settingsService.calculateAvailableAdvance(
+    const approvedLimit = this.settingsService.calculateAvailableAdvance(
       Number(employee.salaryInHand),
       advanceSettings,
     );
@@ -175,6 +175,29 @@ export class DashboardService {
       },
     });
 
+    const activeRequest = await this.prisma.salaryRequest.findFirst({
+      where: {
+        employeeId,
+        status: {
+          in: [
+            'SUBMITTED',
+            'EMPLOYER_APPROVED',
+            'READY_FOR_DISBURSAL',
+            'DISBURSED',
+            'REPAYMENT_SCHEDULED',
+          ],
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const activeRequestAmount = activeRequest
+      ? Number(activeRequest.approvedAmount ?? activeRequest.amount)
+      : 0;
+    const availableAdvance = Math.max(0, approvedLimit - activeRequestAmount);
+
     const kycDocuments = await this.prisma.kycDocument.findMany({
       where: {
         employeeId,
@@ -190,7 +213,9 @@ export class DashboardService {
     return {
       employeeName: employee?.name,
       kycCompleted,
-      approvedLimit: availableAdvance,
+      approvedLimit,
+      activeRequestAmount,
+      availableAdvance,
       salaryInHand: Number(employee.salaryInHand),
       advanceSettings,
       activeRequestStatus: latestRequest?.status || null,
