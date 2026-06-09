@@ -30,6 +30,7 @@ import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { SettingsModule } from './settings/settings.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { MembershipModule } from './membership/membership.module';
+import { EmployerSettlementsModule } from './employer-settlements/employer-settlements.module';
 
 @Module({
   imports: [
@@ -69,6 +70,8 @@ import { MembershipModule } from './membership/membership.module';
     PayrollModule,
 
     MembershipModule,
+
+    EmployerSettlementsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

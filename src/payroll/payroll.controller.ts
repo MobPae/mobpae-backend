@@ -1,6 +1,15 @@
-import { Body, Controller, Get, Put, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { PayrollService } from './payroll.service';
 import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
@@ -16,21 +25,65 @@ import { Roles } from '../auth/decorators/roles.decorator';
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
 
+  /**
+   * Employer Payroll Summary
+   */
   @Get('employer/summary')
   @Roles('EMPLOYER')
+  @ApiOperation({
+    summary: 'Get payroll summary',
+  })
   getSummary(@Req() req: any) {
     return this.payrollService.getSummary(req.user.userId);
   }
 
+  /**
+   * Employer Recoveries
+   */
   @Get('employer/recoveries')
   @Roles('EMPLOYER')
+  @ApiOperation({
+    summary: 'Get payroll recoveries',
+  })
   getRecoveries(@Req() req: any) {
     return this.payrollService.getRecoveries(req.user.userId);
   }
 
+  /**
+   * Employer Payroll Settings
+   */
   @Put('employer/settings')
   @Roles('EMPLOYER')
-  updateSettings(@Req() req: any, @Body() dto: UpdatePayrollSettingsDto) {
+  @ApiOperation({
+    summary: 'Update payroll settings',
+  })
+  updateSettings(
+    @Req() req: any,
+
+    @Body()
+    dto: UpdatePayrollSettingsDto,
+  ) {
     return this.payrollService.updateSettings(req.user.userId, dto);
+  }
+
+  /**
+   * Admin Payroll Processing
+   *
+   * Business Flow:
+   * 1. Find all due repayments for employer.
+   * 2. Mark repayments as PAID.
+   * 3. Create Employer Settlement.
+   * 4. Employees become eligible again.
+   */
+  @Post('process-recovery/:employerId')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Process payroll recovery and generate settlement',
+  })
+  processRecovery(
+    @Param('employerId')
+    employerId: string,
+  ) {
+    return this.payrollService.processRecovery(employerId);
   }
 }
