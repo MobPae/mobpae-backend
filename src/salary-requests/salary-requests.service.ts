@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SettingsService } from '../settings/settings.service';
+import { MembershipService } from '../membership/membership.service';
 
 import { PayrollUtil } from '../common/utils/payroll.util';
 
@@ -16,6 +17,7 @@ export class SalaryRequestsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly settingsService: SettingsService,
+    private readonly membershipService: MembershipService,
   ) {}
 
   /**
@@ -92,6 +94,11 @@ export class SalaryRequestsService {
       if (!bankAccount.verified) {
         throw new BadRequestException('Employee bank account is not verified');
       }
+    }
+
+    const membershipActive = await this.membershipService.isActive(dto.employeeId);
+    if (!membershipActive) {
+      throw new BadRequestException('Employee membership is not active');
     }
 
     if (!settings.allowMultipleRequestsPerCycle) {

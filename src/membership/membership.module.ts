@@ -7,5 +7,6 @@ import { MembershipService } from './membership.service';
   imports: [PrismaModule],
   controllers: [MembershipController],
   providers: [MembershipService],
+  exports: [MembershipService],
 })
 export class MembershipModule {}

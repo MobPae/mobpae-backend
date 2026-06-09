@@ -40,6 +40,10 @@ export class MembershipService {
     };
   }
 
+  async isActive(employeeId: string) {
+    return this.getBooleanSetting(this.employeeKey(employeeId, 'active'), false);
+  }
+
   async applyCoupon(employeeId: string, couponCode: string) {
     await this.ensureEmployee(employeeId);
     const config = await this.getConfig();
