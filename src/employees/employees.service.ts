@@ -329,4 +329,23 @@ export class EmployeesService {
       errors,
     };
   }
+
+  async findByUserId(userId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+      include: {
+        employer: true,
+        salaryLimit: true,
+        membership: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    return employee;
+  }
 }

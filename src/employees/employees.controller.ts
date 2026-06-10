@@ -29,6 +29,15 @@ export class EmployeesController {
     return this.employeesService.findAll();
   }
 
+  @Get('me')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Get current employee profile',
+  })
+  findMe(@Req() req: any) {
+    return this.employeesService.findByUserId(req.user.userId);
+  }
+
   @Get(':id/kyc-status')
   @Roles('ADMIN', 'EMPLOYEE')
   getKycStatus(@Param('id') id: string) {

@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRepaymentDto } from './dto/create-repayment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -47,8 +51,12 @@ export class RepaymentsService {
 
     const annualInterestRate = Number(interestSetting?.value ?? 36);
 
+    const approvedAmount = Number(
+      salaryRequest.approvedAmount ?? salaryRequest.amount,
+    );
+
     const repaymentCalculation = PayrollUtil.calculateRepayment(
-      Number(salaryRequest.amount),
+      approvedAmount,
       salaryRequest.requestedAt,
       salaryRequest.employer.payrollCutoffDate,
       salaryRequest.employer.payrollDate,
@@ -58,7 +66,7 @@ export class RepaymentsService {
     return this.prisma.repayment.create({
       data: {
         salaryRequestId: salaryRequest.id,
-        principalAmount: salaryRequest.amount,
+        principalAmount: approvedAmount,
         interestAmount: repaymentCalculation.interestAmount,
         totalAmount: repaymentCalculation.totalAmount,
         interestRate: annualInterestRate,
@@ -69,7 +77,7 @@ export class RepaymentsService {
   }
 
   async findByEmployee(employeeId: string) {
-    return this.prisma.repayment.findMany({
+    const repayments = await this.prisma.repayment.findMany({
       where: {
         salaryRequest: {
           employeeId,
@@ -82,6 +90,24 @@ export class RepaymentsService {
         createdAt: 'desc',
       },
     });
+
+    return repayments.map((repayment) => ({
+      id: repayment.id,
+
+      salaryRequestId: repayment.salaryRequestId,
+
+      principalAmount: Number(repayment.principalAmount),
+
+      interestAmount: Number(repayment.interestAmount),
+
+      totalAmount: Number(repayment.totalAmount),
+
+      interestDays: repayment.interestDays,
+
+      dueDate: repayment.dueDate,
+
+      status: repayment.status,
+    }));
   }
 
   /**
@@ -206,5 +232,19 @@ export class RepaymentsService {
         id: repayment.salaryRequest.id,
       },
     }));
+  }
+
+  async findByUserId(userId: string) {
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    return this.findByEmployee(employee.id);
   }
 }

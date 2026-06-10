@@ -1,104 +1,83 @@
-export interface RepaymentCalculation {
-  dueDate: Date;
-  interestDays: number;
-  interestAmount: number;
-  totalAmount: number;
-}
-
 export class PayrollUtil {
   /**
-   * Rule:
-   * requestDate < cutoffDate
-   *      => current payroll cycle
+   * Calculate repayment amount for a salary advance.
    *
-   * requestDate >= cutoffDate
-   *      => next payroll cycle
-   */
-  static calculateRepaymentDate(
-    requestDate: Date,
-    cutoffDate: number,
-    payrollDate: number,
-  ): {
-    dueDate: Date;
-    interestDays: number;
-  } {
-    const requestDay = requestDate.getDate();
-
-    let dueDate: Date;
-
-    if (requestDay < cutoffDate) {
-      dueDate = new Date(
-        requestDate.getFullYear(),
-        requestDate.getMonth(),
-        payrollDate,
-      );
-    } else {
-      dueDate = new Date(
-        requestDate.getFullYear(),
-        requestDate.getMonth() + 1,
-        payrollDate,
-      );
-    }
-
-    const millisecondsPerDay = 1000 * 60 * 60 * 24;
-
-    const interestDays = Math.ceil(
-      (dueDate.getTime() - requestDate.getTime()) / millisecondsPerDay,
-    );
-
-    return {
-      dueDate,
-      interestDays,
-    };
-  }
-
-  /**
-   * Simple Interest
+   * Example:
+   * Amount = 5000
+   * Interest Rate = 36% yearly
+   * Request Date = 9 Jun
+   * Payroll Date = 28 Jun
    *
-   * Formula:
-   * Interest =
-   * Principal × Rate × Days / 365
-   */
-  static calculateInterest(
-    principalAmount: number,
-    annualInterestRate: number,
-    interestDays: number,
-  ): number {
-    const interest =
-      principalAmount * (annualInterestRate / 100) * (interestDays / 365);
-
-    return Number(interest.toFixed(2));
-  }
-
-  /**
-   * Complete repayment calculation
+   * Interest Days = 19
+   * Interest = (5000 × 36 × 19) / (365 × 100)
+   *
+   * Returns:
+   * - principalAmount
+   * - interestAmount
+   * - totalAmount
+   * - interestDays
+   * - dueDate
    */
   static calculateRepayment(
-    principalAmount: number,
+    amount: number,
     requestDate: Date,
-    cutoffDate: number,
+    payrollCutoffDate: number,
     payrollDate: number,
-    annualInterestRate = 36,
-  ): RepaymentCalculation {
-    const { dueDate, interestDays } = this.calculateRepaymentDate(
+    annualInterestRate: number,
+  ) {
+    const dueDate = this.calculateDueDate(
       requestDate,
-      cutoffDate,
+      payrollCutoffDate,
       payrollDate,
     );
 
-    const interestAmount = this.calculateInterest(
-      principalAmount,
-      annualInterestRate,
-      interestDays,
+    const interestDays = Math.max(
+      1,
+      Math.ceil(
+        (dueDate.getTime() - requestDate.getTime()) / (1000 * 60 * 60 * 24),
+      ),
     );
 
-    const totalAmount = Number((principalAmount + interestAmount).toFixed(2));
+    const interestAmount =
+      (amount * annualInterestRate * interestDays) / (365 * 100);
+
+    const totalAmount = amount + interestAmount;
 
     return {
-      dueDate,
+      principalAmount: Number(amount.toFixed(2)),
+      interestAmount: Number(interestAmount.toFixed(2)),
+      totalAmount: Number(totalAmount.toFixed(2)),
       interestDays,
-      interestAmount,
-      totalAmount,
+      dueDate,
     };
+  }
+
+  /**
+   * Determine payroll recovery date.
+   *
+   * Example:
+   * Request Date = 9 Jun
+   * Payroll Date = 28
+   * Result = 28 Jun
+   *
+   * Request Date = 27 Jun
+   * Payroll Cutoff = 25
+   * Payroll Date = 28
+   * Result = 28 Jul
+   */
+  static calculateDueDate(
+    requestDate: Date,
+    payrollCutoffDate: number,
+    payrollDate: number,
+  ) {
+    const dueDate = new Date(requestDate);
+
+    if (requestDate.getDate() > payrollCutoffDate) {
+      dueDate.setMonth(dueDate.getMonth() + 1);
+    }
+
+    dueDate.setDate(payrollDate);
+
+    return dueDate;
   }
 }

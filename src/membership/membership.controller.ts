@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+
+import { MembershipService } from './membership.service';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { ActivateMembershipDto } from './dto/activate-membership.dto';
-import { ApplyCouponDto } from './dto/apply-coupon.dto';
-import { MembershipService } from './membership.service';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @ApiTags('Membership')
 @ApiBearerAuth()
@@ -14,21 +15,30 @@ import { MembershipService } from './membership.service';
 export class MembershipController {
   constructor(private readonly membershipService: MembershipService) {}
 
-  @Get('employee/:employeeId')
-  @Roles('ADMIN', 'EMPLOYEE')
-  findByEmployee(@Param('employeeId') employeeId: string) {
-    return this.membershipService.getEmployeeMembership(employeeId);
+  /**
+   * Employee
+   */
+  @Get('me')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Get my membership',
+  })
+  getMyMembership(@Req() req: any) {
+    return this.membershipService.getMyMembership(req.user.userId);
   }
 
-  @Post('apply-coupon')
-  @Roles('EMPLOYEE')
-  applyCoupon(@Body() dto: ApplyCouponDto) {
-    return this.membershipService.applyCoupon(dto.employeeId, dto.couponCode);
-  }
-
-  @Post('activate')
-  @Roles('EMPLOYEE')
-  activate(@Body() dto: ActivateMembershipDto) {
-    return this.membershipService.activate(dto.employeeId, dto.couponCode);
+  /**
+   * Admin
+   */
+  @Post('activate/:employeeId')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Activate membership',
+  })
+  activate(
+    @Param('employeeId')
+    employeeId: string,
+  ) {
+    return this.membershipService.activate(employeeId);
   }
 }

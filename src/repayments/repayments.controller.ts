@@ -1,12 +1,12 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+
 import { RepaymentsService } from './repayments.service';
-import { CreateRepaymentDto } from './dto/create-repayment.dto';
-import { UseGuards } from '@nestjs/common';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { Req } from '@nestjs/common';
 
 @ApiTags('Repayments')
 @ApiBearerAuth()
@@ -15,35 +15,32 @@ import { Req } from '@nestjs/common';
 export class RepaymentsController {
   constructor(private readonly repaymentsService: RepaymentsService) {}
 
-  @Post()
-  @Roles('ADMIN')
-  create(
-    @Body()
-    dto: CreateRepaymentDto,
-  ) {
-    return this.repaymentsService.create(dto);
-  }
-
-  @Get()
-  @Roles('ADMIN')
-  findAll() {
-    return this.repaymentsService.findAllForAdmin();
-  }
-
-  @Get('employer')
-  @Roles('EMPLOYER')
-  findAllForEmployer(@Req() req: any) {
-    return this.repaymentsService.findAllForEmployer(req.user.userId);
-  }
+  /**
+   * Admin
+   * View repayments of any employee
+   */
   @Get('employee/:employeeId')
-  @Roles('ADMIN', 'EMPLOYEE')
-  findByEmployee(@Param('employeeId') employeeId: string) {
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get repayments by employee for Admin',
+  })
+  findByEmployee(
+    @Param('employeeId')
+    employeeId: string,
+  ) {
     return this.repaymentsService.findByEmployee(employeeId);
   }
 
-  @Post(':id/pay')
-  @Roles('ADMIN')
-  pay(@Param('id') id: string) {
-    return this.repaymentsService.pay(id);
+  /**
+   * Employee
+   * View own repayments
+   */
+  @Get('my')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Get my repayments',
+  })
+  getMyRepayments(@Req() req: any) {
+    return this.repaymentsService.findByUserId(req.user.userId);
   }
 }

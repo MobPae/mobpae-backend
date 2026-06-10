@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { KycDocumentsService } from './kyc-documents.service';
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 import { UseGuards } from '@nestjs/common';
@@ -23,8 +23,14 @@ export class KycDocumentsController {
     return this.kycDocumentsService.create(dto);
   }
 
+  @Get('my')
+  @Roles('EMPLOYEE')
+  findMyKyc(@Req() req: any) {
+    return this.kycDocumentsService.findByUserId(req.user.userId);
+  }
+
   @Get('employee/:employeeId')
-  @Roles('EMPLOYEE', 'ADMIN')
+  @Roles('ADMIN')
   findByEmployee(@Param('employeeId') employeeId: string) {
     return this.kycDocumentsService.findByEmployee(employeeId);
   }

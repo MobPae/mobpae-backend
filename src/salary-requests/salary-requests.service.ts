@@ -96,7 +96,9 @@ export class SalaryRequestsService {
       }
     }
 
-    const membershipActive = await this.membershipService.isActive(dto.employeeId);
+    const membershipActive = await this.membershipService.isActive(
+      dto.employeeId,
+    );
     if (!membershipActive) {
       throw new BadRequestException('Employee membership is not active');
     }
@@ -151,13 +153,78 @@ export class SalaryRequestsService {
   }
 
   async findByEmployee(employeeId: string) {
-    return this.prisma.salaryRequest.findMany({
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        id: employeeId,
+      },
+      include: {
+        employer: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    const settings = await this.settingsService.getAdvanceSettings();
+
+    const requests = await this.prisma.salaryRequest.findMany({
       where: {
         employeeId,
+      },
+      include: {
+        repayment: true,
       },
       orderBy: {
         createdAt: 'desc',
       },
+    });
+
+    return requests.map((request) => {
+      if (request.repayment) {
+        return {
+          id: request.id,
+
+          amount: Number(request.amount),
+
+          approvedAmount: Number(request.approvedAmount ?? request.amount),
+
+          status: request.status,
+
+          requestedAt: request.requestedAt,
+
+          repaymentDate: request.repaymentDate,
+
+          interestAmount: Number(request.repayment.interestAmount),
+
+          totalAmount: Number(request.repayment.totalAmount),
+
+          interestDays: request.repayment.interestDays,
+
+          dueDate: request.repayment.dueDate,
+        };
+      }
+
+      const projection = PayrollUtil.calculateRepayment(
+        Number(request.approvedAmount ?? request.amount),
+        request.requestedAt,
+        employee.employer.payrollCutoffDate,
+        employee.employer.payrollDate,
+        settings.interestChargePercentage,
+      );
+
+      return {
+        id: request.id,
+        amount: Number(request.amount),
+        approvedAmount: Number(request.approvedAmount ?? request.amount),
+        status: request.status,
+        requestedAt: request.requestedAt,
+        repaymentDate: request.repaymentDate,
+        interestAmount: projection.interestAmount,
+        totalAmount: projection.totalAmount,
+        interestDays: projection.interestDays,
+        dueDate: projection.dueDate,
+      };
     });
   }
 
@@ -379,5 +446,19 @@ export class SalaryRequestsService {
 
       disbursal: salaryRequest.disbursal,
     };
+  }
+
+  async findByUserId(userId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    return this.findByEmployee(employee.id);
   }
 }

@@ -125,4 +125,18 @@ export class BankAccountsService {
       },
     });
   }
+
+  async findByUserId(userId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new BadRequestException('Employee not found');
+    }
+
+    return this.findByEmployee(employee.id);
+  }
 }

@@ -7,17 +7,18 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { SalaryRequestsService } from './salary-requests.service';
+
 import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { RejectSalaryRequestDto } from './dto/reject-salary-request.dto';
+import { PreviewSalaryRequestDto } from './dto/preview-salary-request.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-
-import { PreviewSalaryRequestDto } from './dto/preview-salary-request.dto';
 
 @ApiTags('Salary Requests')
 @ApiBearerAuth()
@@ -41,6 +42,9 @@ export class SalaryRequestsController {
     return this.salaryRequestsService.create(dto);
   }
 
+  /**
+   * Employee repayment preview
+   */
   @Post('preview')
   @Roles('EMPLOYEE')
   @ApiOperation({
@@ -51,34 +55,19 @@ export class SalaryRequestsController {
   }
 
   /**
-   * Admin - View all requests
-   */
-  @Get()
-  @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get all salary requests',
-  })
-  findAllForAdmin() {
-    return this.salaryRequestsService.findAllForAdmin();
-  }
-
-  /**
    * Employee - View own requests
    */
-  @Get('employee/:employeeId')
+  @Get('my')
   @Roles('EMPLOYEE')
   @ApiOperation({
-    summary: 'Get salary requests by employee',
+    summary: 'Get my salary requests',
   })
-  findByEmployee(
-    @Param('employeeId')
-    employeeId: string,
-  ) {
-    return this.salaryRequestsService.findByEmployee(employeeId);
+  findMyRequests(@Req() req: any) {
+    return this.salaryRequestsService.findByUserId(req.user.userId);
   }
 
   /**
-   * Employer - View all requests for their company
+   * Employer - View all requests for company
    */
   @Get('employer')
   @Roles('EMPLOYER')
@@ -90,7 +79,7 @@ export class SalaryRequestsController {
   }
 
   /**
-   * Employer Dashboard - Pending Requests
+   * Employer - Pending requests
    */
   @Get('employer/pending')
   @Roles('EMPLOYER')
@@ -101,6 +90,36 @@ export class SalaryRequestsController {
     return this.salaryRequestsService.findPendingByEmployer(req.user.userId);
   }
 
+  /**
+   * Admin - Requests for a specific employee
+   */
+  @Get('employee/:employeeId')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get salary requests by employee',
+  })
+  findByEmployee(
+    @Param('employeeId')
+    employeeId: string,
+  ) {
+    return this.salaryRequestsService.findByEmployee(employeeId);
+  }
+
+  /**
+   * Admin - All requests
+   */
+  @Get()
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get all salary requests',
+  })
+  findAllForAdmin() {
+    return this.salaryRequestsService.findAllForAdmin();
+  }
+
+  /**
+   * Request Details
+   */
   @Get(':id')
   @Roles('ADMIN', 'EMPLOYER')
   @ApiOperation({
@@ -139,7 +158,6 @@ export class SalaryRequestsController {
   reject(
     @Param('id')
     id: string,
-
     @Body()
     dto: RejectSalaryRequestDto,
   ) {

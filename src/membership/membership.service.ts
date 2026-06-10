@@ -1,86 +1,65 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+
 import { PrismaService } from '../prisma/prisma.service';
-
-type MembershipConfig = {
-  planName: string;
-  fee: number;
-  validityLabel: string;
-  couponCode: string;
-  couponDeduction: number;
-};
-
-const DEFAULT_MEMBERSHIP_CONFIG: MembershipConfig = {
-  planName: 'MobPae Membership',
-  fee: 449,
-  validityLabel: '1 year',
-  couponCode: 'WELCOME100',
-  couponDeduction: 100,
-};
 
 @Injectable()
 export class MembershipService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getEmployeeMembership(employeeId: string) {
-    await this.ensureEmployee(employeeId);
-    const config = await this.getConfig();
-    const active = await this.getBooleanSetting(this.employeeKey(employeeId, 'active'), false);
-    const appliedCouponCode = await this.getSettingValue(this.employeeKey(employeeId, 'couponCode'));
-    const couponDiscount = this.getCouponDiscount(appliedCouponCode, config);
-    const amountPayable = Math.max(0, config.fee - couponDiscount);
+  /**
+   * Employee
+   * Get logged-in employee membership
+   */
+  async getMyMembership(userId: string) {
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        userId,
+      },
+    });
 
-    return {
-      active,
-      planName: config.planName,
-      fee: config.fee,
-      validityLabel: config.validityLabel,
-      couponCode: appliedCouponCode ?? '',
-      couponDiscount,
-      amountPayable,
-    };
-  }
-
-  async isActive(employeeId: string) {
-    return this.getBooleanSetting(this.employeeKey(employeeId, 'active'), false);
-  }
-
-  async applyCoupon(employeeId: string, couponCode: string) {
-    await this.ensureEmployee(employeeId);
-    const config = await this.getConfig();
-    const normalizedCoupon = couponCode.trim().toUpperCase();
-    const couponDiscount = this.getCouponDiscount(normalizedCoupon, config);
-
-    if (couponDiscount <= 0) {
-      throw new BadRequestException('Invalid coupon code');
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
     }
 
-    await this.upsertSetting(this.employeeKey(employeeId, 'couponCode'), normalizedCoupon);
+    const membership = await this.prisma.membership.findUnique({
+      where: {
+        employeeId: employee.id,
+      },
+    });
 
-    return {
-      couponCode: normalizedCoupon,
-      couponDiscount,
-      amountPayable: Math.max(0, config.fee - couponDiscount),
-    };
-  }
-
-  async activate(employeeId: string, couponCode?: string) {
-    await this.ensureEmployee(employeeId);
-
-    if (couponCode?.trim()) {
-      await this.applyCoupon(employeeId, couponCode);
+    if (!membership) {
+      return {
+        active: false,
+        membership: null,
+      };
     }
 
-    const membership = await this.getEmployeeMembership(employeeId);
-    await this.upsertSetting(this.employeeKey(employeeId, 'active'), 'true');
-    await this.upsertSetting(this.employeeKey(employeeId, 'amountPaid'), String(membership.amountPayable));
+    const today = new Date();
+
+    const daysRemaining = Math.max(
+      0,
+      Math.ceil(
+        (membership.endDate.getTime() - today.getTime()) /
+          (1000 * 60 * 60 * 24),
+      ),
+    );
 
     return {
-      ...membership,
-      active: true,
+      active: membership.status === 'ACTIVE',
+      daysRemaining,
+      membership,
     };
   }
 
-  private async ensureEmployee(employeeId: string) {
+  /**
+   * Admin
+   * Activate membership manually
+   */
+  async activate(employeeId: string) {
     const employee = await this.prisma.employee.findUnique({
       where: {
         id: employeeId,
@@ -90,78 +69,79 @@ export class MembershipService {
     if (!employee) {
       throw new NotFoundException('Employee not found');
     }
-  }
 
-  private async getConfig(): Promise<MembershipConfig> {
-    const keys = [
-      'membershipPlanName',
-      'membershipFee',
-      'membershipValidityLabel',
-      'membershipCouponCode',
-      'membershipCouponDeduction',
-    ];
-    const settings = await this.prisma.setting.findMany({
+    const amountSetting = await this.prisma.setting.findUnique({
       where: {
-        key: {
-          in: keys,
-        },
-      },
-    });
-    const valueFor = (key: string) => settings.find((setting) => setting.key === key)?.value;
-
-    return {
-      planName: valueFor('membershipPlanName') ?? DEFAULT_MEMBERSHIP_CONFIG.planName,
-      fee: this.toNumber(valueFor('membershipFee'), DEFAULT_MEMBERSHIP_CONFIG.fee),
-      validityLabel: valueFor('membershipValidityLabel') ?? DEFAULT_MEMBERSHIP_CONFIG.validityLabel,
-      couponCode: (valueFor('membershipCouponCode') ?? DEFAULT_MEMBERSHIP_CONFIG.couponCode).trim().toUpperCase(),
-      couponDeduction: this.toNumber(valueFor('membershipCouponDeduction'), DEFAULT_MEMBERSHIP_CONFIG.couponDeduction),
-    };
-  }
-
-  private getCouponDiscount(couponCode: string | null | undefined, config: MembershipConfig) {
-    if (!couponCode) return 0;
-    return couponCode.trim().toUpperCase() === config.couponCode
-      ? Math.min(config.fee, config.couponDeduction)
-      : 0;
-  }
-
-  private async getSettingValue(key: string) {
-    const setting = await this.prisma.setting.findUnique({
-      where: {
-        key,
+        key: 'MEMBERSHIP_AMOUNT',
       },
     });
 
-    return setting?.value ?? null;
-  }
-
-  private async getBooleanSetting(key: string, fallback: boolean) {
-    const value = await this.getSettingValue(key);
-    if (value === null) return fallback;
-    return value === 'true';
-  }
-
-  private async upsertSetting(key: string, value: string) {
-    await this.prisma.setting.upsert({
+    const validitySetting = await this.prisma.setting.findUnique({
       where: {
-        key,
+        key: 'MEMBERSHIP_VALIDITY_DAYS',
+      },
+    });
+
+    const membershipAmount = Number(amountSetting?.value ?? 449);
+
+    const validityDays = Number(validitySetting?.value ?? 365);
+
+    const startDate = new Date();
+
+    const endDate = new Date();
+
+    endDate.setDate(endDate.getDate() + validityDays);
+
+    const existingMembership = await this.prisma.membership.findUnique({
+      where: {
+        employeeId,
+      },
+    });
+
+    if (existingMembership && existingMembership.status === 'ACTIVE') {
+      throw new BadRequestException('Membership already active');
+    }
+
+    return this.prisma.membership.upsert({
+      where: {
+        employeeId,
       },
       update: {
-        value,
+        planName: 'Annual Membership',
+        amount: membershipAmount,
+        startDate,
+        endDate,
+        status: 'ACTIVE',
       },
       create: {
-        key,
-        value,
+        employeeId,
+        planName: 'Annual Membership',
+        amount: membershipAmount,
+        startDate,
+        endDate,
+        status: 'ACTIVE',
       },
     });
   }
 
-  private employeeKey(employeeId: string, key: string) {
-    return `membership:${employeeId}:${key}`;
-  }
+  /**
+   * Validation helper
+   */
+  async isActive(employeeId: string) {
+    const membership = await this.prisma.membership.findUnique({
+      where: {
+        employeeId,
+      },
+    });
 
-  private toNumber(value: unknown, fallback: number) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    if (!membership) {
+      return false;
+    }
+
+    if (membership.status !== 'ACTIVE') {
+      return false;
+    }
+
+    return membership.endDate > new Date();
   }
 }

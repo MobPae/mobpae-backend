@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -87,5 +87,19 @@ export class KycDocumentsService {
         status: 'REJECTED',
       },
     });
+  }
+
+  async findByUserId(userId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new BadRequestException('Employee not found');
+    }
+
+    return this.findByEmployee(employee.id);
   }
 }
