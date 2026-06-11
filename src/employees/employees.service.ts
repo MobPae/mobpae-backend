@@ -159,13 +159,6 @@ export class EmployeesService {
       },
     });
 
-    console.log('bulkActivation called', {
-      employeeIds,
-
-      appActivated,
-
-      userId,
-    });
     if (!employer) {
       throw new Error('Employer not found');
     }
