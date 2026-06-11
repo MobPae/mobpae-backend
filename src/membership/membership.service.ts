@@ -196,6 +196,10 @@ export class MembershipService {
         throw new BadRequestException('Coupon expired');
       }
 
+      if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
+        throw new BadRequestException('Coupon usage limit reached');
+      }
+
       discountAmount = Number(coupon.discountAmount);
     }
 
@@ -257,6 +261,10 @@ export class MembershipService {
       throw new NotFoundException('Membership not found');
     }
 
+    if (membership.status === 'ACTIVE') {
+      throw new BadRequestException('Membership already approved');
+    }
+
     const validitySetting = await this.prisma.setting.findUnique({
       where: {
         key: 'MEMBERSHIP_VALIDITY_DAYS',
@@ -271,18 +279,41 @@ export class MembershipService {
 
     endDate.setDate(endDate.getDate() + validityDays);
 
-    return this.prisma.membership.update({
-      where: {
-        id: membershipId,
-      },
-      data: {
-        status: 'ACTIVE',
-        startDate,
-        endDate,
-        verifiedAt: new Date(),
-        verifiedBy: adminUserId,
-        remarks: null,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      if (membership.couponCode) {
+        const coupon = await tx.membershipCoupon.findUnique({
+          where: {
+            code: membership.couponCode,
+          },
+        });
+
+        if (coupon) {
+          await tx.membershipCoupon.update({
+            where: {
+              id: coupon.id,
+            },
+            data: {
+              usedCount: {
+                increment: 1,
+              },
+            },
+          });
+        }
+      }
+
+      return tx.membership.update({
+        where: {
+          id: membershipId,
+        },
+        data: {
+          status: 'ACTIVE',
+          startDate,
+          endDate,
+          verifiedAt: new Date(),
+          verifiedBy: adminUserId,
+          remarks: null,
+        },
+      });
     });
   }
 

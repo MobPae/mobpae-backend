@@ -1,98 +1,322 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+MobPae Backend is the core API service powering the MobPae salary advance platform.
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+MobPae enables employees to access a portion of their earned salary before payday while providing employers and administrators with tools to manage approvals, disbursals, repayments, memberships, and settlements.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+⸻
 
-## Description
+Tech Stack
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- NestJS
+- TypeScript
+- PostgreSQL
+- Prisma ORM
+- JWT Authentication
+- Swagger API Documentation
+- Docker
 
-## Project setup
+⸻
 
-```bash
-$ npm install
-```
+Core Modules
 
-## Compile and run the project
+Authentication
 
-```bash
-# development
-$ npm run start
+- Login
+- JWT Access Tokens
+- Role Based Access Control
+- Employee
+- Employer
+- Admin
 
-# watch mode
-$ npm run start:dev
+Employee Management
 
-# production mode
-$ npm run start:prod
-```
+- Employee onboarding
+- Employee activation
+- Employee profile management
 
-## Run tests
+Employer Management
 
-```bash
-# unit tests
-$ npm run test
+- Employer onboarding
+- Employer approval workflow
+- Employer payroll configuration
+- Risk status monitoring
 
-# e2e tests
-$ npm run test:e2e
+Salary Requests
 
-# test coverage
-$ npm run test:cov
-```
+- Salary advance request creation
+- Employer approval
+- Employer rejection
+- Request tracking
+- Repayment projections
 
-## Deployment
+Membership
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- Annual membership model
+- Membership payment submission
+- UTR reference tracking
+- Screenshot upload
+- Coupon support
+- Admin approval workflow
+- Membership renewal
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+KYC
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+- PAN upload
+- Aadhaar upload
+- Salary slip upload
+- Verification workflow
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Bank Accounts
 
-## Resources
+- Employee bank account management
+- Verification tracking
 
-Check out a few resources that may come in handy when working with NestJS:
+Disbursals
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+- Admin disbursal processing
+- Disbursal tracking
 
-## Support
+Repayments
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+- Automatic repayment scheduling
+- Interest calculation
+- Payroll recovery support
 
-## Stay in touch
+Payroll
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+- Payroll recovery processing
+- Employer payroll settings
+- Recovery summaries
 
-## License
+Employer Settlements
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- Settlement generation
+- Outstanding balance tracking
+- Risk monitoring
+- Settlement payment tracking
+
+Notifications
+
+- System notifications
+- Request approval notifications
+- Request rejection notifications
+
+Settings
+
+- Membership configuration
+- Advance salary configuration
+- Interest configuration
+- Employer grace period configuration
+
+⸻
+
+Business Flow
+
+Employer Onboarding
+
+1. Employer submits enquiry
+2. Admin reviews enquiry
+3. Employer is approved
+4. Employer account is activated
+
+Employee Onboarding
+
+1. Employer uploads employee
+2. Employee activates account
+3. Employee completes KYC
+4. Employee adds bank account
+5. Employee purchases membership
+
+Membership Flow
+
+1. Employee submits membership payment
+2. Employee uploads screenshot and UTR
+3. Optional coupon code applied
+4. Admin reviews payment
+5. Admin approves membership
+6. Membership becomes active for configured validity period
+
+Salary Advance Flow
+
+1. Employee submits salary request
+2. System validates:
+   - Membership
+   - KYC
+   - Bank verification
+   - Salary eligibility
+3. Employer reviews request
+4. Employer approves request
+5. Admin disburses funds
+6. Repayment schedule is created
+
+Repayment Flow
+
+1. Repayment scheduled automatically
+2. Payroll recovery date calculated
+3. Recovery processed
+4. Salary request marked repaid
+
+Settlement Flow
+
+1. Payroll recovery processed
+2. Settlement generated
+3. Employer owes MobPae
+4. Employer payment received
+5. Admin marks settlement paid
+
+⸻
+
+Membership Coupons
+
+Supported features:
+
+- Fixed amount discounts
+- Usage limits
+- Expiry dates
+- Active/inactive status
+
+Example:
+
+FIRST10
+
+- Discount: ₹100
+- Usage Limit: 10
+
+EARLYBIRD
+
+- Discount: ₹50
+- Unlimited Usage
+
+Coupon usage is consumed only after membership approval.
+
+⸻
+
+Project Structure
+
+src/
+
+- auth/
+- employees/
+- employers/
+- salary-requests/
+- memberships/
+- kyc/
+- bank-accounts/
+- disbursals/
+- repayments/
+- payroll/
+- employer-settlements/
+- notifications/
+- settings/
+- prisma/
+
+⸻
+
+Environment Variables
+
+Create a .env file.
+
+DATABASE_URL=
+JWT_SECRET=
+JWT_EXPIRES_IN=
+PORT=
+
+⸻
+
+Installation
+
+Install dependencies:
+
+npm install
+
+Generate Prisma Client:
+
+npx prisma generate
+
+Run migrations:
+
+npx prisma migrate dev
+
+Start development server:
+
+npm run start:dev
+
+Build application:
+
+npm run build
+
+⸻
+
+API Documentation
+
+Swagger is available at:
+
+/api-docs
+
+after starting the application.
+
+⸻
+
+Roles
+
+Employee
+
+- Manage profile
+- Upload KYC
+- Manage bank account
+- Purchase membership
+- Create salary requests
+- Track repayments
+
+Employer
+
+- View employees
+- Approve salary requests
+- Reject salary requests
+- Configure payroll settings
+- View settlements
+
+Admin
+
+- Approve employers
+- Verify KYC
+- Activate memberships
+- Process disbursals
+- Manage settlements
+- Manage coupons
+- Configure system settings
+
+⸻
+
+Current MVP Scope
+
+Included in Version 1.0:
+
+- Authentication
+- Employee Management
+- Employer Management
+- Membership Management
+- Salary Advances
+- KYC Verification
+- Bank Verification
+- Disbursals
+- Repayments
+- Payroll Recovery
+- Employer Settlements
+- Coupon Management
+- Notifications
+- Settings
+
+Planned for Future Releases:
+
+- Audit Logs
+- Advanced Reporting
+- Payment Gateway Integration
+- Automated Membership Payments
+- Automated Settlement Collection
+- Analytics Dashboard
+
+⸻
+
+Version
+
+Current Version: 1.0
