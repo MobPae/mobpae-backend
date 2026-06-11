@@ -33,11 +33,10 @@ export class SalaryRequestsService {
    * Result:
    * Request is submitted for employer approval.
    */
-
-  async create(dto: CreateSalaryRequestDto) {
+  async create(userId: string, dto: CreateSalaryRequestDto) {
     const employee = await this.prisma.employee.findUnique({
       where: {
-        id: dto.employeeId,
+        userId,
       },
     });
 
@@ -46,6 +45,7 @@ export class SalaryRequestsService {
     }
 
     const settings = await this.settingsService.getAdvanceSettings();
+
     const availableAdvance = this.settingsService.calculateAvailableAdvance(
       Number(employee.salaryInHand),
       settings,
@@ -66,7 +66,7 @@ export class SalaryRequestsService {
     if (settings.requireKyc) {
       const verifiedDocs = await this.prisma.kycDocument.findMany({
         where: {
-          employeeId: dto.employeeId,
+          employeeId: employee.id,
           status: 'VERIFIED',
         },
       });
@@ -83,7 +83,7 @@ export class SalaryRequestsService {
     if (settings.requireBankVerification) {
       const bankAccount = await this.prisma.employeeBankAccount.findUnique({
         where: {
-          employeeId: dto.employeeId,
+          employeeId: employee.id,
         },
       });
 
@@ -96,9 +96,8 @@ export class SalaryRequestsService {
       }
     }
 
-    const membershipActive = await this.membershipService.isActive(
-      dto.employeeId,
-    );
+    const membershipActive = await this.membershipService.isActive(employee.id);
+
     if (!membershipActive) {
       throw new BadRequestException('Employee membership is not active');
     }
@@ -106,7 +105,7 @@ export class SalaryRequestsService {
     if (!settings.allowMultipleRequestsPerCycle) {
       const activeRequest = await this.prisma.salaryRequest.findFirst({
         where: {
-          employeeId: dto.employeeId,
+          employeeId: employee.id,
           status: {
             in: [
               'SUBMITTED',
@@ -128,7 +127,7 @@ export class SalaryRequestsService {
       const outstandingRepayment = await this.prisma.repayment.findFirst({
         where: {
           salaryRequest: {
-            employeeId: dto.employeeId,
+            employeeId: employee.id,
           },
           status: {
             in: ['SCHEDULED', 'OVERDUE'],

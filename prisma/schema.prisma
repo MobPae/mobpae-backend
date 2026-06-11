@@ -62,7 +62,9 @@ enum EmployerRiskStatus {
 }
 
 enum MembershipStatus {
+  PENDING
   ACTIVE
+  REJECTED
   EXPIRED
   CANCELLED
 }
@@ -329,29 +331,38 @@ model Setting {
 
 model Membership {
   id String @id @default(uuid())
-
   employeeId String @unique
-
   planName String
-
   amount Decimal @db.Decimal(12,2)
-
   startDate DateTime
-
   endDate DateTime
-
-  status MembershipStatus @default(ACTIVE)
-
+  status MembershipStatus @default(PENDING)
+  paymentReference String?
+  paymentScreenshot String?
+  verifiedBy String?
+  verifiedAt DateTime?
+  remarks String?
   couponCode String?
-
   discountAmount Decimal? @db.Decimal(12,2)
-
   employee Employee @relation(fields: [employeeId], references: [id])
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("memberships")
+}
+
+model MembershipCoupon {
+  id String @id @default(uuid())
+  code String @unique
+  discountAmount Decimal @db.Decimal(12,2)
+  isActive Boolean @default(true)
+  validTill DateTime?
+  usageLimit Int?
+  usedCount Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("membership_coupons")
 }
 
 model EmployerSettlement {

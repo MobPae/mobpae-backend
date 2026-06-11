@@ -36,10 +36,11 @@ export class SalaryRequestsController {
     summary: 'Create salary request',
   })
   create(
+    @Req() req: any,
     @Body()
     dto: CreateSalaryRequestDto,
   ) {
-    return this.salaryRequestsService.create(dto);
+    return this.salaryRequestsService.create(req.user.userId, dto);
   }
 
   /**
