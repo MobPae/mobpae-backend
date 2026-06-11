@@ -374,12 +374,14 @@ model EmployerSettlement {
 
   principalAmount Decimal @db.Decimal(12,2)
 
+  interestAmount Decimal @default(0) @db.Decimal(12,2)
+
   lateFeeAmount Decimal @default(0) @db.Decimal(12,2)
 
   totalAmount Decimal @db.Decimal(12,2)
 
   outstandingAmount Decimal @db.Decimal(12,2)
-  
+
   dueDate DateTime
 
   paidDate DateTime?

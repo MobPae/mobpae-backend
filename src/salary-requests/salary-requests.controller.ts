@@ -144,8 +144,11 @@ export class SalaryRequestsController {
   approve(
     @Param('id')
     id: string,
+
+    @Req()
+    req: any,
   ) {
-    return this.salaryRequestsService.approve(id);
+    return this.salaryRequestsService.approve(id, req.user.userId);
   }
 
   /**
@@ -159,9 +162,13 @@ export class SalaryRequestsController {
   reject(
     @Param('id')
     id: string,
+
     @Body()
     dto: RejectSalaryRequestDto,
+
+    @Req()
+    req: any,
   ) {
-    return this.salaryRequestsService.reject(id, dto.remarks);
+    return this.salaryRequestsService.reject(id, dto.remarks, req.user.userId);
   }
 }

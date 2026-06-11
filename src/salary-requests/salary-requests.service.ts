@@ -270,7 +270,7 @@ export class SalaryRequestsService {
    * Result:
    * Request becomes eligible for disbursal.
    */
-  async approve(id: string) {
+  async approve(id: string, userId: string) {
     const request = await this.prisma.salaryRequest.findUnique({
       where: {
         id,
@@ -282,6 +282,24 @@ export class SalaryRequestsService {
 
     if (!request) {
       throw new BadRequestException('Salary request not found');
+    }
+
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new BadRequestException('Employer not found');
+    }
+
+    if (request?.employerId !== employer.id) {
+      throw new BadRequestException('Unauthorized request access');
+    }
+
+    if (request.status !== 'SUBMITTED') {
+      throw new BadRequestException('Only submitted requests can be approved');
     }
 
     const updatedRequest = await this.prisma.salaryRequest.update({
@@ -312,7 +330,7 @@ export class SalaryRequestsService {
     });
 
     if (!employer) {
-      throw new Error('Employer not found');
+      throw new NotFoundException('Employer not found');
     }
 
     return this.prisma.salaryRequest.findMany({
@@ -328,10 +346,14 @@ export class SalaryRequestsService {
     });
   }
 
-  async reject(id: string, remarks: string) {
+  async reject(id: string, remarks: string, userId: string) {
     const request = await this.prisma.salaryRequest.findUnique({
       where: {
         id,
+      },
+
+      include: {
+        employee: true,
       },
     });
 
@@ -339,15 +361,47 @@ export class SalaryRequestsService {
       throw new NotFoundException('Salary request not found');
     }
 
-    return this.prisma.salaryRequest.update({
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new BadRequestException('Employer not found');
+    }
+
+    if (request.employerId !== employer.id) {
+      throw new BadRequestException('Unauthorized request access');
+    }
+
+    if (request.status !== 'SUBMITTED') {
+      throw new BadRequestException('Only submitted requests can be rejected');
+    }
+
+    const updatedRequest = await this.prisma.salaryRequest.update({
       where: {
         id,
       },
+
       data: {
         status: 'EMPLOYER_REJECTED',
+
         remarks,
       },
     });
+
+    if (request.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        request.employee.userId,
+
+        'Salary Request Rejected',
+
+        remarks || 'Your salary advance request has been rejected.',
+      );
+    }
+
+    return updatedRequest;
   }
 
   async preview(userId: string, amount: number) {

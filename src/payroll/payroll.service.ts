@@ -187,10 +187,17 @@ export class PayrollService {
       );
     }
 
-    const settlementAmount = repayments.reduce(
-      (sum, repayment) => sum + Number(repayment.totalAmount),
+    const principalAmount = repayments.reduce(
+      (sum, repayment) => sum + Number(repayment.principalAmount),
       0,
     );
+
+    const interestAmount = repayments.reduce(
+      (sum, repayment) => sum + Number(repayment.interestAmount),
+      0,
+    );
+
+    const settlementAmount = principalAmount + interestAmount;
 
     const graceDaysSetting = await this.prisma.setting.findUnique({
       where: {
@@ -217,22 +224,27 @@ export class PayrollService {
         },
       });
 
+      await tx.salaryRequest.updateMany({
+        where: {
+          id: {
+            in: repayments.map((r) => r.salaryRequestId),
+          },
+        },
+        data: {
+          status: 'REPAID',
+        },
+      });
+
       return tx.employerSettlement.create({
         data: {
           employerId,
-
           payrollMonth,
-
-          principalAmount: settlementAmount,
-
+          principalAmount,
+          interestAmount,
           lateFeeAmount: 0,
-
           totalAmount: settlementAmount,
-
           outstandingAmount: settlementAmount,
-
           dueDate: settlementDueDate,
-
           status: 'PENDING',
         },
       });

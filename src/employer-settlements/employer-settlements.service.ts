@@ -97,7 +97,7 @@ export class EmployerSettlementsService {
       throw new BadRequestException('Settlement already paid');
     }
 
-    return this.prisma.employerSettlement.update({
+    const updatedSettlement = await this.prisma.employerSettlement.update({
       where: {
         id,
       },
@@ -108,6 +108,10 @@ export class EmployerSettlementsService {
         referenceNumber,
       },
     });
+
+    await this.updateEmployerRiskStatus(settlement.employerId);
+
+    return updatedSettlement;
   }
 
   async getSummary(userId: string) {
@@ -234,99 +238,5 @@ export class EmployerSettlementsService {
       employerId,
       riskStatus,
     };
-  }
-
-  /**
-
- * Admin
- * Generate employer settlement for a payroll cycle.
- *
- * Business Flow:
- * 1. Validate settlement does not already exist.
- * 2. Fetch all outstanding employee repayments for employer.
- * 3. Calculate total principal amount.
- * 4. Calculate total recovery amount (principal + interest).
- * 5. Create settlement record.
-
- * Example:
- * Employee A = ₹5,040
- * Employee B = ₹6,055
- * Employee C = ₹4,035
- *
-
- * Settlement:
- * Principal = ₹15,000
- * Total = ₹15,130
- *
-
- * Result:
- * Employer owes MobPae ₹15,130.
- */
-
-  async generateSettlement(employerId: string, payrollMonth: string) {
-    const existingSettlement = await this.prisma.employerSettlement.findUnique({
-      where: {
-        employerId_payrollMonth: {
-          employerId,
-          payrollMonth,
-        },
-      },
-    });
-
-    if (existingSettlement) {
-      throw new BadRequestException(
-        'Settlement already exists for this payroll month',
-      );
-    }
-
-    const repayments = await this.prisma.repayment.findMany({
-      where: {
-        status: {
-          in: ['SCHEDULED', 'OVERDUE'],
-        },
-        salaryRequest: {
-          employerId,
-        },
-      },
-      include: {
-        salaryRequest: true,
-      },
-    });
-
-    if (!repayments.length) {
-      throw new BadRequestException(
-        'No repayments found for settlement generation',
-      );
-    }
-
-    const principalAmount = repayments.reduce(
-      (sum, repayment) => sum + Number(repayment.principalAmount),
-      0,
-    );
-
-    const totalAmount = repayments.reduce(
-      (sum, repayment) => sum + Number(repayment.totalAmount),
-      0,
-    );
-
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 7);
-
-    return this.prisma.employerSettlement.create({
-      data: {
-        employerId,
-        payrollMonth,
-
-        principalAmount,
-
-        totalAmount,
-
-        outstandingAmount: totalAmount,
-
-        dueDate,
-
-        status: 'PENDING',
-      },
-    });
   }
 }
