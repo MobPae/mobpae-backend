@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PayrollUtil } from 'src/common/utils/payroll.util';
 
 @Injectable()
 export class DisbursalsService {
@@ -102,6 +103,7 @@ export class DisbursalsService {
    * Result:
    * Employee receives advance salary.
    */
+
   async disburse(id: string) {
     const existingDisbursal = await this.prisma.disbursal.findUnique({
       where: {
@@ -135,6 +137,47 @@ export class DisbursalsService {
       throw new BadRequestException(
         'Employer has overdue settlements. Please clear outstanding dues before further disbursals.',
       );
+    }
+
+    const existingRepayment = await this.prisma.repayment.findUnique({
+      where: {
+        salaryRequestId: salaryRequest.id,
+      },
+    });
+
+    if (!existingRepayment) {
+      const interestSetting = await this.prisma.setting.findUnique({
+        where: {
+          key: 'ANNUAL_INTEREST_RATE',
+        },
+      });
+
+      const annualInterestRate = Number(interestSetting?.value ?? 36);
+
+      const approvedAmount = Number(
+        salaryRequest.approvedAmount ?? salaryRequest.amount,
+      );
+
+      const repaymentCalculation = PayrollUtil.calculateRepayment(
+        approvedAmount,
+        salaryRequest.requestedAt,
+        salaryRequest.employer.payrollCutoffDate,
+        salaryRequest.employer.payrollDate,
+        annualInterestRate,
+      );
+
+      await this.prisma.repayment.create({
+        data: {
+          salaryRequestId: salaryRequest.id,
+          principalAmount: approvedAmount,
+          interestAmount: repaymentCalculation.interestAmount,
+          totalAmount: repaymentCalculation.totalAmount,
+          interestRate: annualInterestRate,
+          interestDays: repaymentCalculation.interestDays,
+          dueDate: repaymentCalculation.dueDate,
+          status: 'SCHEDULED',
+        },
+      });
     }
 
     const disbursal = await this.prisma.disbursal.update({
