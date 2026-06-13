@@ -55,21 +55,17 @@ export class UpdateSettingsDto {
 
   @IsOptional()
   @IsString()
-  membershipPlanName?: string;
+  MEMBERSHIP_AMOUNT?: string;
 
   @IsOptional()
   @IsString()
-  membershipFee?: string;
+  MEMBERSHIP_VALIDITY_DAYS?: string;
 
   @IsOptional()
   @IsString()
-  membershipValidityLabel?: string;
+  EMPLOYER_GRACE_DAYS?: string;
 
   @IsOptional()
   @IsString()
-  membershipCouponCode?: string;
-
-  @IsOptional()
-  @IsString()
-  membershipCouponDeduction?: string;
+  EMPLOYER_LATE_FEE_PERCENTAGE?: string;
 }

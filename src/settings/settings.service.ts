@@ -59,7 +59,8 @@ export class SettingsService {
         DEFAULT_ADVANCE_SETTINGS.advancePercentage,
       ),
       interestChargePercentage: this.toNumber(
-        settings['interestChargePercentage'] ?? settings['ANNUAL_INTEREST_RATE'],
+        settings['interestChargePercentage'] ??
+          settings['ANNUAL_INTEREST_RATE'],
         DEFAULT_ADVANCE_SETTINGS.interestChargePercentage,
       ),
       processingFeePercentage: this.toNumber(
@@ -98,7 +99,10 @@ export class SettingsService {
         settings['repaymentAlert'],
         DEFAULT_ADVANCE_SETTINGS.repaymentAlert,
       ),
-      kycAlert: this.toBoolean(settings['kycAlert'], DEFAULT_ADVANCE_SETTINGS.kycAlert),
+      kycAlert: this.toBoolean(
+        settings['kycAlert'],
+        DEFAULT_ADVANCE_SETTINGS.kycAlert,
+      ),
       bankVerificationAlert: this.toBoolean(
         settings['bankVerificationAlert'],
         DEFAULT_ADVANCE_SETTINGS.bankVerificationAlert,
@@ -124,6 +128,10 @@ export class SettingsService {
     const entries = Object.entries(dto);
 
     for (const [key, value] of entries) {
+      if (value === undefined || value === null || value === 'undefined') {
+        continue;
+      }
+
       await this.prisma.setting.upsert({
         where: {
           key,
