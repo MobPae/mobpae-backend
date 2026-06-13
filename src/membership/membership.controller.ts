@@ -72,6 +72,39 @@ export class MembershipController {
   }
 
   /**
+
+ * Admin
+
+ * View all memberships
+
+ */
+
+  @Get()
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get all memberships',
+  })
+  findAll() {
+    return this.membershipService.findAll();
+  }
+
+  /**
+
+ * Admin
+
+ * Membership summary
+
+ */
+
+  @Get('summary')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get membership summary',
+  })
+  getSummary() {
+    return this.membershipService.getSummary();
+  }
+  /**
    * Admin
    * Create membership coupon
    */

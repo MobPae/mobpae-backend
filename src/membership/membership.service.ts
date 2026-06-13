@@ -383,4 +383,52 @@ export class MembershipService {
 
     return membership;
   }
+
+  async findAll() {
+    return this.prisma.membership.findMany({
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async getSummary() {
+    const memberships = await this.prisma.membership.findMany();
+
+    const active = memberships.filter((m) => m.status === 'ACTIVE').length;
+
+    const pending = memberships.filter((m) => m.status === 'PENDING').length;
+
+    const rejected = memberships.filter((m) => m.status === 'REJECTED').length;
+
+    const expired = memberships.filter(
+      (m) => m.status === 'ACTIVE' && m.endDate < new Date(),
+    ).length;
+
+    const revenue = memberships
+
+      .filter((m) => m.status === 'ACTIVE')
+
+      .reduce(
+        (sum, m) => sum + Number(m.amount),
+
+        0,
+      );
+
+    return {
+      active,
+      pending,
+      rejected,
+      expired,
+      revenue,
+    };
+  }
 }
