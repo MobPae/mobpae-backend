@@ -259,4 +259,18 @@ export class PayrollService {
       dueDate: settlementDueDate,
     };
   }
+
+  async processRecoveryForEmployer(userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new NotFoundException('Employer not found');
+    }
+
+    return this.processRecovery(employer.id);
+  }
 }

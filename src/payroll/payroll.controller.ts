@@ -38,6 +38,21 @@ export class PayrollController {
   }
 
   /**
+
+ * Employer Process Payroll
+
+ */
+
+  @Post('employer/process')
+  @Roles('EMPLOYER')
+  @ApiOperation({
+    summary: 'Process employer payroll recoveries',
+  })
+  processEmployerPayroll(@Req() req: any) {
+    return this.payrollService.processRecoveryForEmployer(req.user.userId);
+  }
+
+  /**
    * Employer Recoveries
    */
   @Get('employer/recoveries')
