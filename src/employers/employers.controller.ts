@@ -7,8 +7,9 @@ import {
   Req,
   Param,
   UseGuards,
+  Post,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { EmployersService } from './employers.service';
 
@@ -20,6 +21,7 @@ import { Role } from '../common/enums/role.enum';
 
 import { UpdateEmployerStatusDto } from './dto/update-employer-status.dto';
 import { UpdateEmployerProfileDto } from './dto/update-employer-profile.dto';
+import { CreateEmployerDto } from './dto/create-employer.dto';
 
 @ApiTags('Employers')
 @ApiBearerAuth()
@@ -61,6 +63,18 @@ export class EmployersController {
     id: string,
   ) {
     return this.employersService.findOne(id);
+  }
+
+  @Post()
+  @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Create employer',
+  })
+  create(
+    @Body()
+    dto: CreateEmployerDto,
+  ) {
+    return this.employersService.create(dto);
   }
 
   @Patch(':id/status')

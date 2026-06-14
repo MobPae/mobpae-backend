@@ -158,12 +158,50 @@ export class EmployerSettlementsService {
 
     const nextDueSettlement = settlements.find((s) => s.status !== 'PAID');
 
+    const graceDaysSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'EMPLOYER_GRACE_DAYS',
+      },
+    });
+
+    const lateFeeSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'EMPLOYER_LATE_FEE_PERCENTAGE',
+      },
+    });
+
+    const gracePeriodDays = Number(graceDaysSetting?.value ?? 3);
+
+    const lateFeePercentage = Number(lateFeeSetting?.value ?? 30);
+
+    let daysRemaining: number | null = null;
+
+    if (nextDueSettlement?.dueDate) {
+      daysRemaining = Math.ceil(
+        (nextDueSettlement.dueDate.getTime() - Date.now()) /
+          (1000 * 60 * 60 * 24),
+      );
+    }
+
+    const estimatedLateFeeAmount = Number(
+      (outstandingAmount * (lateFeePercentage / 100)).toFixed(2),
+    );
+
+    const amountPayableAfterGracePeriod = Number(
+      (outstandingAmount + estimatedLateFeeAmount).toFixed(2),
+    );
+
     return {
       outstandingAmount,
       overdueAmount,
       pendingSettlements,
       paidSettlements,
       nextDueDate: nextDueSettlement?.dueDate ?? null,
+      gracePeriodDays,
+      daysRemaining,
+      lateFeePercentage,
+      estimatedLateFeeAmount,
+      amountPayableAfterGracePeriod,
       riskStatus: employer.riskStatus,
     };
   }
