@@ -95,6 +95,12 @@ export class EmployersService {
   }
 
   async create(dto: CreateEmployerDto) {
+    console.log('Create Employer DTO:', dto);
+
+    if (!dto.email?.trim()) {
+      throw new BadRequestException('Email is required');
+    }
+
     const existingUser = await this.prisma.user.findUnique({
       where: {
         email: dto.email,
@@ -109,6 +115,9 @@ export class EmployersService {
 
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
+    /**
+     * Create Login User
+     */
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -118,6 +127,12 @@ export class EmployersService {
       },
     });
 
+    /**
+     * Create Employer
+     *
+     * Employer remains PENDING until
+     * Admin approves onboarding.
+     */
     const employer = await this.prisma.employer.create({
       data: {
         userId: user.id,
@@ -129,12 +144,29 @@ export class EmployersService {
         email: dto.email,
         phone: dto.phone,
 
-        status: 'ACTIVE',
+        status: 'PENDING',
 
         payrollDate: dto.payrollDate ?? 28,
         payrollCutoffDate: dto.payrollCutoffDate ?? 22,
 
         riskStatus: 'GOOD',
+      },
+    });
+
+    /**
+     * Create Employer Enquiry
+     *
+     * Keeps Employer Onboarding UI
+     * as the single source of truth.
+     */
+    await this.prisma.employerEnquiry.create({
+      data: {
+        companyName: dto.companyName,
+        contactPerson: dto.contactPerson,
+        email: dto.email,
+        phone: dto.phone,
+
+        status: 'NEW',
       },
     });
 

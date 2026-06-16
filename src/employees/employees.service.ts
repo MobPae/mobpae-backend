@@ -323,6 +323,17 @@ export class EmployeesService {
     };
   }
 
+  /**
+   * Employee Mobile App Profile
+   *
+   * Powers:
+   * - Home Dashboard
+   * - Profile Screen
+   * - Advance Eligibility
+   * - Membership Banner
+   * - KYC Status
+   * - Bank Account Status
+   */
   async findByUserId(userId: string) {
     const employee = await this.prisma.employee.findUnique({
       where: {
@@ -332,6 +343,10 @@ export class EmployeesService {
         employer: true,
         salaryLimit: true,
         membership: true,
+        bankAccount: true,
+        kycDocuments: {
+          take: 1,
+        },
       },
     });
 
@@ -339,6 +354,114 @@ export class EmployeesService {
       throw new NotFoundException('Employee not found');
     }
 
-    return employee;
+    /**
+     * Salary Advance Settings
+     *
+     * Available Advance =
+     * MIN(
+     *   Salary × Advance Percentage,
+     *   Maximum Advance
+     * )
+     */
+    const advancePercentageSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'advancePercentage',
+      },
+    });
+
+    const maximumAdvanceSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'maximumAdvance',
+      },
+    });
+
+    const advancePercentage = Number(advancePercentageSetting?.value ?? 40);
+
+    const maximumAdvance = Number(maximumAdvanceSetting?.value ?? 10000);
+
+    const percentageBasedAmount =
+      Number(employee.salaryInHand) * (advancePercentage / 100);
+
+    const availableAdvance = Math.min(percentageBasedAmount, maximumAdvance);
+
+    /**
+     * KYC Status
+     */
+    const kycStatus =
+      employee.kycDocuments.length > 0 ? 'SUBMITTED' : 'NOT_SUBMITTED';
+
+    /**
+     * Bank Account Status
+     */
+    const bankAccountStatus = employee.bankAccount ? 'ADDED' : 'NOT_ADDED';
+
+    return {
+      /**
+       * Employee Info
+       */
+      id: employee.id,
+      name: employee.name,
+      email: employee.email,
+      phone: employee.phone,
+      employeeCode: employee.employeeCode,
+
+      /**
+       * Salary Info
+       */
+      salaryInHand: Number(employee.salaryInHand),
+      availableAdvance,
+
+      /**
+       * Employer Info
+       */
+      employerId: employee.employer.id,
+      employerName: employee.employer.companyName,
+
+      /**
+       * Payroll Info
+       */
+      payrollDate: employee.employer.payrollDate,
+
+      /**
+       * Membership
+       */
+      membershipActive: !!employee.membership,
+
+      /**
+       * KYC & Bank
+       */
+      kycStatus,
+      bankAccountStatus,
+
+      /**
+       * Employee Status
+       */
+      appActivated: employee.appActivated,
+      employmentStatus: employee.employmentStatus,
+    };
+  }
+
+  async findAllForEmployer(userId: string) {
+    const employer = await this.prisma.employer.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employer) {
+      throw new NotFoundException('Employer not found');
+    }
+
+    return this.prisma.employee.findMany({
+      where: {
+        employerId: employer.id,
+      },
+      include: {
+        employer: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
   }
 }

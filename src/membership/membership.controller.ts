@@ -19,6 +19,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RequestMembershipDto } from './dto/request-membership.dto';
 import { RejectMembershipDto } from './dto/reject-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
+import { ValidateMembershipCouponDto } from './dto/validate-membership-coupon.dto';
 
 @ApiTags('Membership')
 @ApiBearerAuth()
@@ -58,6 +59,32 @@ export class MembershipController {
     return this.membershipService.requestMembership(req.user.userId, dto);
   }
 
+  @Post('coupons/validate')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Validate membership coupon',
+  })
+  validateCoupon(
+    @Body()
+    dto: ValidateMembershipCouponDto,
+  ) {
+    return this.membershipService.validateCoupon(dto.couponCode);
+  }
+
+  /**
+   * Employee
+   * Membership configuration
+   */
+
+  @Get('config')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Get membership configuration',
+  })
+  getConfig() {
+    return this.membershipService.getConfig();
+  }
+
   /**
    * Admin
    * View pending membership requests
@@ -89,12 +116,9 @@ export class MembershipController {
   }
 
   /**
-
- * Admin
-
- * Membership summary
-
- */
+   * Admin
+   * Membership summary
+   */
 
   @Get('summary')
   @Roles('ADMIN')

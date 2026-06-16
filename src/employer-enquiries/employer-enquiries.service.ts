@@ -32,79 +32,51 @@ export class EmployerEnquiriesService {
 
   /**
    * Approves an employer enquiry.
-   *
-   * Business Flow:
-   * 1. Validate enquiry exists.
-   * 2. Create Employer record.
-   * 3. Create Employer User account.
-   * 4. Assign default password.
-   * 5. Mark enquiry as APPROVED.
-   *
-   * Result: Employer can login and start onboarding employees.
    */
   async approve(id: string, dto: ApproveEmployerEnquiryDto) {
     const enquiry = await this.prisma.employerEnquiry.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
     if (!enquiry) {
       throw new Error('Enquiry not found');
     }
 
-    const existingUser = await this.prisma.user.findUnique({
+    const employer = await this.prisma.employer.findFirst({
       where: {
         email: enquiry.email,
       },
     });
 
-    if (existingUser) {
-      throw new Error('User already exists');
+    if (!employer) {
+      throw new Error('Employer not found');
     }
 
-    const defaultPassword = 'MobPae@123';
-
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email: enquiry.email,
-        password: hashedPassword,
-        role: 'EMPLOYER',
-        isActive: true,
+    const updatedEmployer = await this.prisma.employer.update({
+      where: {
+        id: employer.id,
       },
-    });
-
-    const employer = await this.prisma.employer.create({
       data: {
-        userId: user.id,
-
-        companyName: enquiry.companyName,
-        contactPerson: enquiry.contactPerson,
-        email: enquiry.email,
-        phone: enquiry.phone,
-
-        companyCode: dto.companyCode,
-
-        payrollDate: 28,
-        payrollCutoffDate: 21,
-
+        companyCode: dto.companyCode ?? employer.companyCode,
         status: 'ACTIVE',
       },
     });
 
     await this.prisma.employerEnquiry.update({
-      where: { id },
+      where: {
+        id,
+      },
       data: {
         status: 'APPROVED',
       },
     });
 
     return {
-      employer,
-      credentials: {
-        email: enquiry.email,
-        password: defaultPassword,
-      },
+      employerId: updatedEmployer.id,
+      companyName: updatedEmployer.companyName,
+      status: updatedEmployer.status,
     };
   }
 

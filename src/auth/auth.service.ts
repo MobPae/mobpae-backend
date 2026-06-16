@@ -31,6 +31,9 @@ export class AuthService {
 
     let employeeId: string | undefined;
 
+    /**
+     * Employee Validation
+     */
     if (user.role === 'EMPLOYEE') {
       const employee = await this.prisma.employee.findUnique({
         where: {
@@ -55,6 +58,27 @@ export class AuthService {
       }
 
       employeeId = employee.id;
+    }
+
+    /**
+     * Employer Validation
+     */
+    if (user.role === 'EMPLOYER') {
+      const employer = await this.prisma.employer.findUnique({
+        where: {
+          userId: user.id,
+        },
+      });
+
+      if (!employer) {
+        throw new UnauthorizedException('Employer not found');
+      }
+
+      if (employer.status !== 'ACTIVE') {
+        throw new ForbiddenException(
+          'Your employer account is pending approval.',
+        );
+      }
     }
 
     const payload = {

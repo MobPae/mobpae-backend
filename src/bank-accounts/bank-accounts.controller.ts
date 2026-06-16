@@ -25,10 +25,12 @@ export class BankAccountsController {
   @Post()
   @Roles('EMPLOYEE')
   create(
+    @Req() req: any,
+
     @Body()
     dto: CreateBankAccountDto,
   ) {
-    return this.bankAccountsService.create(dto);
+    return this.bankAccountsService.create(req.user.userId, dto);
   }
 
   @Post('employee/:employeeId/upi')

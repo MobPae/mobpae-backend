@@ -24,9 +24,15 @@ export class EmployeesController {
   }
 
   @Get()
-  @Roles('ADMIN', 'EMPLOYER')
+  @Roles('ADMIN')
   findAll() {
     return this.employeesService.findAll();
+  }
+
+  @Get('employer')
+  @Roles('EMPLOYER')
+  findAllForEmployer(@Req() req: any) {
+    return this.employeesService.findAllForEmployer(req.user.userId);
   }
 
   @Get('me')

@@ -1,11 +1,13 @@
 import { IsOptional, IsString } from 'class-validator';
 
 export class RequestMembershipDto {
+  @IsOptional()
   @IsString()
-  paymentReference: string;
+  paymentReference?: string;
 
+  @IsOptional()
   @IsString()
-  paymentScreenshot: string;
+  paymentScreenshot?: string;
 
   @IsOptional()
   @IsString()

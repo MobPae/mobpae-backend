@@ -17,10 +17,11 @@ export class KycDocumentsController {
   @Post()
   @Roles('EMPLOYEE')
   create(
-    @Body()
-    dto: CreateKycDocumentDto,
+    @Req() req: any,
+
+    @Body() dto: CreateKycDocumentDto,
   ) {
-    return this.kycDocumentsService.create(dto);
+    return this.kycDocumentsService.create(req.user.userId, dto);
   }
 
   @Get('my')

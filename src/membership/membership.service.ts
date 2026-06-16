@@ -16,6 +16,10 @@ export class MembershipService {
    * Employee
    * Get logged-in employee membership
    */
+  /**
+   * Employee
+   * Get logged-in employee membership
+   */
   async getMyMembership(userId: string) {
     const employee = await this.prisma.employee.findFirst({
       where: {
@@ -27,19 +31,56 @@ export class MembershipService {
       throw new NotFoundException('Employee not found');
     }
 
+    /**
+     * Membership Configuration
+     */
+    const amountSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'MEMBERSHIP_AMOUNT',
+      },
+    });
+
+    const validitySetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'MEMBERSHIP_VALIDITY_DAYS',
+      },
+    });
+
+    const membershipFee = Number(amountSetting?.value ?? 449);
+
+    const membershipValidityDays = Number(validitySetting?.value ?? 365);
+
     const membership = await this.prisma.membership.findUnique({
       where: {
         employeeId: employee.id,
       },
     });
 
+    /**
+     * No membership found
+     */
     if (!membership) {
       return {
         active: false,
+
+        membershipFee,
+        membershipValidityDays,
+
+        amountPaid: 0,
+        planName: null,
+
+        memberSince: null,
+        validTill: null,
+
+        daysRemaining: 0,
+
         membership: null,
       };
     }
 
+    /**
+     * Calculate remaining validity
+     */
     const today = new Date();
 
     const daysRemaining = Math.max(
@@ -50,9 +91,24 @@ export class MembershipService {
       ),
     );
 
+    /**
+     * Employee App Membership Response
+     */
     return {
       active: membership.status === 'ACTIVE',
+
+      membershipFee,
+      membershipValidityDays,
+
+      amountPaid: Number(membership.amount),
+
+      planName: membership.planName,
+
+      memberSince: membership.startDate,
+      validTill: membership.endDate,
+
       daysRemaining,
+
       membership,
     };
   }
@@ -167,15 +223,33 @@ export class MembershipService {
       throw new NotFoundException('Employee not found');
     }
 
+    const existingMembership = await this.prisma.membership.findUnique({
+      where: {
+        employeeId: employee.id,
+      },
+    });
+
+    if (existingMembership?.status === 'ACTIVE') {
+      throw new BadRequestException('Membership already active');
+    }
+
     const amountSetting = await this.prisma.setting.findUnique({
       where: {
         key: 'MEMBERSHIP_AMOUNT',
       },
     });
 
+    const validitySetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'MEMBERSHIP_VALIDITY_DAYS',
+      },
+    });
+
     const membershipAmount = Number(amountSetting?.value ?? 449);
+    const validityDays = Number(validitySetting?.value ?? 365);
 
     let discountAmount = 0;
+    let couponCode: string | null = null;
 
     if (dto.couponCode?.trim()) {
       const coupon = await this.prisma.membershipCoupon.findUnique({
@@ -201,39 +275,87 @@ export class MembershipService {
       }
 
       discountAmount = Number(coupon.discountAmount);
+      couponCode = coupon.code;
     }
 
     const payableAmount = Math.max(0, membershipAmount - discountAmount);
-    const placeholderDate = new Date('2099-01-01');
 
-    return this.prisma.membership.upsert({
-      where: {
-        employeeId: employee.id,
-      },
-      update: {
-        amount: payableAmount,
-        couponCode: dto.couponCode?.trim().toUpperCase(),
-        discountAmount,
-        paymentReference: dto.paymentReference,
-        paymentScreenshot: dto.paymentScreenshot,
-        status: 'PENDING',
-        remarks: null,
-        verifiedAt: null,
-        verifiedBy: null,
-      },
-      create: {
-        employeeId: employee.id,
-        planName: 'Annual Membership',
-        amount: payableAmount,
-        startDate: placeholderDate,
-        endDate: placeholderDate,
-        status: 'PENDING',
-        couponCode: dto.couponCode?.trim().toUpperCase(),
-        discountAmount,
-        paymentReference: dto.paymentReference,
-        paymentScreenshot: dto.paymentScreenshot,
-      },
+    const startDate = new Date();
+
+    const endDate = new Date();
+
+    endDate.setDate(endDate.getDate() + validityDays);
+
+    const membership = await this.prisma.$transaction(async (tx) => {
+      if (couponCode) {
+        await tx.membershipCoupon.update({
+          where: {
+            code: couponCode,
+          },
+          data: {
+            usedCount: {
+              increment: 1,
+            },
+          },
+        });
+      }
+
+      return tx.membership.upsert({
+        where: {
+          employeeId: employee.id,
+        },
+        update: {
+          planName: 'Annual Membership',
+          amount: payableAmount,
+
+          couponCode,
+          discountAmount,
+
+          startDate,
+          endDate,
+
+          status: 'ACTIVE',
+
+          verifiedAt: new Date(),
+          verifiedBy: 'SYSTEM',
+
+          paymentReference: dto.paymentReference ?? null,
+
+          paymentScreenshot: dto.paymentScreenshot ?? null,
+
+          remarks: null,
+        },
+
+        create: {
+          employeeId: employee.id,
+
+          planName: 'Annual Membership',
+
+          amount: payableAmount,
+
+          couponCode,
+          discountAmount,
+
+          startDate,
+          endDate,
+
+          status: 'ACTIVE',
+
+          verifiedAt: new Date(),
+          verifiedBy: 'SYSTEM',
+
+          paymentReference: dto.paymentReference ?? null,
+
+          paymentScreenshot: dto.paymentScreenshot ?? null,
+        },
+      });
     });
+
+    return {
+      success: true,
+      message: 'Membership activated successfully',
+      membership,
+    };
   }
 
   async findPending() {
@@ -429,6 +551,111 @@ export class MembershipService {
       rejected,
       expired,
       revenue,
+    };
+  }
+
+  /**
+   * Membership Configuration
+   *
+   * Powers:
+   * - Membership Landing Page
+   * - Free vs Premium Comparison
+   */
+  async getConfig() {
+    const settings = await this.prisma.setting.findMany({
+      where: {
+        key: {
+          in: [
+            'MEMBERSHIP_AMOUNT',
+            'MEMBERSHIP_VALIDITY_DAYS',
+            'FREE_BENEFITS',
+            'MEMBERSHIP_BENEFITS',
+            'MEMBERSHIP_TITLE',
+            'MEMBERSHIP_SUBTITLE',
+            'FREE_PLAN_TITLE',
+            'FREE_PLAN_SUBTITLE',
+          ],
+        },
+      },
+    });
+
+    const getValue = (key: string) =>
+      settings.find((s) => s.key === key)?.value;
+
+    return {
+      membershipFee: Number(getValue('MEMBERSHIP_AMOUNT') ?? 449),
+
+      membershipValidityDays: Number(
+        getValue('MEMBERSHIP_VALIDITY_DAYS') ?? 365,
+      ),
+
+      freePlanTitle: getValue('FREE_PLAN_TITLE') ?? 'MobPae Free',
+
+      freePlanSubtitle:
+        getValue('FREE_PLAN_SUBTITLE') ?? 'Get started with salary advances',
+
+      membershipTitle: getValue('MEMBERSHIP_TITLE') ?? 'MobPae Premium',
+
+      membershipSubtitle:
+        getValue('MEMBERSHIP_SUBTITLE') ??
+        'Unlock higher limits and priority processing',
+
+      freeBenefits: getValue('FREE_BENEFITS')
+        ? JSON.parse(getValue('FREE_BENEFITS')!)
+        : [],
+
+      membershipBenefits: getValue('MEMBERSHIP_BENEFITS')
+        ? JSON.parse(getValue('MEMBERSHIP_BENEFITS')!)
+        : [],
+    };
+  }
+
+  /**
+   * Employee
+   * Validate membership coupon
+   */
+  async validateCoupon(couponCode: string) {
+    const amountSetting = await this.prisma.setting.findUnique({
+      where: {
+        key: 'MEMBERSHIP_AMOUNT',
+      },
+    });
+
+    const membershipAmount = Number(amountSetting?.value ?? 449);
+
+    const coupon = await this.prisma.membershipCoupon.findUnique({
+      where: {
+        code: couponCode.trim().toUpperCase(),
+      },
+    });
+
+    if (!coupon) {
+      throw new BadRequestException('Invalid coupon code');
+    }
+
+    if (!coupon.isActive) {
+      throw new BadRequestException('Coupon is inactive');
+    }
+
+    if (coupon.validTill && coupon.validTill < new Date()) {
+      throw new BadRequestException('Coupon expired');
+    }
+
+    if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
+      throw new BadRequestException('Coupon usage limit reached');
+    }
+
+    const discountAmount = Number(coupon.discountAmount);
+
+    const payableAmount = Math.max(0, membershipAmount - discountAmount);
+
+    return {
+      valid: true,
+      couponCode: coupon.code,
+      membershipAmount,
+      discountAmount,
+      payableAmount,
+      savings: discountAmount,
     };
   }
 }

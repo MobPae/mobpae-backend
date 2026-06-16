@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -8,10 +12,20 @@ import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 export class KycDocumentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateKycDocumentDto) {
+  async create(userId: string, dto: CreateKycDocumentDto) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
     const existingDocument = await this.prisma.kycDocument.findFirst({
       where: {
-        employeeId: dto.employeeId,
+        employeeId: employee.id,
         documentType: dto.documentType,
       },
     });
@@ -32,9 +46,10 @@ export class KycDocumentsService {
 
     return this.prisma.kycDocument.create({
       data: {
-        employeeId: dto.employeeId,
+        employeeId: employee.id,
         documentType: dto.documentType,
         filePath: dto.filePath,
+        status: 'PENDING',
       },
     });
   }

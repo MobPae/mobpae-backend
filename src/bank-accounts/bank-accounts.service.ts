@@ -10,10 +10,10 @@ export class BankAccountsService {
     return '********' + accountNumber.slice(-4);
   }
 
-  async create(dto: CreateBankAccountDto) {
+  async create(userId: string, dto: CreateBankAccountDto) {
     const employee = await this.prisma.employee.findUnique({
       where: {
-        id: dto.employeeId,
+        userId,
       },
     });
 
@@ -23,24 +23,37 @@ export class BankAccountsService {
 
     const existingAccount = await this.prisma.employeeBankAccount.findUnique({
       where: {
-        employeeId: dto.employeeId,
+        employeeId: employee.id,
       },
     });
 
     const account = existingAccount
       ? await this.prisma.employeeBankAccount.update({
           where: {
-            employeeId: dto.employeeId,
+            employeeId: employee.id,
           },
           data: {
-            ...dto,
+            accountHolderName: dto.accountHolderName,
+            accountNumber: dto.accountNumber,
+            ifscCode: dto.ifscCode,
+            bankName: dto.bankName,
+            upiId: dto.upiId,
+
             verified: this.didBankDetailsChange(existingAccount, dto)
               ? false
               : existingAccount.verified,
           },
         })
       : await this.prisma.employeeBankAccount.create({
-          data: dto,
+          data: {
+            employeeId: employee.id,
+
+            accountHolderName: dto.accountHolderName,
+            accountNumber: dto.accountNumber,
+            ifscCode: dto.ifscCode,
+            bankName: dto.bankName,
+            upiId: dto.upiId,
+          },
         });
 
     return {

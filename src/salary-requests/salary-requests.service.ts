@@ -183,23 +183,16 @@ export class SalaryRequestsService {
       if (request.repayment) {
         return {
           id: request.id,
-
           amount: Number(request.amount),
-
           approvedAmount: Number(request.approvedAmount ?? request.amount),
-
           status: request.status,
-
+          statusLabel: this.getStatusLabel(request.status),
+          statusColor: this.getStatusColor(request.status),
           requestedAt: request.requestedAt,
-
           repaymentDate: request.repaymentDate,
-
           interestAmount: Number(request.repayment.interestAmount),
-
           totalAmount: Number(request.repayment.totalAmount),
-
           interestDays: request.repayment.interestDays,
-
           dueDate: request.repayment.dueDate,
         };
       }
@@ -217,6 +210,8 @@ export class SalaryRequestsService {
         amount: Number(request.amount),
         approvedAmount: Number(request.approvedAmount ?? request.amount),
         status: request.status,
+        statusLabel: this.getStatusLabel(request.status),
+        statusColor: this.getStatusColor(request.status),
         requestedAt: request.requestedAt,
         repaymentDate: request.repaymentDate,
         interestAmount: projection.interestAmount,
@@ -418,8 +413,43 @@ export class SalaryRequestsService {
       throw new BadRequestException('Employee not found');
     }
 
+    /**
+     * Advance Settings
+     */
     const settings = await this.settingsService.getAdvanceSettings();
-    const annualInterestRate = settings.interestChargePercentage;
+
+    /**
+     * Available Advance
+     *
+     * Business Rule:
+     * MIN(
+     *   Salary × Advance Percentage,
+     *   Maximum Advance
+     * )
+     */
+    const availableAdvance = Math.min(
+      Number(employee.salaryInHand) *
+        (Number(settings.advancePercentage) / 100),
+      Number(settings.maximumAdvance),
+    );
+
+    /**
+     * Validate requested amount
+     */
+    if (amount > availableAdvance) {
+      throw new BadRequestException(
+        `Maximum eligible advance is ₹${availableAdvance}`,
+      );
+    }
+
+    if (amount <= 0) {
+      throw new BadRequestException('Advance amount must be greater than zero');
+    }
+
+    /**
+     * Interest Calculation
+     */
+    const annualInterestRate = Number(settings.interestChargePercentage);
 
     const repayment = PayrollUtil.calculateRepayment(
       amount,
@@ -429,13 +459,41 @@ export class SalaryRequestsService {
       annualInterestRate,
     );
 
+    /**
+     * Employee App Preview Response
+     */
     return {
-      principalAmount: amount,
+      /**
+       * Requested Amount
+       */
+      requestedAmount: amount,
+
+      /**
+       * Amount employee receives
+       * Processing fee is zero for MVP
+       */
+      youReceive: amount,
+
+      /**
+       * Fees & Interest
+       */
+      processingFee: 0,
+
       interestRate: annualInterestRate,
       interestDays: repayment.interestDays,
       interestAmount: repayment.interestAmount,
-      totalAmount: repayment.totalAmount,
-      dueDate: repayment.dueDate,
+
+      /**
+       * Recovery Details
+       */
+      totalRecovery: repayment.totalAmount,
+      recoveryDate: repayment.dueDate,
+
+      /**
+       * Additional Information
+       */
+      principalAmount: amount,
+      availableAdvance,
     };
   }
 
@@ -513,5 +571,55 @@ export class SalaryRequestsService {
     }
 
     return this.findByEmployee(employee.id);
+  }
+
+  private getStatusLabel(status: string) {
+    switch (status) {
+      case 'SUBMITTED':
+        return 'Pending Approval';
+
+      case 'EMPLOYER_APPROVED':
+        return 'Approved';
+
+      case 'READY_FOR_DISBURSAL':
+        return 'Ready for Disbursal';
+
+      case 'DISBURSED':
+        return 'Disbursed';
+
+      case 'REPAID':
+        return 'Repaid';
+
+      case 'EMPLOYER_REJECTED':
+        return 'Rejected';
+
+      default:
+        return status;
+    }
+  }
+
+  private getStatusColor(status: string) {
+    switch (status) {
+      case 'SUBMITTED':
+        return 'warning';
+
+      case 'EMPLOYER_APPROVED':
+        return 'success';
+
+      case 'READY_FOR_DISBURSAL':
+        return 'info';
+
+      case 'DISBURSED':
+        return 'primary';
+
+      case 'REPAID':
+        return 'success';
+
+      case 'EMPLOYER_REJECTED':
+        return 'danger';
+
+      default:
+        return 'default';
+    }
   }
 }
