@@ -90,6 +90,15 @@ export class EmployerSettlementsController {
   /**
    * Admin
    */
+  @Post(':id/send-report')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Send settlement report to employer',
+  })
+  sendReport(@Param('id') id: string) {
+    return this.employerSettlementsService.sendReport(id);
+  }
+
   @Post(':id/mark-paid')
   @Roles('ADMIN')
   @ApiOperation({

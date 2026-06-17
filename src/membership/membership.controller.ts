@@ -161,6 +161,23 @@ export class MembershipController {
    * Admin
    * Get membership details
    */
+  @Get('employer-summary')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get employer-wise membership summary',
+  })
+  getEmployerSummary() {
+    return this.membershipService.getEmployerSummary();
+  }
+
+  @Get('revenue-summary')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Get revenue summary',
+  })
+  getRevenueSummary() {
+    return this.membershipService.getRevenueSummary();
+  }
   @Get(':id')
   @Roles('ADMIN')
   @ApiOperation({

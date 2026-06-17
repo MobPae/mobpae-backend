@@ -90,6 +90,51 @@ export class AuthService {
 
     return {
       accessToken: await this.jwtService.signAsync(payload),
+      role: user.role,
+      passwordChanged: user.passwordChanged,
+    };
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      currentPassword,
+      user.password,
+    );
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await this.prisma.user.update({
+      where: {
+        id: user.id,
+      },
+
+      data: {
+        password: hashedPassword,
+        passwordChanged: true,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Password changed successfully',
     };
   }
 }

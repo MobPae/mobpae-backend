@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { DashboardService } from './dashboard.service';
@@ -28,10 +28,24 @@ export class DashboardController {
   /**
    * Logged-in Employer Dashboard
    */
-  @Get('employers/me')
+  @Get('employer')
   @Roles(Role.EMPLOYER)
   getMyEmployerDashboard(@Req() req: any) {
     return this.dashboardService.getEmployerDashboard(req.user.userId);
+  }
+
+  @Get('employer/trends')
+  @Roles(Role.EMPLOYER)
+  getEmployerTrends(
+    @Req() req: any,
+
+    @Query('period') period = 'monthly',
+  ) {
+    return this.dashboardService.getEmployerTrends(
+      req.user.userId,
+
+      period,
+    );
   }
 
   /**

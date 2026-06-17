@@ -535,23 +535,66 @@ export class MembershipService {
       (m) => m.status === 'ACTIVE' && m.endDate < new Date(),
     ).length;
 
-    const revenue = memberships
-
-      .filter((m) => m.status === 'ACTIVE')
-
-      .reduce(
-        (sum, m) => sum + Number(m.amount),
-
-        0,
-      );
+    const membershipRevenue = memberships.reduce(
+      (sum, m) => sum + Number(m.amount),
+      0,
+    );
 
     return {
+      totalMembers: memberships.length,
       active,
       pending,
       rejected,
       expired,
-      revenue,
+      membershipRevenue,
     };
+  }
+
+  async getEmployerSummary() {
+    const memberships = await this.prisma.membership.findMany({
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+    });
+
+    const employerMap = new Map();
+
+    for (const membership of memberships) {
+      const employer = membership.employee?.employer;
+
+      if (!employer) {
+        continue;
+      }
+
+      if (!employerMap.has(employer.id)) {
+        employerMap.set(employer.id, {
+          employerId: employer.id,
+          companyName: employer.companyName,
+          totalMembers: 0,
+          activeMembers: 0,
+          membershipRevenue: 0,
+        });
+      }
+
+      const summary = employerMap.get(employer.id);
+
+      summary.totalMembers++;
+
+      if (membership.status === 'ACTIVE') {
+        summary.activeMembers++;
+      }
+
+      // Revenue should count all paid memberships
+      summary.membershipRevenue += Number(membership.amount);
+    }
+
+    return Array.from(employerMap.values()).sort(
+      (a, b) => b.membershipRevenue - a.membershipRevenue,
+    );
   }
 
   /**
@@ -656,6 +699,29 @@ export class MembershipService {
       discountAmount,
       payableAmount,
       savings: discountAmount,
+    };
+  }
+
+  // Adding to MembershipService (dedicated RevenueService later)
+  async getRevenueSummary() {
+    const memberships = await this.prisma.membership.findMany();
+
+    const repayments = await this.prisma.repayment.findMany();
+
+    const membershipRevenue = memberships.reduce(
+      (sum, membership) => sum + Number(membership.amount),
+      0,
+    );
+
+    const interestRevenue = repayments.reduce(
+      (sum, repayment) => sum + Number(repayment.interestAmount),
+      0,
+    );
+
+    return {
+      membershipRevenue,
+      interestRevenue,
+      totalRevenue: membershipRevenue + interestRevenue,
     };
   }
 }

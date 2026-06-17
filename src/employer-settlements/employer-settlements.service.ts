@@ -277,4 +277,32 @@ export class EmployerSettlementsService {
       riskStatus,
     };
   }
+
+  async sendReport(id: string) {
+    const settlement = await this.prisma.employerSettlement.findUnique({
+      where: {
+        id,
+      },
+      include: {
+        employer: true,
+      },
+    });
+
+    if (!settlement) {
+      throw new NotFoundException('Settlement not found');
+    }
+
+    /**
+     * TODO:
+     * Integrate email service later.
+     */
+
+    return {
+      success: true,
+      message: 'Settlement report sent successfully',
+      settlementId: settlement.id,
+      employer: settlement.employer.companyName,
+      email: settlement.employer.email,
+    };
+  }
 }

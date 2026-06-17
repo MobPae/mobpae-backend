@@ -31,6 +31,7 @@ import { SettingsModule } from './settings/settings.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { MembershipModule } from './membership/membership.module';
 import { EmployerSettlementsModule } from './employer-settlements/employer-settlements.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -72,6 +73,8 @@ import { EmployerSettlementsModule } from './employer-settlements/employer-settl
     MembershipModule,
 
     EmployerSettlementsModule,
+
+    EmailModule,
   ],
   controllers: [AppController],
   providers: [AppService],
