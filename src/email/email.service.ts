@@ -53,6 +53,9 @@ export class EmailService {
 
     const body = this.replaceVariables(template, variables);
 
+    console.log('Template:', templateName);
+    console.log('Body:', body);
+
     return this.replaceVariables(layout, {
       title: variables.title ?? 'MobPae',
       year: new Date().getFullYear(),

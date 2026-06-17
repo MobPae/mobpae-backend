@@ -1,11 +1,10 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { EmployerEnquiriesService } from './employer-enquiries.service';
 
 import { CreateEmployerEnquiryDto } from './dto/create-employer-enquiry.dto';
-import { ApproveEmployerEnquiryDto } from './dto/approve-employer-enquiry.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -42,38 +41,5 @@ export class EmployerEnquiriesController {
   @Roles(Role.ADMIN)
   findAll() {
     return this.employerEnquiriesService.findAll();
-  }
-
-  /**
-   * Admin
-   * Approve employer enquiry
-   */
-  @Post(':id/approve')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  approve(
-    @Param('id')
-    id: string,
-
-    @Body()
-    dto: ApproveEmployerEnquiryDto,
-  ) {
-    return this.employerEnquiriesService.approve(id, dto);
-  }
-
-  /**
-   * Admin
-   * Reject employer enquiry
-   */
-  @Post(':id/reject')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  reject(
-    @Param('id')
-    id: string,
-  ) {
-    return this.employerEnquiriesService.reject(id);
   }
 }

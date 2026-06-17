@@ -23,4 +23,8 @@ export class CreateEmployerDto {
   @IsOptional()
   @IsInt()
   payrollCutoffDate?: number;
+
+  @IsOptional()
+  @IsString()
+  employerEnquiryId?: string;
 }

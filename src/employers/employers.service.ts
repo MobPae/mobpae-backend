@@ -5,10 +5,14 @@ import { BadRequestException } from '@nestjs/common';
 import { UpdateEmployerProfileDto } from './dto/update-employer-profile.dto';
 import * as bcrypt from 'bcrypt';
 import { CreateEmployerDto } from './dto/create-employer.dto';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class EmployersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
+  ) {}
 
   async findAll() {
     return this.prisma.employer.findMany({
@@ -25,12 +29,35 @@ export class EmployersService {
   }
 
   async updateStatus(id: string, status: EmployerStatus) {
-    return this.prisma.employer.update({
+    const employer = await this.prisma.employer.findUnique({
+      where: { id },
+    });
+
+    const updatedEmployer = await this.prisma.employer.update({
       where: { id },
       data: {
         status,
       },
     });
+
+    if (employer?.status !== 'ACTIVE' && status === 'ACTIVE') {
+      try {
+        await this.emailService.sendEmployerApprovedEmail({
+          to: updatedEmployer.email,
+          companyName: updatedEmployer.companyName,
+          loginEmail: updatedEmployer.email,
+          temporaryPassword: 'MobPae@123',
+          loginUrl:
+            process.env.EMPLOYER_LOGIN_URL ??
+            process.env.FRONTEND_URL ??
+            'https://mobpae.com/login',
+        });
+      } catch (error) {
+        console.error('Failed to send employer approved email', error);
+      }
+    }
+
+    return updatedEmployer;
   }
 
   async getProfile(userId: string) {
@@ -115,59 +142,79 @@ export class EmployersService {
 
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-    /**
-     * Create Login User
-     */
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        password: hashedPassword,
-        role: 'EMPLOYER',
-        isActive: true,
-      },
-    });
+    const { user, employer } = await this.prisma.$transaction(async (tx) => {
+      if (dto.employerEnquiryId) {
+        const enquiry = await tx.employerEnquiry.findUnique({
+          where: {
+            id: dto.employerEnquiryId,
+          },
+        });
 
-    /**
-     * Create Employer
-     *
-     * Employer remains PENDING until
-     * Admin approves onboarding.
-     */
-    const employer = await this.prisma.employer.create({
-      data: {
-        userId: user.id,
+        if (!enquiry) {
+          throw new BadRequestException('Employer enquiry not found');
+        }
 
-        companyName: dto.companyName,
-        companyCode: dto.companyCode,
+        if (enquiry.employerId) {
+          throw new BadRequestException(
+            'Employer enquiry is already onboarded',
+          );
+        }
+      }
 
-        contactPerson: dto.contactPerson,
-        email: dto.email,
-        phone: dto.phone,
+      /**
+       * Create Login User
+       */
+      const user = await tx.user.create({
+        data: {
+          email: dto.email,
+          password: hashedPassword,
+          role: 'EMPLOYER',
+          isActive: true,
+        },
+      });
 
-        status: 'PENDING',
+      /**
+       * Create Employer
+       *
+       * Employer remains PENDING until
+       * Admin activates onboarding.
+       */
+      const employer = await tx.employer.create({
+        data: {
+          userId: user.id,
 
-        payrollDate: dto.payrollDate ?? 28,
-        payrollCutoffDate: dto.payrollCutoffDate ?? 22,
+          companyName: dto.companyName,
+          companyCode: dto.companyCode,
 
-        riskStatus: 'GOOD',
-      },
-    });
+          contactPerson: dto.contactPerson,
+          email: dto.email,
+          phone: dto.phone,
 
-    /**
-     * Create Employer Enquiry
-     *
-     * Keeps Employer Onboarding UI
-     * as the single source of truth.
-     */
-    await this.prisma.employerEnquiry.create({
-      data: {
-        companyName: dto.companyName,
-        contactPerson: dto.contactPerson,
-        email: dto.email,
-        phone: dto.phone,
+          status: 'PENDING',
 
-        status: 'NEW',
-      },
+          payrollDate: dto.payrollDate ?? 28,
+          payrollCutoffDate: dto.payrollCutoffDate ?? 22,
+
+          riskStatus: 'GOOD',
+        },
+      });
+
+      if (dto.employerEnquiryId) {
+        await tx.employerEnquiry.update({
+          where: {
+            id: dto.employerEnquiryId,
+          },
+          data: {
+            employerId: employer.id,
+            status: 'ONBOARDED',
+          },
+        });
+      }
+
+      return {
+        user,
+        employer,
+      };
     });
 
     return {

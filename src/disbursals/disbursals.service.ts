@@ -7,12 +7,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PayrollUtil } from 'src/common/utils/payroll.util';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class DisbursalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async create(dto: CreateDisbursalDto) {
@@ -139,13 +141,13 @@ export class DisbursalsService {
       );
     }
 
-    const existingRepayment = await this.prisma.repayment.findUnique({
+    let repayment = await this.prisma.repayment.findUnique({
       where: {
         salaryRequestId: salaryRequest.id,
       },
     });
 
-    if (!existingRepayment) {
+    if (!repayment) {
       const interestSetting = await this.prisma.setting.findUnique({
         where: {
           key: 'ANNUAL_INTEREST_RATE',
@@ -166,7 +168,7 @@ export class DisbursalsService {
         annualInterestRate,
       );
 
-      await this.prisma.repayment.create({
+      repayment = await this.prisma.repayment.create({
         data: {
           salaryRequestId: salaryRequest.id,
           principalAmount: approvedAmount,
@@ -205,6 +207,18 @@ export class DisbursalsService {
         'Salary Disbursed',
         `₹${disbursal.amount} has been disbursed to your registered bank account.`,
       );
+    }
+
+    try {
+      await this.emailService.sendDisbursalSuccessfulEmail({
+        to: salaryRequest.employee.email,
+        employeeName: salaryRequest.employee.name,
+        disbursedAmount: Number(disbursal.amount),
+        disbursalDate: disbursal.disbursedAt ?? new Date(),
+        repaymentDate: repayment?.dueDate,
+      });
+    } catch (error) {
+      console.error('Failed to send disbursal successful email', error);
     }
 
     return disbursal;

@@ -5,12 +5,16 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 
 @Injectable()
 export class KycDocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
+  ) {}
 
   async create(userId: string, dto: CreateKycDocumentDto) {
     const employee = await this.prisma.employee.findUnique({
@@ -86,13 +90,31 @@ export class KycDocumentsService {
   }
 
   async verify(id: string) {
-    return this.prisma.kycDocument.update({
+    const verifiedAt = new Date();
+
+    const document = await this.prisma.kycDocument.update({
       where: { id },
       data: {
         status: 'VERIFIED',
-        verifiedAt: new Date(),
+        verifiedAt,
+      },
+      include: {
+        employee: true,
       },
     });
+
+    try {
+      await this.emailService.sendKycApprovedEmail({
+        to: document.employee.email,
+        employeeName: document.employee.name,
+        documentType: document.documentType,
+        approvedDate: document.verifiedAt ?? verifiedAt,
+      });
+    } catch (error) {
+      console.error('Failed to send KYC approved email', error);
+    }
+
+    return document;
   }
 
   async reject(id: string) {

@@ -8,6 +8,7 @@ import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SettingsService } from '../settings/settings.service';
 import { MembershipService } from '../membership/membership.service';
+import { EmailService } from '../email/email.service';
 
 import { PayrollUtil } from '../common/utils/payroll.util';
 
@@ -18,6 +19,7 @@ export class SalaryRequestsService {
     private readonly notificationsService: NotificationsService,
     private readonly settingsService: SettingsService,
     private readonly membershipService: MembershipService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -142,13 +144,26 @@ export class SalaryRequestsService {
       }
     }
 
-    return this.prisma.salaryRequest.create({
+    const salaryRequest = await this.prisma.salaryRequest.create({
       data: {
         employeeId: employee.id,
         employerId: employee.employerId,
         amount: dto.amount,
       },
     });
+
+    try {
+      await this.emailService.sendSalaryRequestSubmittedEmail({
+        to: employee.email,
+        employeeName: employee.name,
+        amount: Number(salaryRequest.amount),
+        requestDate: salaryRequest.requestedAt,
+      });
+    } catch (error) {
+      console.error('Failed to send salary request submitted email', error);
+    }
+
+    return salaryRequest;
   }
 
   async findByEmployee(employeeId: string) {
@@ -312,6 +327,17 @@ export class SalaryRequestsService {
         'Salary Request Approved',
         'Your salary advance request has been approved.',
       );
+    }
+
+    try {
+      await this.emailService.sendSalaryRequestApprovedEmail({
+        to: request.employee.email,
+        employeeName: request.employee.name,
+        amount: Number(updatedRequest.approvedAmount ?? updatedRequest.amount),
+        approvedDate: new Date(),
+      });
+    } catch (error) {
+      console.error('Failed to send salary request approved email', error);
     }
 
     return updatedRequest;

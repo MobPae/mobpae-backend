@@ -4,9 +4,10 @@ import { EmployersController } from './employers.controller';
 import { EmployersService } from './employers.service';
 
 import { PrismaModule } from '../prisma/prisma.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, EmailModule],
   controllers: [EmployersController],
   providers: [EmployersService],
 })
