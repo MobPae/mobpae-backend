@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import * as Joi from 'joi';
 
 import { AppController } from './app.controller';
@@ -35,6 +37,7 @@ import { EmployerSettlementsModule } from './employer-settlements/employer-settl
 import { EmailModule } from './email/email.module';
 import { HealthModule } from './health/health.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { FilesModule } from './files/files.module';
 
 @Module({
   imports: [
@@ -47,8 +50,33 @@ import { SessionsModule } from './sessions/sessions.module';
         SMTP_PORT: Joi.number().required(),
         SMTP_USER: Joi.string().required(),
         SMTP_PASS: Joi.string().required(),
+        SMTP_SECURE: Joi.boolean()
+          .truthy('true')
+          .falsy('false')
+          .when('SMTP_PORT', {
+            is: 465,
+            then: (schema) => schema.valid(true).default(true),
+            otherwise: (schema) => schema.default(false),
+          }),
+        MAIL_FROM: Joi.string().email().required(),
+        MAIL_FROM_NAME: Joi.string().required(),
         FRONTEND_URL: Joi.string().uri().required(),
+        CORS_ORIGINS: Joi.string().optional(),
+        ENABLE_SWAGGER: Joi.boolean()
+          .truthy('true')
+          .falsy('false')
+          .default(false),
       }),
+    }),
+
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          name: 'default',
+          ttl: 60_000,
+          limit: 120,
+        },
+      ],
     }),
 
     PrismaModule,
@@ -91,8 +119,16 @@ import { SessionsModule } from './sessions/sessions.module';
     HealthModule,
 
     SessionsModule,
+
+    FilesModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

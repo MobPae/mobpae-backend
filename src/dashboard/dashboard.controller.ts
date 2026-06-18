@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { DashboardService } from './dashboard.service';
@@ -68,7 +76,12 @@ export class DashboardController {
   getEmployeeDashboard(
     @Param('employeeId')
     employeeId: string,
+    @Req() req: any,
   ) {
+    if (req.user.role === Role.EMPLOYEE && req.user.employeeId !== employeeId) {
+      throw new ForbiddenException('You can only access your own dashboard');
+    }
+
     return this.dashboardService.getEmployeeDashboard(employeeId);
   }
 }

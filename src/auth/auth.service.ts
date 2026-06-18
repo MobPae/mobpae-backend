@@ -284,15 +284,30 @@ export class AuthService {
       };
     }
 
-    const token = randomBytes(48).toString('hex');
+    const selector = randomBytes(12).toString('hex');
+    const tokenSecret = randomBytes(48).toString('hex');
+    const token = `${selector}.${tokenSecret}`;
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
-    await this.prisma.passwordResetToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: await bcrypt.hash(token, 10),
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: user.id,
+          usedAt: null,
+        },
+        data: {
+          usedAt: new Date(),
+        },
+      });
+
+      await tx.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenSelector: selector,
+          tokenHash: await bcrypt.hash(tokenSecret, 10),
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        },
+      });
     });
 
     try {
@@ -318,25 +333,42 @@ export class AuthService {
   }
 
   async resetPassword(token: string, newPassword: string) {
-    const candidates = await this.prisma.passwordResetToken.findMany({
+    const [selector, tokenSecret] = token.split('.');
+
+    if (!selector || !tokenSecret) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    const resetToken = await this.prisma.passwordResetToken.findUnique({
       where: {
-        usedAt: null,
-        expiresAt: {
-          gt: new Date(),
-        },
+        tokenSelector: selector,
       },
       include: {
         user: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
     });
 
-    const resetToken = await this.findMatchingResetToken(candidates, token);
-
-    if (!resetToken) {
+    if (
+      !resetToken ||
+      resetToken.usedAt ||
+      resetToken.expiresAt <= new Date()
+    ) {
       throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    const tokenMatches = await bcrypt.compare(
+      tokenSecret,
+      resetToken.tokenHash,
+    );
+
+    if (!tokenMatches) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    if (await bcrypt.compare(newPassword, resetToken.user.password)) {
+      throw new UnauthorizedException(
+        'New password must be different from current password',
+      );
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -413,6 +445,12 @@ export class AuthService {
 
     if (!passwordMatches) {
       throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    if (await bcrypt.compare(newPassword, user.password)) {
+      throw new UnauthorizedException(
+        'New password must be different from current password',
+      );
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -542,19 +580,6 @@ export class AuthService {
     const [sessionId] = refreshToken.split('.');
 
     return sessionId || undefined;
-  }
-
-  private async findMatchingResetToken<T extends { tokenHash: string }>(
-    tokens: T[],
-    token: string,
-  ) {
-    for (const resetToken of tokens) {
-      if (await bcrypt.compare(token, resetToken.tokenHash)) {
-        return resetToken;
-      }
-    }
-
-    return null;
   }
 
   private isRefreshTokenExpired(createdAt: Date) {

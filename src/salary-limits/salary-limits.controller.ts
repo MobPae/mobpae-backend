@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Post,
+  Req,
+} from '@nestjs/common';
 import { SalaryLimitsService } from './salary-limits.service';
 import { CreateSalaryLimitDto } from './dto/create-salary-limit.dto';
 import { UseGuards } from '@nestjs/common';
@@ -25,7 +33,11 @@ export class SalaryLimitsController {
 
   @Get(':employeeId')
   @Roles('ADMIN', 'EMPLOYEE')
-  findByEmployee(@Param('employeeId') employeeId: string) {
+  findByEmployee(@Param('employeeId') employeeId: string, @Req() req: any) {
+    if (req.user.role === 'EMPLOYEE' && req.user.employeeId !== employeeId) {
+      throw new ForbiddenException('You can only access your own salary limit');
+    }
+
     return this.salaryLimitsService.findByEmployee(employeeId);
   }
 }

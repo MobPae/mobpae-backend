@@ -6,15 +6,21 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
-  app.enableCors({
-    origin: [
+  const corsOrigins = (
+    process.env.CORS_ORIGINS ??
+    [
       'http://localhost:5173',
       'http://localhost:5174',
       'http://192.168.1.9:5191',
       'http://localhost:5175',
-    ],
+    ].join(',')
+  )
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
+  app.enableCors({
+    origin: corsOrigins,
     credentials: true,
   });
 
@@ -29,17 +35,22 @@ async function bootstrap() {
   // Global API request/response logging
   app.useGlobalInterceptors(new LoggingInterceptor());
 
-  // Swagger API Documentation
-  const config = new DocumentBuilder()
-    .setTitle('MobPae API')
-    .setDescription('MobPae MVP Backend APIs')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  if (
+    process.env.NODE_ENV !== 'production' ||
+    process.env.ENABLE_SWAGGER === 'true'
+  ) {
+    // Swagger API Documentation
+    const config = new DocumentBuilder()
+      .setTitle('MobPae API')
+      .setDescription('MobPae MVP Backend APIs')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
+    const document = SwaggerModule.createDocument(app, config);
 
-  SwaggerModule.setup('api-docs', app, document);
+    SwaggerModule.setup('api-docs', app, document);
+  }
 
   await app.listen(process.env.PORT ?? 3000);
 }

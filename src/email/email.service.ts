@@ -8,10 +8,14 @@ export class EmailService {
   private transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT),
-    secure: false,
+    secure: process.env.SMTP_SECURE === 'true',
+    requireTLS: Number(process.env.SMTP_PORT) === 587,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
+    },
+    tls: {
+      rejectUnauthorized: true,
     },
   });
 
@@ -52,9 +56,6 @@ export class EmailService {
     const template = fs.readFileSync(templatePath, 'utf8');
 
     const body = this.replaceVariables(template, variables);
-
-    console.log('Template:', templateName);
-    console.log('Body:', body);
 
     return this.replaceVariables(layout, {
       title: variables.title ?? 'MobPae',

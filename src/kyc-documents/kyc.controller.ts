@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -25,5 +25,18 @@ export class KycController {
   @ApiOperation({ summary: 'List pending KYC documents for one employer' })
   findPendingForEmployer(@Param('employerId') employerId: string) {
     return this.kycDocumentsService.findPendingForEmployer(employerId);
+  }
+
+  @Get('grouped-by-employee')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'List KYC status grouped by employee' })
+  findGroupedByEmployee(
+    @Query('employerId') employerId?: string,
+    @Query('status') status?: 'PENDING' | 'VERIFIED' | 'REJECTED',
+  ) {
+    return this.kycDocumentsService.findGroupedByEmployee({
+      employerId,
+      status,
+    });
   }
 }

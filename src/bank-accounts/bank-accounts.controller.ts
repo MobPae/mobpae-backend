@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Post,
@@ -38,8 +39,13 @@ export class BankAccountsController {
   @Roles('EMPLOYEE')
   updateUpi(
     @Param('employeeId') employeeId: string,
+    @Req() req: any,
     @Body('upiId') upiId?: string,
   ) {
+    if (req.user.employeeId !== employeeId) {
+      throw new ForbiddenException('You can only update your own UPI ID');
+    }
+
     return this.bankAccountsService.updateUpi(employeeId, upiId);
   }
 
@@ -72,7 +78,11 @@ export class BankAccountsController {
   }
   @Get('employee/:employeeId')
   @Roles('ADMIN', 'EMPLOYEE')
-  findByEmployee(@Param('employeeId') employeeId: string) {
+  findByEmployee(@Param('employeeId') employeeId: string, @Req() req: any) {
+    if (req.user.role === 'EMPLOYEE' && req.user.employeeId !== employeeId) {
+      throw new ForbiddenException('You can only access your own bank account');
+    }
+
     return this.bankAccountsService.findByEmployee(employeeId);
   }
 

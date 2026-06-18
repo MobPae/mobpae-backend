@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Patch, Param, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Req,
+} from '@nestjs/common';
 import { EmployeesService } from './employees.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UseGuards } from '@nestjs/common';
@@ -46,7 +55,11 @@ export class EmployeesController {
 
   @Get(':id/kyc-status')
   @Roles('ADMIN', 'EMPLOYEE')
-  getKycStatus(@Param('id') id: string) {
+  getKycStatus(@Param('id') id: string, @Req() req: any) {
+    if (req.user.role === 'EMPLOYEE' && req.user.employeeId !== id) {
+      throw new ForbiddenException('You can only access your own KYC status');
+    }
+
     return this.employeesService.getKycStatus(id);
   }
 

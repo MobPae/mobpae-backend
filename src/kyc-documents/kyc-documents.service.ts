@@ -1,3 +1,5 @@
+import { KycDocument, KycDocumentType, KycStatus } from '@prisma/client';
+
 import {
   BadRequestException,
   Injectable,
@@ -10,6 +12,11 @@ import { EmailService } from '../email/email.service';
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 
 type KycAuditAction = 'KYC_SUBMITTED' | 'KYC_APPROVED' | 'KYC_REJECTED';
+const REQUIRED_KYC_DOCUMENTS: KycDocumentType[] = [
+  'PAN',
+  'AADHAR',
+  'SALARY_SLIP',
+];
 
 @Injectable()
 export class KycDocumentsService {
@@ -156,6 +163,80 @@ export class KycDocumentsService {
     });
   }
 
+  async findGroupedByEmployee(filters: {
+    employerId?: string;
+    status?: KycStatus;
+  }) {
+    const employees = await this.prisma.employee.findMany({
+      where: {
+        ...(filters.employerId
+          ? {
+              employerId: filters.employerId,
+            }
+          : {}),
+        ...(filters.status
+          ? {
+              kycDocuments: {
+                some: {
+                  status: filters.status,
+                },
+              },
+            }
+          : {}),
+      },
+      include: {
+        employer: true,
+        kycDocuments: {
+          orderBy: {
+            updatedAt: 'desc',
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return employees.map((employee) => {
+      const documents = this.buildEmployeeKycDocuments(employee.kycDocuments);
+      const requiredDocuments = REQUIRED_KYC_DOCUMENTS.map(
+        (type) => documents[type],
+      );
+      const submittedCount = requiredDocuments.filter(Boolean).length;
+      const pendingCount = requiredDocuments.filter(
+        (document) => document?.status === 'PENDING',
+      ).length;
+      const verifiedCount = requiredDocuments.filter(
+        (document) => document?.status === 'VERIFIED',
+      ).length;
+      const rejectedCount = requiredDocuments.filter(
+        (document) => document?.status === 'REJECTED',
+      ).length;
+
+      return {
+        employeeId: employee.id,
+        employeeCode: employee.employeeCode,
+        employeeName: employee.name,
+        email: employee.email,
+        phone: employee.phone,
+        employerId: employee.employerId,
+        companyName: employee.employer.companyName,
+        overallStatus: this.getEmployeeKycOverallStatus({
+          submittedCount,
+          pendingCount,
+          verifiedCount,
+          rejectedCount,
+        }),
+        submittedCount,
+        pendingCount,
+        verifiedCount,
+        rejectedCount,
+        requiredCount: REQUIRED_KYC_DOCUMENTS.length,
+        documents,
+      };
+    });
+  }
+
   async findAll(status?: 'PENDING' | 'VERIFIED' | 'REJECTED') {
     return this.prisma.kycDocument.findMany({
       where: status ? { status } : undefined,
@@ -278,5 +359,62 @@ export class KycDocumentsService {
     } catch (error) {
       console.error('Failed to write KYC audit log', error);
     }
+  }
+
+  private buildEmployeeKycDocuments(documents: KycDocument[]) {
+    return REQUIRED_KYC_DOCUMENTS.reduce(
+      (acc, documentType) => {
+        const document = documents.find(
+          (item) => item.documentType === documentType,
+        );
+
+        acc[documentType] = document
+          ? {
+              id: document.id,
+              status: document.status,
+              filePath: document.filePath,
+              verifiedAt: document.verifiedAt,
+              updatedAt: document.updatedAt,
+            }
+          : null;
+
+        return acc;
+      },
+      {} as Record<
+        (typeof REQUIRED_KYC_DOCUMENTS)[number],
+        {
+          id: string;
+          status: KycStatus;
+          filePath: string;
+          verifiedAt: Date | null;
+          updatedAt: Date;
+        } | null
+      >,
+    );
+  }
+
+  private getEmployeeKycOverallStatus(counts: {
+    submittedCount: number;
+    pendingCount: number;
+    verifiedCount: number;
+    rejectedCount: number;
+  }) {
+    if (counts.submittedCount === 0) {
+      return 'NOT_SUBMITTED';
+    }
+
+    if (counts.verifiedCount === REQUIRED_KYC_DOCUMENTS.length) {
+      return 'VERIFIED';
+    }
+
+    if (counts.rejectedCount > 0) {
+      return 'REJECTED';
+    }
+
+    if (counts.pendingCount > 0) {
+      return 'PENDING';
+    }
+
+    return 'PARTIAL';
   }
 }

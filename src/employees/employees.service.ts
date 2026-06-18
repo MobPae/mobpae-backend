@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
@@ -33,9 +34,9 @@ export class EmployeesService {
       throw new BadRequestException('User already exists');
     }
 
-    const defaultPassword = 'MobPae@123';
+    const temporaryPassword = this.generateTemporaryPassword();
 
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
     const employee = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -44,6 +45,7 @@ export class EmployeesService {
           password: hashedPassword,
           role: 'EMPLOYEE',
           isActive: true,
+          passwordChanged: false,
         },
       });
 
@@ -83,7 +85,7 @@ export class EmployeesService {
       employee,
       credentials: {
         email: dto.email,
-        password: defaultPassword,
+        password: temporaryPassword,
       },
     };
   }
@@ -276,8 +278,6 @@ export class EmployeesService {
       throw new NotFoundException('Employer not found');
     }
 
-    const defaultPassword = 'MobPae@123';
-
     const created: {
       employeeCode: string;
       name: string;
@@ -331,7 +331,8 @@ export class EmployeesService {
           continue;
         }
 
-        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+        const temporaryPassword = this.generateTemporaryPassword();
+        const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
         const user = await this.prisma.user.create({
           data: {
@@ -339,6 +340,7 @@ export class EmployeesService {
             password: hashedPassword,
             role: 'EMPLOYEE',
             isActive: true,
+            passwordChanged: false,
           },
         });
 
@@ -379,7 +381,7 @@ export class EmployeesService {
           employeeCode: employee.employeeCode,
           name: employee.name,
           email: employee.email,
-          password: defaultPassword,
+          password: temporaryPassword,
         });
       } catch (error) {
         errors.push({
@@ -600,5 +602,9 @@ export class EmployeesService {
     } catch (error) {
       console.error('Failed to write business audit log', error);
     }
+  }
+
+  private generateTemporaryPassword() {
+    return `MobPae-${randomBytes(8).toString('hex')}!1`;
   }
 }

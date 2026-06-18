@@ -16,6 +16,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
 @ApiTags('Authentication')
@@ -24,6 +25,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @Throttle({ default: { limit: 5, ttl: 15 * 60 * 1000 } })
   @ApiOperation({ summary: 'Login and create a single active user session' })
   @ApiResponse({
     status: 201,
@@ -47,6 +49,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Throttle({ default: { limit: 30, ttl: 60 * 1000 } })
   @ApiOperation({ summary: 'Refresh access token and rotate refresh token' })
   @ApiBody({ type: RefreshTokenDto })
   @ApiResponse({
@@ -71,6 +74,7 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @Throttle({ default: { limit: 3, ttl: 60 * 60 * 1000 } })
   @ApiOperation({ summary: 'Request password reset link' })
   @ApiBody({ type: ForgotPasswordDto })
   @ApiResponse({
@@ -87,6 +91,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @Throttle({ default: { limit: 5, ttl: 15 * 60 * 1000 } })
   @ApiOperation({ summary: 'Reset password using a forgot-password token' })
   @ApiBody({ type: ResetPasswordDto })
   @ApiResponse({

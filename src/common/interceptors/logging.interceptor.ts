@@ -30,7 +30,7 @@ export class LoggingInterceptor implements NestInterceptor {
     console.log(`[${timestamp}] REQUEST ${method} ${originalUrl}`);
     console.log(`USER: ${userId}`);
     console.log(`ROLE: ${request.user?.role || 'anonymous'}`);
-    console.log('BODY:', body || {});
+    console.log('BODY:', this.redact(body || {}));
 
     return next.handle().pipe(
       tap(() => {
@@ -53,6 +53,36 @@ export class LoggingInterceptor implements NestInterceptor {
 
         return throwError(() => error);
       }),
+    );
+  }
+
+  private redact(value: unknown): unknown {
+    const sensitiveFields = new Set([
+      'password',
+      'currentPassword',
+      'newPassword',
+      'refreshToken',
+      'token',
+      'accountNumber',
+      'upiId',
+      'filePath',
+      'paymentReference',
+      'paymentScreenshot',
+    ]);
+
+    if (Array.isArray(value)) {
+      return value.map((item) => this.redact(item));
+    }
+
+    if (!value || typeof value !== 'object') {
+      return value;
+    }
+
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        sensitiveFields.has(key) ? '[REDACTED]' : this.redact(item),
+      ]),
     );
   }
 }

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BadRequestException } from '@nestjs/common';
 import { UpdateEmployerProfileDto } from './dto/update-employer-profile.dto';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { CreateEmployerDto } from './dto/create-employer.dto';
 import { EmailService } from '../email/email.service';
 
@@ -31,12 +32,30 @@ export class EmployersService {
   async updateStatus(id: string, status: EmployerStatus, actorUserId: string) {
     const employer = await this.prisma.employer.findUnique({
       where: { id },
+      include: {
+        user: true,
+      },
     });
+
+    const activationPassword =
+      employer?.status !== 'ACTIVE' && status === 'ACTIVE'
+        ? this.generateTemporaryPassword()
+        : undefined;
 
     const updatedEmployer = await this.prisma.employer.update({
       where: { id },
       data: {
         status,
+        ...(activationPassword
+          ? {
+              user: {
+                update: {
+                  password: await bcrypt.hash(activationPassword, 10),
+                  passwordChanged: false,
+                },
+              },
+            }
+          : {}),
       },
     });
 
@@ -60,13 +79,13 @@ export class EmployersService {
       });
     }
 
-    if (employer?.status !== 'ACTIVE' && status === 'ACTIVE') {
+    if (activationPassword) {
       try {
         await this.emailService.sendEmployerApprovedEmail({
           to: updatedEmployer.email,
           companyName: updatedEmployer.companyName,
           loginEmail: updatedEmployer.email,
-          temporaryPassword: 'MobPae@123',
+          temporaryPassword: activationPassword,
           loginUrl:
             process.env.EMPLOYER_LOGIN_URL ??
             process.env.FRONTEND_URL ??
@@ -148,9 +167,9 @@ export class EmployersService {
       throw new BadRequestException('Email is required');
     }
 
-    const defaultPassword = 'MobPae@123';
+    const initialTemporaryPassword = this.generateTemporaryPassword();
 
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+    const hashedPassword = await bcrypt.hash(initialTemporaryPassword, 10);
 
     const { user, employer, temporaryPassword, created } =
       await this.prisma.$transaction(async (tx) => {
@@ -231,6 +250,7 @@ export class EmployersService {
             password: hashedPassword,
             role: 'EMPLOYER',
             isActive: true,
+            passwordChanged: false,
           },
         });
 
@@ -291,7 +311,7 @@ export class EmployersService {
         return {
           user,
           employer,
-          temporaryPassword: defaultPassword,
+          temporaryPassword: initialTemporaryPassword,
           created: true,
         };
       });
@@ -341,5 +361,9 @@ export class EmployersService {
     } catch (error) {
       console.error('Failed to write business audit log', error);
     }
+  }
+
+  private generateTemporaryPassword() {
+    return `MobPae-${randomBytes(8).toString('hex')}!1`;
   }
 }
