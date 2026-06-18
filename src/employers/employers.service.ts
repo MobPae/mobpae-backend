@@ -128,23 +128,17 @@ export class EmployersService {
       throw new BadRequestException('Email is required');
     }
 
-    const existingUser = await this.prisma.user.findUnique({
-      where: {
-        email: dto.email,
-      },
-    });
-
-    if (existingUser) {
-      throw new BadRequestException('User already exists with this email');
-    }
-
     const defaultPassword = 'MobPae@123';
 
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-    const { user, employer } = await this.prisma.$transaction(async (tx) => {
+    const { user, employer, temporaryPassword } = await this.prisma.$transaction(async (tx) => {
+      let enquiry:
+        | Awaited<ReturnType<typeof tx.employerEnquiry.findUnique>>
+        | null = null;
+
       if (dto.employerEnquiryId) {
-        const enquiry = await tx.employerEnquiry.findUnique({
+        enquiry = await tx.employerEnquiry.findUnique({
           where: {
             id: dto.employerEnquiryId,
           },
@@ -155,10 +149,54 @@ export class EmployersService {
         }
 
         if (enquiry.employerId) {
-          throw new BadRequestException(
-            'Employer enquiry is already onboarded',
-          );
+          const linkedEmployer = await tx.employer.findUnique({
+            where: {
+              id: enquiry.employerId,
+            },
+          });
+
+          if (linkedEmployer) {
+            return {
+              user: null,
+              employer: linkedEmployer,
+              temporaryPassword: null,
+            };
+          }
         }
+
+        const existingEmployer = await tx.employer.findUnique({
+          where: {
+            email: enquiry.email,
+          },
+        });
+
+        if (existingEmployer) {
+          await tx.employerEnquiry.update({
+            where: {
+              id: enquiry.id,
+            },
+            data: {
+              employerId: existingEmployer.id,
+              status: 'ONBOARDED',
+            },
+          });
+
+          return {
+            user: null,
+            employer: existingEmployer,
+            temporaryPassword: null,
+          };
+        }
+      }
+
+      const existingUser = await tx.user.findUnique({
+        where: {
+          email: dto.email,
+        },
+      });
+
+      if (existingUser) {
+        throw new BadRequestException('User already exists with this email');
       }
 
       /**
@@ -214,13 +252,14 @@ export class EmployersService {
       return {
         user,
         employer,
+        temporaryPassword: defaultPassword,
       };
     });
 
     return {
       employerId: employer.id,
-      loginEmail: user.email,
-      temporaryPassword: defaultPassword,
+      loginEmail: user?.email ?? employer.email,
+      temporaryPassword,
       status: employer.status,
     };
   }
