@@ -14,6 +14,14 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 import { PayrollUtil } from '../common/utils/payroll.util';
 import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { SalaryRequestListQueryDto } from './dto/salary-request-list-query.dto';
 
 @Injectable()
 export class SalaryRequestsService {
@@ -77,9 +85,10 @@ export class SalaryRequestsService {
         },
       });
 
-      const kycCompleted = REQUIRED_KYC_DOCUMENTS.every((type) =>
-        verifiedDocs.some((doc) => doc.documentType === type),
-      );
+      const kycCompleted =
+        REQUIRED_KYC_DOCUMENTS.every((type) =>
+          verifiedDocs.some((doc) => doc.documentType === type),
+        ) && employee.selfieStatus === 'VERIFIED';
 
       if (!kycCompleted) {
         throw new BadRequestException('Employee KYC is not completed');
@@ -264,21 +273,66 @@ export class SalaryRequestsService {
     });
   }
 
-  async findAllForAdmin() {
-    return this.prisma.salaryRequest.findMany({
-      include: {
-        employee: {
-          include: {
-            employer: true,
+  async findAllForAdmin(query: SalaryRequestListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      status: query.status,
+      employerId: query.employerId,
+      employeeId: query.employeeId,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              {
+                employee: {
+                  name: containsSearch(query),
+                },
+              },
+              {
+                employee: {
+                  email: containsSearch(query),
+                },
+              },
+              {
+                employee: {
+                  employeeCode: containsSearch(query),
+                },
+              },
+              {
+                employer: {
+                  companyName: containsSearch(query),
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.salaryRequest.findMany({
+        where,
+        include: {
+          employee: {
+            include: {
+              employer: true,
+            },
           },
+          disbursal: true,
+          repayment: true,
         },
-        disbursal: true,
-        repayment: true,
-      },
-      orderBy: {
-        requestedAt: 'desc',
-      },
-    });
+        orderBy: getOrderBy(
+          query,
+          ['amount', 'approvedAmount', 'status', 'requestedAt', 'createdAt'],
+          'requestedAt',
+        ),
+        skip,
+        take,
+      }),
+      this.prisma.salaryRequest.count({
+        where,
+      }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   /**

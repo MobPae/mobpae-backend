@@ -8,6 +8,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { EmployerSettlementListQueryDto } from './dto/employer-settlement-list-query.dto';
 
 @Injectable()
 export class EmployerSettlementsService {
@@ -26,15 +34,54 @@ export class EmployerSettlementsService {
    * - Admin Settlement Dashboard
    * - Settlement Monitoring Screen
    */
-  async findAll() {
-    return this.prisma.employerSettlement.findMany({
-      include: {
-        employer: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findAll(query: EmployerSettlementListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      status: query.status,
+      employerId: query.employerId,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { payrollMonth: containsSearch(query) },
+              { referenceNumber: containsSearch(query) },
+              {
+                employer: {
+                  companyName: containsSearch(query),
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.employerSettlement.findMany({
+        where,
+        include: {
+          employer: true,
+        },
+        orderBy: getOrderBy(
+          query,
+          [
+            'payrollMonth',
+            'principalAmount',
+            'totalAmount',
+            'outstandingAmount',
+            'dueDate',
+            'status',
+            'createdAt',
+          ],
+          'createdAt',
+        ),
+        skip,
+        take,
+      }),
+      this.prisma.employerSettlement.count({
+        where,
+      }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   /**

@@ -5,6 +5,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployerEnquiryDto } from './dto/create-employer-enquiry.dto';
 import { EmailService } from 'src/email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { EmployerEnquiryListQueryDto } from './dto/employer-enquiry-list-query.dto';
 
 @Injectable()
 export class EmployerEnquiriesService {
@@ -53,11 +61,38 @@ export class EmployerEnquiriesService {
     return enquiry;
   }
 
-  async findAll() {
-    return this.prisma.employerEnquiry.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findAll(query: EmployerEnquiryListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      status: query.status,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { companyName: containsSearch(query) },
+              { contactPerson: containsSearch(query) },
+              { email: containsSearch(query) },
+              { phone: containsSearch(query) },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.employerEnquiry.findMany({
+        where,
+        orderBy: getOrderBy(
+          query,
+          ['companyName', 'contactPerson', 'email', 'status', 'createdAt'],
+          'createdAt',
+        ),
+        skip,
+        take,
+      }),
+      this.prisma.employerEnquiry.count({
+        where,
+      }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 }

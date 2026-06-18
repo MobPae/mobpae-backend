@@ -12,5 +12,6 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
   imports: [PrismaModule, SettingsModule, EmailModule, AuditLogsModule],
   controllers: [EmployerSettlementsController],
   providers: [EmployerSettlementsService],
+  exports: [EmployerSettlementsService],
 })
 export class EmployerSettlementsModule {}

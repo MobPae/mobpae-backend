@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { SalaryRequestsService } from './salary-requests.service';
 import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { RejectSalaryRequestDto } from './dto/reject-salary-request.dto';
 import { PreviewSalaryRequestDto } from './dto/preview-salary-request.dto';
+import { SalaryRequestListQueryDto } from './dto/salary-request-list-query.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -112,10 +114,11 @@ export class SalaryRequestsController {
   @Get()
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Get all salary requests',
+    summary:
+      'List salary requests with pagination, search, sorting, and filters',
   })
-  findAllForAdmin() {
-    return this.salaryRequestsService.findAllForAdmin();
+  findAllForAdmin(@Query() query: SalaryRequestListQueryDto) {
+    return this.salaryRequestsService.findAllForAdmin(query);
   }
 
   /**

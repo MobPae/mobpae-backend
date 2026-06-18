@@ -25,6 +25,16 @@ export class SalaryLimitsService {
    * Only after all validations pass, a salary limit record is created for the employee.
    */
   async create(dto: CreateSalaryLimitDto) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        id: dto.employeeId,
+      },
+    });
+
+    if (!employee) {
+      throw new BadRequestException('Employee not found');
+    }
+
     const verifiedDocs = await this.prisma.kycDocument.findMany({
       where: {
         employeeId: dto.employeeId,
@@ -39,7 +49,9 @@ export class SalaryLimitsService {
       (doc) => doc.documentType === 'SALARY_SLIP',
     );
 
-    if (!(pan && aadhar && salarySlip)) {
+    if (
+      !(pan && aadhar && salarySlip && employee.selfieStatus === 'VERIFIED')
+    ) {
       throw new BadRequestException('Employee KYC is not completed');
     }
 
@@ -73,12 +85,6 @@ export class SalaryLimitsService {
         approvedLimit: dto.approvedLimit,
         maxRequestsPerCycle: dto.maxRequestsPerCycle,
         cooldownDays: dto.cooldownDays,
-      },
-    });
-
-    const employee = await this.prisma.employee.findUnique({
-      where: {
-        id: dto.employeeId,
       },
     });
 

@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { EmployerEnquiriesService } from './employer-enquiries.service';
 
 import { CreateEmployerEnquiryDto } from './dto/create-employer-enquiry.dto';
+import { EmployerEnquiryListQueryDto } from './dto/employer-enquiry-list-query.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -39,7 +40,11 @@ export class EmployerEnquiriesController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  findAll() {
-    return this.employerEnquiriesService.findAll();
+  @ApiOperation({
+    summary:
+      'List employer enquiries with pagination, search, sorting, and filters',
+  })
+  findAll(@Query() query: EmployerEnquiryListQueryDto) {
+    return this.employerEnquiriesService.findAll(query);
   }
 }

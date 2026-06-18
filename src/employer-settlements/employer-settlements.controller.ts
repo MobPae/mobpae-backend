@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -17,6 +18,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
+import { EmployerSettlementListQueryDto } from './dto/employer-settlement-list-query.dto';
 
 @ApiTags('Employer Settlements')
 @ApiBearerAuth()
@@ -33,10 +35,11 @@ export class EmployerSettlementsController {
   @Get()
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Get all employer settlements',
+    summary:
+      'List employer settlements with pagination, search, sorting, and filters',
   })
-  findAll() {
-    return this.employerSettlementsService.findAll();
+  findAll(@Query() query: EmployerSettlementListQueryDto) {
+    return this.employerSettlementsService.findAll(query);
   }
 
   /**

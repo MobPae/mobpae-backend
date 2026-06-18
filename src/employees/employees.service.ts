@@ -9,12 +9,24 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { FilesService } from '../files/files.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { EmployeeListQueryDto } from './dto/employee-list-query.dto';
 
 @Injectable()
 export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly filesService: FilesService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async create(dto: CreateEmployeeDto, userId: string) {
@@ -94,16 +106,55 @@ export class EmployeesService {
     };
   }
 
-  async findAll() {
-    return this.prisma.employee.findMany({
-      include: {
-        employer: true,
-      },
+  async findAll(query: EmployeeListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      employerId: query.employerId,
+      employmentStatus: query.employmentStatus,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { employeeCode: containsSearch(query) },
+              { name: containsSearch(query) },
+              { email: containsSearch(query) },
+              { phone: containsSearch(query) },
+              {
+                employer: {
+                  companyName: containsSearch(query),
+                },
+              },
+            ],
+          }
+        : {}),
+    };
 
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.employee.findMany({
+        where,
+        include: {
+          employer: true,
+        },
+        orderBy: getOrderBy(
+          query,
+          [
+            'employeeCode',
+            'name',
+            'email',
+            'salaryInHand',
+            'employmentStatus',
+            'createdAt',
+          ],
+          'createdAt',
+        ),
+        skip,
+        take,
+      }),
+      this.prisma.employee.count({
+        where,
+      }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   async update(employeeId: string, dto: UpdateEmployeeDto, userId: string) {
@@ -247,6 +298,21 @@ export class EmployeesService {
   }
 
   async getKycStatus(employeeId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        id: employeeId,
+      },
+      select: {
+        selfieStatus: true,
+        selfieUrl: true,
+        selfieVerifiedAt: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
     const documents = await this.prisma.kycDocument.findMany({
       where: {
         employeeId,
@@ -262,11 +328,17 @@ export class EmployeesService {
       (doc) => doc.documentType === 'SALARY_SLIP',
     );
 
+    const selfie = employee.selfieStatus === 'VERIFIED';
+
     return {
       pan,
       aadhar,
       salarySlip,
-      kycCompleted: pan && aadhar && salarySlip,
+      selfie,
+      selfieStatus: employee.selfieStatus,
+      selfieUrl: employee.selfieUrl,
+      selfieVerifiedAt: employee.selfieVerifiedAt,
+      kycCompleted: pan && aadhar && salarySlip && selfie,
     };
   }
 
@@ -475,7 +547,11 @@ export class EmployeesService {
      * KYC Status
      */
     const kycStatus =
-      employee.kycDocuments.length > 0 ? 'SUBMITTED' : 'NOT_SUBMITTED';
+      employee.kycDocuments.length > 0 || employee.selfieUrl
+        ? employee.selfieStatus === 'VERIFIED'
+          ? 'SUBMITTED'
+          : employee.selfieStatus
+        : 'NOT_SUBMITTED';
 
     /**
      * Bank Account Status
@@ -491,6 +567,10 @@ export class EmployeesService {
       email: employee.email,
       phone: employee.phone,
       employeeCode: employee.employeeCode,
+      profilePhotoUrl: employee.profilePhotoUrl,
+      selfieUrl: employee.selfieUrl,
+      selfieStatus: employee.selfieStatus,
+      selfieVerifiedAt: employee.selfieVerifiedAt,
 
       /**
        * Salary Info
@@ -526,6 +606,265 @@ export class EmployeesService {
       appActivated: employee.appActivated,
       employmentStatus: employee.employmentStatus,
     };
+  }
+
+  async getProfile(userId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+      include: {
+        employer: true,
+        kycDocuments: true,
+        bankAccount: true,
+        membership: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    const requiredVerified = ['PAN', 'AADHAR', 'SALARY_SLIP'].every((type) =>
+      employee.kycDocuments.some(
+        (document) =>
+          document.documentType === type && document.status === 'VERIFIED',
+      ),
+    );
+    const selfieVerified = employee.selfieStatus === 'VERIFIED';
+    const kycStatus =
+      requiredVerified && selfieVerified
+        ? 'VERIFIED'
+        : employee.kycDocuments.length > 0 || employee.selfieUrl
+          ? employee.selfieStatus === 'REJECTED'
+            ? 'REJECTED'
+            : 'PENDING'
+          : 'NOT_SUBMITTED';
+
+    return {
+      id: employee.id,
+      name: employee.name,
+      email: employee.email,
+      phone: employee.phone,
+      employeeCode: employee.employeeCode,
+      employerId: employee.employerId,
+      employerName: employee.employer.companyName,
+      profilePhotoUrl: employee.profilePhotoUrl,
+      selfieUrl: employee.selfieUrl,
+      selfieStatus: employee.selfieStatus,
+      selfieVerifiedAt: employee.selfieVerifiedAt,
+      kycStatus,
+      bankVerified: employee.bankAccount?.verified ?? false,
+      membershipActive: employee.membership?.status === 'ACTIVE',
+      appActivated: employee.appActivated,
+      employmentStatus: employee.employmentStatus,
+    };
+  }
+
+  async uploadProfilePhoto(userId: string, file: any) {
+    this.assertImageUpload(file);
+
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    const upload = await this.filesService.saveUploadedFile(file, { userId });
+
+    return this.prisma.employee.update({
+      where: {
+        id: employee.id,
+      },
+      data: {
+        profilePhotoUrl: upload.filePath,
+      },
+    });
+  }
+
+  async uploadSelfie(userId: string, file: any) {
+    this.assertImageUpload(file);
+
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    const upload = await this.filesService.saveUploadedFile(file, { userId });
+    const updatedEmployee = await this.prisma.employee.update({
+      where: {
+        id: employee.id,
+      },
+      data: {
+        selfieUrl: upload.filePath,
+        selfieStatus: 'PENDING',
+        selfieVerifiedAt: null,
+        selfieVerifiedBy: null,
+      },
+    });
+
+    const admins = await this.prisma.user.findMany({
+      where: {
+        role: 'ADMIN',
+        isActive: true,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    await Promise.all(
+      admins.map((admin) =>
+        this.notificationsService.createSystemNotification(
+          admin.id,
+          'Selfie Submitted',
+          `${employee.name} submitted a selfie for verification.`,
+        ),
+      ),
+    );
+
+    await this.writeAuditLog({
+      userId,
+      action: 'SELFIE_SUBMITTED',
+      entityType: 'EMPLOYEE',
+      entityId: employee.id,
+      oldValue: {
+        selfieUrl: employee.selfieUrl,
+        selfieStatus: employee.selfieStatus,
+        selfieVerifiedAt: employee.selfieVerifiedAt?.toISOString() ?? null,
+        selfieVerifiedBy: employee.selfieVerifiedBy,
+      },
+      newValue: {
+        selfieUrl: updatedEmployee.selfieUrl,
+        selfieStatus: updatedEmployee.selfieStatus,
+        selfieVerifiedAt:
+          updatedEmployee.selfieVerifiedAt?.toISOString() ?? null,
+        selfieVerifiedBy: updatedEmployee.selfieVerifiedBy,
+      },
+    });
+
+    return updatedEmployee;
+  }
+
+  async verifySelfie(employeeId: string, adminUserId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        id: employeeId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    if (!employee.selfieUrl) {
+      throw new BadRequestException('Selfie has not been uploaded');
+    }
+
+    const verifiedAt = new Date();
+    const updatedEmployee = await this.prisma.employee.update({
+      where: {
+        id: employeeId,
+      },
+      data: {
+        selfieStatus: 'VERIFIED',
+        selfieVerifiedAt: verifiedAt,
+        selfieVerifiedBy: adminUserId,
+      },
+    });
+
+    if (employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        employee.userId,
+        'Selfie Verified',
+        'Your selfie verification has been approved.',
+      );
+    }
+
+    await this.writeAuditLog({
+      userId: adminUserId,
+      action: 'SELFIE_VERIFIED',
+      entityType: 'EMPLOYEE',
+      entityId: employee.id,
+      oldValue: {
+        selfieStatus: employee.selfieStatus,
+        selfieVerifiedAt: employee.selfieVerifiedAt?.toISOString() ?? null,
+        selfieVerifiedBy: employee.selfieVerifiedBy,
+      },
+      newValue: {
+        selfieStatus: updatedEmployee.selfieStatus,
+        selfieVerifiedAt:
+          updatedEmployee.selfieVerifiedAt?.toISOString() ?? null,
+        selfieVerifiedBy: updatedEmployee.selfieVerifiedBy,
+      },
+    });
+
+    return updatedEmployee;
+  }
+
+  async rejectSelfie(employeeId: string, remarks: string, adminUserId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: {
+        id: employeeId,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    if (!employee.selfieUrl) {
+      throw new BadRequestException('Selfie has not been uploaded');
+    }
+
+    const updatedEmployee = await this.prisma.employee.update({
+      where: {
+        id: employeeId,
+      },
+      data: {
+        selfieStatus: 'REJECTED',
+        selfieVerifiedAt: null,
+        selfieVerifiedBy: adminUserId,
+      },
+    });
+
+    if (employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        employee.userId,
+        'Selfie Rejected',
+        remarks || 'Your selfie verification has been rejected.',
+      );
+    }
+
+    await this.writeAuditLog({
+      userId: adminUserId,
+      action: 'SELFIE_REJECTED',
+      entityType: 'EMPLOYEE',
+      entityId: employee.id,
+      oldValue: {
+        selfieStatus: employee.selfieStatus,
+        selfieVerifiedAt: employee.selfieVerifiedAt?.toISOString() ?? null,
+        selfieVerifiedBy: employee.selfieVerifiedBy,
+      },
+      newValue: {
+        selfieStatus: updatedEmployee.selfieStatus,
+        selfieVerifiedAt:
+          updatedEmployee.selfieVerifiedAt?.toISOString() ?? null,
+        selfieVerifiedBy: updatedEmployee.selfieVerifiedBy,
+        remarks,
+      },
+    });
+
+    return updatedEmployee;
   }
 
   async findAllForEmployer(userId: string) {
@@ -572,6 +911,18 @@ export class EmployeesService {
       employmentStatus: employee.employmentStatus,
       appActivated: employee.appActivated,
     };
+  }
+
+  private assertImageUpload(file: any) {
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Only JPG, PNG and WebP images are allowed',
+      );
+    }
   }
 
   private async writeAuditLog(data: {

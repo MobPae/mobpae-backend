@@ -8,6 +8,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RequestMembershipDto } from './dto/request-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { MembershipListQueryDto } from './dto/membership-list-query.dto';
 
 @Injectable()
 export class MembershipService {
@@ -297,17 +305,10 @@ export class MembershipService {
     };
   }
 
-  async findPending() {
-    return this.prisma.membership.findMany({
-      where: {
-        status: 'PENDING',
-      },
-      include: {
-        employee: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+  async findPending(query: MembershipListQueryDto = {}) {
+    return this.findAll({
+      ...query,
+      status: 'PENDING',
     });
   }
 
@@ -439,20 +440,62 @@ export class MembershipService {
     return membership;
   }
 
-  async findAll() {
-    return this.prisma.membership.findMany({
-      include: {
-        employee: {
-          include: {
-            employer: true,
+  async findAll(query: MembershipListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      status: query.status,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { planName: containsSearch(query) },
+              { paymentReference: containsSearch(query) },
+              { couponCode: containsSearch(query) },
+              {
+                employee: {
+                  name: containsSearch(query),
+                },
+              },
+              {
+                employee: {
+                  email: containsSearch(query),
+                },
+              },
+              {
+                employee: {
+                  employer: {
+                    companyName: containsSearch(query),
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.membership.findMany({
+        where,
+        include: {
+          employee: {
+            include: {
+              employer: true,
+            },
           },
         },
-      },
+        orderBy: getOrderBy(
+          query,
+          ['planName', 'amount', 'startDate', 'endDate', 'status', 'createdAt'],
+          'createdAt',
+        ),
+        skip,
+        take,
+      }),
+      this.prisma.membership.count({
+        where,
+      }),
+    ]);
 
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    return paginate(data, total, page, limit);
   }
 
   async getSummary() {

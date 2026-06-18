@@ -38,6 +38,8 @@ import { EmailModule } from './email/email.module';
 import { HealthModule } from './health/health.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { FilesModule } from './files/files.module';
+import { ReportsModule } from './reports/reports.module';
+import { BusinessJobsModule } from './business-jobs/business-jobs.module';
 
 @Module({
   imports: [
@@ -121,6 +123,10 @@ import { FilesModule } from './files/files.module';
     SessionsModule,
 
     FilesModule,
+
+    ReportsModule,
+
+    BusinessJobsModule,
   ],
   controllers: [AppController],
   providers: [

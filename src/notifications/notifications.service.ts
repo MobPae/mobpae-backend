@@ -5,6 +5,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { NotificationListQueryDto } from './dto/notification-list-query.dto';
 
 @Injectable()
 export class NotificationsService {
@@ -22,6 +30,50 @@ export class NotificationsService {
         type: dto.type,
       },
     });
+  }
+
+  async findAll(query: NotificationListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      userId: query.userId,
+      isRead: query.isRead === undefined ? undefined : query.isRead === 'true',
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { title: containsSearch(query) },
+              { message: containsSearch(query) },
+              {
+                user: {
+                  email: containsSearch(query),
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.notification.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              role: true,
+            },
+          },
+        },
+        orderBy: getOrderBy(query, ['title', 'type', 'isRead', 'createdAt']),
+        skip,
+        take,
+      }),
+      this.prisma.notification.count({
+        where,
+      }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   /**

@@ -6,6 +6,7 @@ import {
   Put,
   Req,
   Param,
+  Query,
   UseGuards,
   Post,
 } from '@nestjs/common';
@@ -22,6 +23,7 @@ import { Role } from '../common/enums/role.enum';
 import { UpdateEmployerStatusDto } from './dto/update-employer-status.dto';
 import { UpdateEmployerProfileDto } from './dto/update-employer-profile.dto';
 import { CreateEmployerDto } from './dto/create-employer.dto';
+import { EmployerListQueryDto } from './dto/employer-list-query.dto';
 
 @ApiTags('Employers')
 @ApiBearerAuth()
@@ -52,8 +54,11 @@ export class EmployersController {
 
   @Get()
   @Roles(Role.ADMIN)
-  findAll() {
-    return this.employersService.findAll();
+  @ApiOperation({
+    summary: 'List employers with pagination, search, sorting, and filters',
+  })
+  findAll(@Query() query: EmployerListQueryDto) {
+    return this.employersService.findAll(query);
   }
 
   @Get(':id')

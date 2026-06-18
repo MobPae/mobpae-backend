@@ -3,6 +3,13 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogQueryDto } from './dto/audit-log-query.dto';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
 
 export type AuditLogAction =
   | 'LOGIN_SUCCESS'
@@ -19,6 +26,9 @@ export type AuditLogAction =
   | 'EMPLOYER_SUSPENDED'
   | 'EMPLOYEE_CREATED'
   | 'EMPLOYEE_UPDATED'
+  | 'SELFIE_SUBMITTED'
+  | 'SELFIE_VERIFIED'
+  | 'SELFIE_REJECTED'
   | 'SALARY_REQUEST_CREATED'
   | 'SALARY_REQUEST_APPROVED'
   | 'SALARY_REQUEST_REJECTED'
@@ -28,6 +38,9 @@ export type AuditLogAction =
   | 'PAYROLL_RECOVERY_PROCESSED'
   | 'SETTLEMENT_GENERATED'
   | 'SETTLEMENT_PAID'
+  | 'SETTLEMENT_OVERDUE'
+  | 'MEMBERSHIP_EXPIRED'
+  | 'REPAYMENT_OVERDUE'
   | 'KYC_SUBMITTED'
   | 'KYC_APPROVED'
   | 'KYC_REJECTED'
@@ -45,6 +58,7 @@ export type AuditEntityType =
   | 'REPAYMENT'
   | 'PAYROLL'
   | 'SETTLEMENT'
+  | 'MEMBERSHIP'
   | 'KYC_DOCUMENT'
   | 'BANK_ACCOUNT';
 
@@ -117,13 +131,25 @@ export class AuditLogsService {
   }
 
   async findAll(query: AuditLogQueryDto) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip, take } = getPagination(query);
     const where: Prisma.AuditLogWhereInput = {
       action: query.action,
       entityType: query.entityType,
       userId: query.userId,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { action: containsSearch(query) },
+              { entityType: containsSearch(query) },
+              { entityId: containsSearch(query) },
+              {
+                user: {
+                  email: containsSearch(query),
+                },
+              },
+            ],
+          }
+        : {}),
     };
 
     const [items, total] = await this.prisma.$transaction([
@@ -138,26 +164,20 @@ export class AuditLogsService {
             },
           },
         },
-        orderBy: {
-          createdAt: 'desc',
-        },
+        orderBy: getOrderBy(
+          query,
+          ['action', 'entityType', 'entityId', 'createdAt'],
+          'createdAt',
+        ),
         skip,
-        take: limit,
+        take,
       }),
       this.prisma.auditLog.count({
         where,
       }),
     ]);
 
-    return {
-      data: items,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    return paginate(items, total, page, limit);
   }
 
   async findOne(id: string) {

@@ -1,20 +1,8 @@
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
-export class AuditLogQueryDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number = 1;
+import { ListQueryDto } from '../../common/dto/list-query.dto';
 
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number = 20;
-
+export class AuditLogQueryDto extends ListQueryDto {
   @IsOptional()
   @IsString()
   action?: string;

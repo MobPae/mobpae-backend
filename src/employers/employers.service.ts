@@ -8,6 +8,14 @@ import { randomBytes } from 'crypto';
 import { CreateEmployerDto } from './dto/create-employer.dto';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import {
+  containsSearch,
+  getOrderBy,
+  getPagination,
+  hasSearch,
+  paginate,
+} from '../common/utils/pagination.util';
+import { EmployerListQueryDto } from './dto/employer-list-query.dto';
 
 @Injectable()
 export class EmployersService {
@@ -17,12 +25,41 @@ export class EmployersService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  async findAll() {
-    return this.prisma.employer.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findAll(query: EmployerListQueryDto = {}) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: any = {
+      status: query.status,
+      riskStatus: query.riskStatus,
+      ...(hasSearch(query)
+        ? {
+            OR: [
+              { companyName: containsSearch(query) },
+              { companyCode: containsSearch(query) },
+              { contactPerson: containsSearch(query) },
+              { email: containsSearch(query) },
+              { phone: containsSearch(query) },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.employer.findMany({
+        where,
+        orderBy: getOrderBy(
+          query,
+          ['companyName', 'companyCode', 'status', 'riskStatus', 'createdAt'],
+          'createdAt',
+        ),
+        skip,
+        take,
+      }),
+      this.prisma.employer.count({
+        where,
+      }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   async findOne(id: string) {

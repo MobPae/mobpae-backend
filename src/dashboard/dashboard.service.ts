@@ -324,15 +324,17 @@ export class DashboardService {
       },
     });
 
-    const kycCompleted = REQUIRED_KYC_DOCUMENTS.every((type) =>
-      kycDocuments.some(
-        (doc) => doc.documentType === type && doc.status === 'VERIFIED',
-      ),
-    );
+    const kycCompleted =
+      REQUIRED_KYC_DOCUMENTS.every((type) =>
+        kycDocuments.some(
+          (doc) => doc.documentType === type && doc.status === 'VERIFIED',
+        ),
+      ) && employee.selfieStatus === 'VERIFIED';
 
     return {
       employeeName: employee?.name,
       kycCompleted,
+      selfieStatus: employee.selfieStatus,
       approvedLimit,
       activeRequestAmount,
       availableAdvance,

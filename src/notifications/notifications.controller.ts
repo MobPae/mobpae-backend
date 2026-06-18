@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -12,7 +13,11 @@ import { CreateNotificationDto } from './dto/create-notification.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { NotificationListQueryDto } from './dto/notification-list-query.dto';
 
+@ApiTags('Notifications')
+@ApiBearerAuth()
 @Controller('notifications')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class NotificationsController {
@@ -22,6 +27,15 @@ export class NotificationsController {
   @Roles('ADMIN')
   create(@Body() dto: CreateNotificationDto) {
     return this.notificationsService.create(dto);
+  }
+
+  @Get()
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'List notifications with pagination, search, sorting, and filters',
+  })
+  findAll(@Query() query: NotificationListQueryDto) {
+    return this.notificationsService.findAll(query);
   }
 
   @Get('me')

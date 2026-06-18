@@ -49,7 +49,7 @@ export class AuditLogsController {
             },
           },
         ],
-        meta: {
+        pagination: {
           page: 1,
           limit: 20,
           total: 1,

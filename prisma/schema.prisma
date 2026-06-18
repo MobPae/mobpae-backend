@@ -59,6 +59,11 @@ model Employee {
   email            String
   phone            String
   salaryInHand     Decimal              @db.Decimal(12, 2)
+  profilePhotoUrl  String?
+  selfieUrl        String?
+  selfieStatus     SelfieStatus         @default(PENDING)
+  selfieVerifiedAt DateTime?
+  selfieVerifiedBy String?
   joiningDate      DateTime?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
@@ -74,6 +79,7 @@ model Employee {
 
   @@unique([employerId, employeeCode])
   @@index([employerId])
+  @@index([selfieStatus])
   @@map("employees")
 }
 
@@ -362,6 +368,12 @@ enum EmployerStatus {
 enum EmployeeStatus {
   ACTIVE
   INACTIVE
+}
+
+enum SelfieStatus {
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 enum SalaryRequestStatus {

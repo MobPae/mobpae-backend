@@ -95,6 +95,31 @@ describe('critical MVP workflow routes (e2e)', () => {
       id: 'employee-1',
       appActivated: true,
     }),
+    getProfile: jest.fn().mockResolvedValue({
+      id: 'employee-1',
+      name: 'Arjun',
+      email: 'employee@northstar.com',
+      profilePhotoUrl: 'uploads/profile.png',
+      selfieStatus: 'VERIFIED',
+      kycStatus: 'VERIFIED',
+    }),
+    uploadProfilePhoto: jest.fn().mockResolvedValue({
+      id: 'employee-1',
+      profilePhotoUrl: 'uploads/profile.png',
+    }),
+    uploadSelfie: jest.fn().mockResolvedValue({
+      id: 'employee-1',
+      selfieUrl: 'uploads/selfie.png',
+      selfieStatus: 'PENDING',
+    }),
+    verifySelfie: jest.fn().mockResolvedValue({
+      id: 'employee-1',
+      selfieStatus: 'VERIFIED',
+    }),
+    rejectSelfie: jest.fn().mockResolvedValue({
+      id: 'employee-1',
+      selfieStatus: 'REJECTED',
+    }),
   };
 
   const kycDocumentsService = {
@@ -309,6 +334,59 @@ describe('critical MVP workflow routes (e2e)', () => {
       });
 
     await request(app.getHttpServer())
+      .post('/employees/profile-photo')
+      .set('x-test-role', 'EMPLOYEE')
+      .attach('file', Buffer.from('profile'), {
+        filename: 'profile.png',
+        contentType: 'image/png',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.profilePhotoUrl).toBe('uploads/profile.png');
+      });
+
+    await request(app.getHttpServer())
+      .post('/employees/selfie')
+      .set('x-test-role', 'EMPLOYEE')
+      .attach('file', Buffer.from('selfie'), {
+        filename: 'selfie.png',
+        contentType: 'image/png',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.selfieStatus).toBe('PENDING');
+      });
+
+    await request(app.getHttpServer())
+      .post('/employees/employee-1/selfie/verify')
+      .set('x-test-role', 'ADMIN')
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.selfieStatus).toBe('VERIFIED');
+      });
+
+    await request(app.getHttpServer())
+      .post('/employees/employee-1/selfie/reject')
+      .set('x-test-role', 'ADMIN')
+      .send({ remarks: 'Face not clear' })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.selfieStatus).toBe('REJECTED');
+      });
+
+    await request(app.getHttpServer())
+      .get('/employees/me/profile')
+      .set('x-test-role', 'EMPLOYEE')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          profilePhotoUrl: 'uploads/profile.png',
+          selfieStatus: 'VERIFIED',
+          kycStatus: 'VERIFIED',
+        });
+      });
+
+    await request(app.getHttpServer())
       .post('/kyc-documents')
       .set('x-test-role', 'EMPLOYEE')
       .send({ documentType: 'PAN', filePath: 'uploads/pan.pdf' })
@@ -421,6 +499,24 @@ describe('critical MVP workflow routes (e2e)', () => {
       expect.objectContaining({ employeeCode: 'EMP001' }),
       'employer-user',
     );
+    expect(employeesService.uploadProfilePhoto).toHaveBeenCalledWith(
+      'employee-user',
+      expect.objectContaining({ mimetype: 'image/png' }),
+    );
+    expect(employeesService.uploadSelfie).toHaveBeenCalledWith(
+      'employee-user',
+      expect.objectContaining({ mimetype: 'image/png' }),
+    );
+    expect(employeesService.verifySelfie).toHaveBeenCalledWith(
+      'employee-1',
+      'admin-user',
+    );
+    expect(employeesService.rejectSelfie).toHaveBeenCalledWith(
+      'employee-1',
+      'Face not clear',
+      'admin-user',
+    );
+    expect(employeesService.getProfile).toHaveBeenCalledWith('employee-user');
     expect(kycDocumentsService.create).toHaveBeenCalledWith(
       'employee-user',
       expect.objectContaining({ documentType: 'PAN' }),

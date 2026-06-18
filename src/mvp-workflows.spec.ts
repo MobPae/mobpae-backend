@@ -277,7 +277,12 @@ describe('critical MVP workflow unit coverage', () => {
       },
       $transaction: jest.fn((callback) => callback(tx)),
     };
-    const service = new EmployeesService(prisma as any, mockAudit() as any);
+    const service = new EmployeesService(
+      prisma as any,
+      mockAudit() as any,
+      {} as any,
+      mockNotifications() as any,
+    );
 
     const result = await service.bulkCreate('employer-user', [
       {
@@ -491,6 +496,7 @@ describe('critical MVP workflow unit coverage', () => {
           id: 'employee-1',
           employerId: 'employer-1',
           salaryInHand: 54000,
+          selfieStatus: 'VERIFIED',
         }),
       },
       kycDocument: {

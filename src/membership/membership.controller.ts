@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -20,6 +21,7 @@ import { RequestMembershipDto } from './dto/request-membership.dto';
 import { RejectMembershipDto } from './dto/reject-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
 import { ValidateMembershipCouponDto } from './dto/validate-membership-coupon.dto';
+import { MembershipListQueryDto } from './dto/membership-list-query.dto';
 
 @ApiTags('Membership')
 @ApiBearerAuth()
@@ -92,10 +94,10 @@ export class MembershipController {
   @Get('pending')
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Get pending memberships',
+    summary: 'List pending memberships with pagination and search',
   })
-  findPending() {
-    return this.membershipService.findPending();
+  findPending(@Query() query: MembershipListQueryDto) {
+    return this.membershipService.findPending(query);
   }
 
   /**
@@ -109,10 +111,10 @@ export class MembershipController {
   @Get()
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Get all memberships',
+    summary: 'List memberships with pagination, search, sorting, and filters',
   })
-  findAll() {
-    return this.membershipService.findAll();
+  findAll(@Query() query: MembershipListQueryDto) {
+    return this.membershipService.findAll(query);
   }
 
   /**
