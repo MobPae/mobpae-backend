@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import { DisbursalsService } from './disbursals.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { UseGuards } from '@nestjs/common';
@@ -19,8 +19,11 @@ export class DisbursalsController {
   create(
     @Body()
     dto: CreateDisbursalDto,
+
+    @Req()
+    req: any,
   ) {
-    return this.disbursalsService.create(dto);
+    return this.disbursalsService.create(dto, req.user.userId);
   }
 
   @Get()
@@ -31,7 +34,7 @@ export class DisbursalsController {
 
   @Post(':id/disburse')
   @Roles('ADMIN')
-  disburse(@Param('id') id: string) {
-    return this.disbursalsService.disburse(id);
+  disburse(@Param('id') id: string, @Req() req: any) {
+    return this.disbursalsService.disburse(id, req.user.userId);
   }
 }

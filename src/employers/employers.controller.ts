@@ -71,10 +71,13 @@ export class EmployersController {
     summary: 'Create employer',
   })
   create(
+    @Req()
+    req: any,
+
     @Body()
     dto: CreateEmployerDto,
   ) {
-    return this.employersService.create(dto);
+    return this.employersService.create(dto, req.user.userId);
   }
 
   @Patch(':id/status')
@@ -85,7 +88,10 @@ export class EmployersController {
 
     @Body()
     dto: UpdateEmployerStatusDto,
+
+    @Req()
+    req: any,
   ) {
-    return this.employersService.updateStatus(id, dto.status);
+    return this.employersService.updateStatus(id, dto.status, req.user.userId);
   }
 }

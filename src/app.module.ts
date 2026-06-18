@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import * as Joi from 'joi';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -32,11 +33,22 @@ import { PayrollModule } from './payroll/payroll.module';
 import { MembershipModule } from './membership/membership.module';
 import { EmployerSettlementsModule } from './employer-settlements/employer-settlements.module';
 import { EmailModule } from './email/email.module';
+import { HealthModule } from './health/health.module';
+import { SessionsModule } from './sessions/sessions.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validationSchema: Joi.object({
+        DATABASE_URL: Joi.string().required(),
+        JWT_SECRET: Joi.string().required(),
+        SMTP_HOST: Joi.string().required(),
+        SMTP_PORT: Joi.number().required(),
+        SMTP_USER: Joi.string().required(),
+        SMTP_PASS: Joi.string().required(),
+        FRONTEND_URL: Joi.string().uri().required(),
+      }),
     }),
 
     PrismaModule,
@@ -75,6 +87,10 @@ import { EmailModule } from './email/email.module';
     EmployerSettlementsModule,
 
     EmailModule,
+
+    HealthModule,
+
+    SessionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

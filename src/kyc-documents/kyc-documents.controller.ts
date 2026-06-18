@@ -5,7 +5,7 @@ import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('KYC Documents')
 @ApiBearerAuth()
@@ -16,6 +16,7 @@ export class KycDocumentsController {
 
   @Post()
   @Roles('EMPLOYEE')
+  @ApiOperation({ summary: 'Submit or resubmit a KYC document' })
   create(
     @Req() req: any,
 
@@ -38,8 +39,23 @@ export class KycDocumentsController {
 
   @Get('pending')
   @Roles('ADMIN')
+  @ApiOperation({ summary: 'List all pending KYC documents' })
   findPending() {
     return this.kycDocumentsService.findPending();
+  }
+
+  @Get('pending-by-employer')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Group pending KYC documents by employer' })
+  findPendingByEmployer() {
+    return this.kycDocumentsService.findPendingByEmployer();
+  }
+
+  @Get('pending-by-employer/:employerId')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'List pending KYC documents for one employer' })
+  findPendingForEmployer(@Param('employerId') employerId: string) {
+    return this.kycDocumentsService.findPendingForEmployer(employerId);
   }
 
   @Get()
@@ -50,13 +66,15 @@ export class KycDocumentsController {
 
   @Post(':id/verify')
   @Roles('ADMIN')
-  verify(@Param('id') id: string) {
-    return this.kycDocumentsService.verify(id);
+  @ApiOperation({ summary: 'Approve a KYC document' })
+  verify(@Param('id') id: string, @Req() req: any) {
+    return this.kycDocumentsService.verify(id, req.user.userId);
   }
 
   @Post(':id/reject')
   @Roles('ADMIN')
-  reject(@Param('id') id: string) {
-    return this.kycDocumentsService.reject(id);
+  @ApiOperation({ summary: 'Reject a KYC document' })
+  reject(@Param('id') id: string, @Req() req: any) {
+    return this.kycDocumentsService.reject(id, req.user.userId);
   }
 }

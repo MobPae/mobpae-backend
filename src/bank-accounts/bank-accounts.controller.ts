@@ -13,7 +13,7 @@ import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Bank Accounts')
 @ApiBearerAuth()
@@ -24,6 +24,7 @@ export class BankAccountsController {
 
   @Post()
   @Roles('EMPLOYEE')
+  @ApiOperation({ summary: 'Submit or resubmit employee bank account details' })
   create(
     @Req() req: any,
 
@@ -50,6 +51,20 @@ export class BankAccountsController {
     );
   }
 
+  @Get('pending-by-employer')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Group pending bank verifications by employer' })
+  findPendingByEmployer() {
+    return this.bankAccountsService.findPendingByEmployer();
+  }
+
+  @Get('pending-by-employer/:employerId')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'List pending bank verifications for one employer' })
+  findPendingForEmployer(@Param('employerId') employerId: string) {
+    return this.bankAccountsService.findPendingForEmployer(employerId);
+  }
+
   @Get('my')
   @Roles('EMPLOYEE')
   findMyBankAccount(@Req() req: any) {
@@ -63,7 +78,15 @@ export class BankAccountsController {
 
   @Post(':id/verify')
   @Roles('ADMIN')
-  verify(@Param('id') id: string) {
-    return this.bankAccountsService.verify(id);
+  @ApiOperation({ summary: 'Approve bank account verification' })
+  verify(@Param('id') id: string, @Req() req: any) {
+    return this.bankAccountsService.verify(id, req.user.userId);
+  }
+
+  @Post(':id/reject')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Reject bank account verification' })
+  reject(@Param('id') id: string, @Req() req: any) {
+    return this.bankAccountsService.reject(id, req.user.userId);
   }
 }

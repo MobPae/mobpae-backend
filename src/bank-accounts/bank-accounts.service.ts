@@ -1,6 +1,12 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
+
+type BankAuditAction = 'BANK_SUBMITTED' | 'BANK_APPROVED' | 'BANK_REJECTED';
 
 @Injectable()
 export class BankAccountsService {
@@ -55,6 +61,14 @@ export class BankAccountsService {
             upiId: dto.upiId,
           },
         });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'BANK_SUBMITTED',
+      entityId: account.id,
+      oldValue: existingAccount,
+      newValue: account,
+    });
 
     return {
       ...account,
@@ -112,8 +126,18 @@ export class BankAccountsService {
     };
   }
 
-  async verify(id: string) {
-    return this.prisma.employeeBankAccount.update({
+  async verify(id: string, actorUserId?: string) {
+    const existingAccount = await this.prisma.employeeBankAccount.findUnique({
+      where: {
+        id,
+      },
+    });
+
+    if (!existingAccount) {
+      throw new NotFoundException('Bank account not found');
+    }
+
+    const account = await this.prisma.employeeBankAccount.update({
       where: {
         id,
       },
@@ -121,6 +145,53 @@ export class BankAccountsService {
         verified: true,
       },
     });
+
+    await this.writeAuditLog({
+      userId: actorUserId,
+      action: 'BANK_APPROVED',
+      entityId: account.id,
+      oldValue: existingAccount,
+      newValue: account,
+    });
+
+    return {
+      ...account,
+      accountNumber: this.maskAccountNumber(account.accountNumber),
+    };
+  }
+
+  async reject(id: string, actorUserId?: string) {
+    const existingAccount = await this.prisma.employeeBankAccount.findUnique({
+      where: {
+        id,
+      },
+    });
+
+    if (!existingAccount) {
+      throw new NotFoundException('Bank account not found');
+    }
+
+    const account = await this.prisma.employeeBankAccount.update({
+      where: {
+        id,
+      },
+      data: {
+        verified: false,
+      },
+    });
+
+    await this.writeAuditLog({
+      userId: actorUserId,
+      action: 'BANK_REJECTED',
+      entityId: account.id,
+      oldValue: existingAccount,
+      newValue: account,
+    });
+
+    return {
+      ...account,
+      accountNumber: this.maskAccountNumber(account.accountNumber),
+    };
   }
 
   async findAllForAdmin(verified?: boolean) {
@@ -139,6 +210,73 @@ export class BankAccountsService {
     });
   }
 
+  async findPendingByEmployer() {
+    const accounts = await this.prisma.employeeBankAccount.findMany({
+      where: {
+        verified: false,
+      },
+      select: {
+        id: true,
+        employee: {
+          select: {
+            employer: {
+              select: {
+                id: true,
+                companyName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const grouped = new Map<
+      string,
+      { employerId: string; companyName: string; pendingCount: number }
+    >();
+
+    for (const account of accounts) {
+      const employer = account.employee.employer;
+      const existing = grouped.get(employer.id);
+
+      grouped.set(employer.id, {
+        employerId: employer.id,
+        companyName: employer.companyName,
+        pendingCount: (existing?.pendingCount ?? 0) + 1,
+      });
+    }
+
+    return [...grouped.values()].sort((a, b) =>
+      a.companyName.localeCompare(b.companyName),
+    );
+  }
+
+  async findPendingForEmployer(employerId: string) {
+    const accounts = await this.prisma.employeeBankAccount.findMany({
+      where: {
+        verified: false,
+        employee: {
+          employerId,
+        },
+      },
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return accounts.map((account) => ({
+      ...account,
+      accountNumber: this.maskAccountNumber(account.accountNumber),
+    }));
+  }
+
   async findByUserId(userId: string) {
     const employee = await this.prisma.employee.findUnique({
       where: {
@@ -151,5 +289,28 @@ export class BankAccountsService {
     }
 
     return this.findByEmployee(employee.id);
+  }
+
+  private async writeAuditLog(data: {
+    userId?: string;
+    action: BankAuditAction;
+    entityId: string;
+    oldValue?: Record<string, unknown> | null;
+    newValue?: Record<string, unknown> | null;
+  }) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: data.userId,
+          action: data.action,
+          entityType: 'BANK_ACCOUNT',
+          entityId: data.entityId,
+          oldValue: data.oldValue as any,
+          newValue: data.newValue as any,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to write bank account audit log', error);
+    }
   }
 }

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -16,7 +20,7 @@ export class EmployeesService {
     });
 
     if (!employer) {
-      throw new Error('Employer not found');
+      throw new NotFoundException('Employer not found');
     }
 
     const existingUser = await this.prisma.user.findUnique({
@@ -26,32 +30,53 @@ export class EmployeesService {
     });
 
     if (existingUser) {
-      throw new Error('User already exists');
+      throw new BadRequestException('User already exists');
     }
 
     const defaultPassword = 'MobPae@123';
 
     const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        password: hashedPassword,
-        role: 'EMPLOYEE',
-        isActive: true,
-      },
-    });
+    const employee = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email: dto.email,
+          password: hashedPassword,
+          role: 'EMPLOYEE',
+          isActive: true,
+        },
+      });
 
-    const employee = await this.prisma.employee.create({
-      data: {
-        userId: user.id,
-        employerId: employer.id,
-        employeeCode: dto.employeeCode,
-        name: dto.name,
-        email: dto.email,
-        phone: dto.phone,
-        salaryInHand: dto.salaryInHand,
-      },
+      const employee = await tx.employee.create({
+        data: {
+          userId: user.id,
+          employerId: employer.id,
+          employeeCode: dto.employeeCode,
+          name: dto.name,
+          email: dto.email,
+          phone: dto.phone,
+          salaryInHand: dto.salaryInHand,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId,
+          action: 'EMPLOYEE_CREATED',
+          entityType: 'EMPLOYEE',
+          entityId: employee.id,
+          newValue: {
+            employerId: employee.employerId,
+            employeeCode: employee.employeeCode,
+            name: employee.name,
+            email: employee.email,
+            employmentStatus: employee.employmentStatus,
+            appActivated: employee.appActivated,
+          },
+        },
+      });
+
+      return employee;
     });
 
     return {
@@ -83,7 +108,7 @@ export class EmployeesService {
     });
 
     if (!employer) {
-      throw new Error('Employer not found');
+      throw new NotFoundException('Employer not found');
     }
 
     const employee = await this.prisma.employee.findFirst({
@@ -94,10 +119,10 @@ export class EmployeesService {
     });
 
     if (!employee) {
-      throw new Error('Employee not found');
+      throw new NotFoundException('Employee not found');
     }
 
-    return this.prisma.employee.update({
+    const updatedEmployee = await this.prisma.employee.update({
       where: {
         id: employeeId,
       },
@@ -110,6 +135,17 @@ export class EmployeesService {
           : {}),
       },
     });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'EMPLOYEE_UPDATED',
+      entityType: 'EMPLOYEE',
+      entityId: updatedEmployee.id,
+      oldValue: this.employeeAuditValue(employee),
+      newValue: this.employeeAuditValue(updatedEmployee),
+    });
+
+    return updatedEmployee;
   }
 
   async updateActivation(
@@ -124,7 +160,7 @@ export class EmployeesService {
     });
 
     if (!employer) {
-      throw new Error('Employer not found');
+      throw new NotFoundException('Employer not found');
     }
 
     const employee = await this.prisma.employee.findFirst({
@@ -135,10 +171,10 @@ export class EmployeesService {
     });
 
     if (!employee) {
-      throw new Error('Employee not found');
+      throw new NotFoundException('Employee not found');
     }
 
-    return this.prisma.employee.update({
+    const updatedEmployee = await this.prisma.employee.update({
       where: {
         id: employeeId,
       },
@@ -146,6 +182,17 @@ export class EmployeesService {
         appActivated,
       },
     });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'EMPLOYEE_UPDATED',
+      entityType: 'EMPLOYEE',
+      entityId: updatedEmployee.id,
+      oldValue: this.employeeAuditValue(employee),
+      newValue: this.employeeAuditValue(updatedEmployee),
+    });
+
+    return updatedEmployee;
   }
 
   async bulkActivation(
@@ -160,7 +207,7 @@ export class EmployeesService {
     });
 
     if (!employer) {
-      throw new Error('Employer not found');
+      throw new NotFoundException('Employer not found');
     }
 
     const result = await this.prisma.employee.updateMany({
@@ -172,6 +219,19 @@ export class EmployeesService {
       },
       data: {
         appActivated,
+      },
+    });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'EMPLOYEE_UPDATED',
+      entityType: 'EMPLOYEE',
+      entityId: employer.id,
+      oldValue: null,
+      newValue: {
+        employeeIds,
+        appActivated,
+        updatedCount: result.count,
       },
     });
 
@@ -282,7 +342,7 @@ export class EmployeesService {
           },
         });
 
-        await this.prisma.employee.create({
+        const createdEmployee = await this.prisma.employee.create({
           data: {
             userId: user.id,
             employerId: employer.id,
@@ -296,6 +356,22 @@ export class EmployeesService {
 
             employmentStatus: 'ACTIVE',
             appActivated: false,
+          },
+        });
+
+        await this.writeAuditLog({
+          userId,
+          action: 'EMPLOYEE_CREATED',
+          entityType: 'EMPLOYEE',
+          entityId: createdEmployee.id,
+          oldValue: null,
+          newValue: {
+            employerId: createdEmployee.employerId,
+            employeeCode: createdEmployee.employeeCode,
+            name: createdEmployee.name,
+            email: createdEmployee.email,
+            employmentStatus: createdEmployee.employmentStatus,
+            appActivated: createdEmployee.appActivated,
           },
         });
 
@@ -463,5 +539,66 @@ export class EmployeesService {
         createdAt: 'desc',
       },
     });
+  }
+
+  private employeeAuditValue(employee: {
+    employerId: string;
+    employeeCode: string;
+    name: string;
+    email: string;
+    phone: string;
+    salaryInHand: unknown;
+    employmentStatus: string;
+    appActivated: boolean;
+  }) {
+    return {
+      employerId: employee.employerId,
+      employeeCode: employee.employeeCode,
+      name: employee.name,
+      email: employee.email,
+      phone: employee.phone,
+      salaryInHand: Number(employee.salaryInHand),
+      employmentStatus: employee.employmentStatus,
+      appActivated: employee.appActivated,
+    };
+  }
+
+  private async writeAuditLog(data: {
+    userId: string;
+    action: string;
+    entityType: string;
+    entityId: string;
+    oldValue: Record<string, unknown> | null;
+    newValue: Record<string, unknown> | null;
+  }) {
+    const auditData: {
+      userId: string;
+      action: string;
+      entityType: string;
+      entityId: string;
+      oldValue?: Record<string, unknown>;
+      newValue?: Record<string, unknown>;
+    } = {
+      userId: data.userId,
+      action: data.action,
+      entityType: data.entityType,
+      entityId: data.entityId,
+    };
+
+    if (data.oldValue !== null) {
+      auditData.oldValue = data.oldValue;
+    }
+
+    if (data.newValue !== null) {
+      auditData.newValue = data.newValue;
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: auditData as any,
+      });
+    } catch (error) {
+      console.error('Failed to write business audit log', error);
+    }
   }
 }

@@ -17,7 +17,7 @@ export class DisbursalsService {
     private readonly emailService: EmailService,
   ) {}
 
-  async create(dto: CreateDisbursalDto) {
+  async create(dto: CreateDisbursalDto, actorUserId: string) {
     const salaryRequest = await this.prisma.salaryRequest.findUnique({
       where: {
         id: dto.salaryRequestId,
@@ -48,6 +48,12 @@ export class DisbursalsService {
       throw new BadRequestException('Salary request is not approved');
     }
 
+    const existingDisbursal = await this.prisma.disbursal.findUnique({
+      where: {
+        salaryRequestId: salaryRequest.id,
+      },
+    });
+
     const disbursal = await this.prisma.disbursal.upsert({
       where: {
         salaryRequestId: salaryRequest.id,
@@ -68,6 +74,17 @@ export class DisbursalsService {
         approvedAmount: salaryRequest.approvedAmount ?? salaryRequest.amount,
       },
     });
+
+    if (!existingDisbursal) {
+      await this.writeAuditLog({
+        userId: actorUserId,
+        action: 'DISBURSAL_CREATED',
+        entityType: 'DISBURSAL',
+        entityId: disbursal.id,
+        oldValue: null,
+        newValue: this.disbursalAuditValue(disbursal),
+      });
+    }
 
     return disbursal;
   }
@@ -106,7 +123,7 @@ export class DisbursalsService {
    * Employee receives advance salary.
    */
 
-  async disburse(id: string) {
+  async disburse(id: string, actorUserId: string) {
     const existingDisbursal = await this.prisma.disbursal.findUnique({
       where: {
         id,
@@ -147,6 +164,8 @@ export class DisbursalsService {
       },
     });
 
+    let repaymentCreated = false;
+
     if (!repayment) {
       const interestSetting = await this.prisma.setting.findUnique({
         where: {
@@ -180,6 +199,8 @@ export class DisbursalsService {
           status: 'SCHEDULED',
         },
       });
+
+      repaymentCreated = true;
     }
 
     const disbursal = await this.prisma.disbursal.update({
@@ -209,6 +230,17 @@ export class DisbursalsService {
       );
     }
 
+    if (repaymentCreated && repayment) {
+      await this.writeAuditLog({
+        userId: actorUserId,
+        action: 'REPAYMENT_CREATED',
+        entityType: 'REPAYMENT',
+        entityId: repayment.id,
+        oldValue: null,
+        newValue: this.repaymentAuditValue(repayment),
+      });
+    }
+
     try {
       await this.emailService.sendDisbursalSuccessfulEmail({
         to: salaryRequest.employee.email,
@@ -222,5 +254,84 @@ export class DisbursalsService {
     }
 
     return disbursal;
+  }
+
+  private disbursalAuditValue(disbursal: {
+    id: string;
+    salaryRequestId: string;
+    amount: unknown;
+    status: string;
+    disbursedAt?: Date | null;
+  }) {
+    return {
+      id: disbursal.id,
+      salaryRequestId: disbursal.salaryRequestId,
+      amount: Number(disbursal.amount),
+      status: disbursal.status,
+      disbursedAt: disbursal.disbursedAt?.toISOString() ?? null,
+    };
+  }
+
+  private repaymentAuditValue(repayment: {
+    id: string;
+    salaryRequestId: string;
+    principalAmount: unknown;
+    interestAmount: unknown;
+    totalAmount: unknown;
+    interestRate: unknown;
+    interestDays: number;
+    dueDate: Date;
+    status: string;
+  }) {
+    return {
+      id: repayment.id,
+      salaryRequestId: repayment.salaryRequestId,
+      principalAmount: Number(repayment.principalAmount),
+      interestAmount: Number(repayment.interestAmount),
+      totalAmount: Number(repayment.totalAmount),
+      interestRate: Number(repayment.interestRate),
+      interestDays: repayment.interestDays,
+      dueDate: repayment.dueDate.toISOString(),
+      status: repayment.status,
+    };
+  }
+
+  private async writeAuditLog(data: {
+    userId: string;
+    action: string;
+    entityType: string;
+    entityId: string;
+    oldValue: Record<string, unknown> | null;
+    newValue: Record<string, unknown> | null;
+  }) {
+    const auditData: {
+      userId: string;
+      action: string;
+      entityType: string;
+      entityId: string;
+      oldValue?: Record<string, unknown>;
+      newValue?: Record<string, unknown>;
+    } = {
+      userId: data.userId,
+      action: data.action,
+      entityType: data.entityType,
+      entityId: data.entityId,
+    };
+
+    if (data.oldValue !== null) {
+      auditData.oldValue = data.oldValue;
+    }
+
+    if (data.newValue !== null) {
+      auditData.newValue = data.newValue;
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: auditData as any,
+      });
+    } catch (error) {
+      console.error('Failed to write business audit log', error);
+    }
   }
 }

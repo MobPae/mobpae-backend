@@ -152,6 +152,15 @@ export class SalaryRequestsService {
       },
     });
 
+    await this.writeAuditLog({
+      userId,
+      action: 'SALARY_REQUEST_CREATED',
+      entityType: 'SALARY_REQUEST',
+      entityId: salaryRequest.id,
+      oldValue: null,
+      newValue: this.salaryRequestAuditValue(salaryRequest),
+    });
+
     try {
       await this.emailService.sendSalaryRequestSubmittedEmail({
         to: employee.email,
@@ -321,6 +330,15 @@ export class SalaryRequestsService {
       },
     });
 
+    await this.writeAuditLog({
+      userId,
+      action: 'SALARY_REQUEST_APPROVED',
+      entityType: 'SALARY_REQUEST',
+      entityId: updatedRequest.id,
+      oldValue: this.salaryRequestAuditValue(request),
+      newValue: this.salaryRequestAuditValue(updatedRequest),
+    });
+
     if (request.employee.userId) {
       await this.notificationsService.createSystemNotification(
         request.employee.userId,
@@ -410,6 +428,15 @@ export class SalaryRequestsService {
 
         remarks,
       },
+    });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'SALARY_REQUEST_REJECTED',
+      entityType: 'SALARY_REQUEST',
+      entityId: updatedRequest.id,
+      oldValue: this.salaryRequestAuditValue(request),
+      newValue: this.salaryRequestAuditValue(updatedRequest),
     });
 
     if (request.employee.userId) {
@@ -646,6 +673,70 @@ export class SalaryRequestsService {
 
       default:
         return 'default';
+    }
+  }
+
+  private salaryRequestAuditValue(request: {
+    id: string;
+    employeeId: string;
+    employerId: string;
+    amount: unknown;
+    approvedAmount?: unknown;
+    status: string;
+    remarks?: string | null;
+    requestedAt?: Date;
+  }) {
+    return {
+      id: request.id,
+      employeeId: request.employeeId,
+      employerId: request.employerId,
+      amount: Number(request.amount),
+      approvedAmount:
+        request.approvedAmount === null || request.approvedAmount === undefined
+          ? null
+          : Number(request.approvedAmount),
+      status: request.status,
+      remarks: request.remarks ?? null,
+      requestedAt: request.requestedAt?.toISOString(),
+    };
+  }
+
+  private async writeAuditLog(data: {
+    userId: string;
+    action: string;
+    entityType: string;
+    entityId: string;
+    oldValue: Record<string, unknown> | null;
+    newValue: Record<string, unknown> | null;
+  }) {
+    const auditData: {
+      userId: string;
+      action: string;
+      entityType: string;
+      entityId: string;
+      oldValue?: Record<string, unknown>;
+      newValue?: Record<string, unknown>;
+    } = {
+      userId: data.userId,
+      action: data.action,
+      entityType: data.entityType,
+      entityId: data.entityId,
+    };
+
+    if (data.oldValue !== null) {
+      auditData.oldValue = data.oldValue;
+    }
+
+    if (data.newValue !== null) {
+      auditData.newValue = data.newValue;
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: auditData as any,
+      });
+    } catch (error) {
+      console.error('Failed to write business audit log', error);
     }
   }
 }

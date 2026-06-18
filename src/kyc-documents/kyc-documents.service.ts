@@ -9,6 +9,8 @@ import { EmailService } from '../email/email.service';
 
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 
+type KycAuditAction = 'KYC_SUBMITTED' | 'KYC_APPROVED' | 'KYC_REJECTED';
+
 @Injectable()
 export class KycDocumentsService {
   constructor(
@@ -35,7 +37,7 @@ export class KycDocumentsService {
     });
 
     if (existingDocument) {
-      return this.prisma.kycDocument.update({
+      const updatedDocument = await this.prisma.kycDocument.update({
         where: {
           id: existingDocument.id,
         },
@@ -46,9 +48,19 @@ export class KycDocumentsService {
           verifiedAt: null,
         },
       });
+
+      await this.writeAuditLog({
+        userId,
+        action: 'KYC_SUBMITTED',
+        entityId: updatedDocument.id,
+        oldValue: existingDocument,
+        newValue: updatedDocument,
+      });
+
+      return updatedDocument;
     }
 
-    return this.prisma.kycDocument.create({
+    const document = await this.prisma.kycDocument.create({
       data: {
         employeeId: employee.id,
         documentType: dto.documentType,
@@ -56,6 +68,15 @@ export class KycDocumentsService {
         status: 'PENDING',
       },
     });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'KYC_SUBMITTED',
+      entityId: document.id,
+      newValue: document,
+    });
+
+    return document;
   }
 
   async findByEmployee(employeeId: string) {
@@ -71,6 +92,68 @@ export class KycDocumentsService {
 
   async findPending() {
     return this.findAll('PENDING');
+  }
+
+  async findPendingByEmployer() {
+    const documents = await this.prisma.kycDocument.findMany({
+      where: {
+        status: 'PENDING',
+      },
+      select: {
+        id: true,
+        employee: {
+          select: {
+            employer: {
+              select: {
+                id: true,
+                companyName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const grouped = new Map<
+      string,
+      { employerId: string; companyName: string; pendingCount: number }
+    >();
+
+    for (const document of documents) {
+      const employer = document.employee.employer;
+      const existing = grouped.get(employer.id);
+
+      grouped.set(employer.id, {
+        employerId: employer.id,
+        companyName: employer.companyName,
+        pendingCount: (existing?.pendingCount ?? 0) + 1,
+      });
+    }
+
+    return [...grouped.values()].sort((a, b) =>
+      a.companyName.localeCompare(b.companyName),
+    );
+  }
+
+  async findPendingForEmployer(employerId: string) {
+    return this.prisma.kycDocument.findMany({
+      where: {
+        status: 'PENDING',
+        employee: {
+          employerId,
+        },
+      },
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
   }
 
   async findAll(status?: 'PENDING' | 'VERIFIED' | 'REJECTED') {
@@ -89,8 +172,16 @@ export class KycDocumentsService {
     });
   }
 
-  async verify(id: string) {
+  async verify(id: string, actorUserId?: string) {
     const verifiedAt = new Date();
+
+    const existingDocument = await this.prisma.kycDocument.findUnique({
+      where: { id },
+    });
+
+    if (!existingDocument) {
+      throw new NotFoundException('KYC document not found');
+    }
 
     const document = await this.prisma.kycDocument.update({
       where: { id },
@@ -114,16 +205,42 @@ export class KycDocumentsService {
       console.error('Failed to send KYC approved email', error);
     }
 
+    await this.writeAuditLog({
+      userId: actorUserId,
+      action: 'KYC_APPROVED',
+      entityId: document.id,
+      oldValue: existingDocument,
+      newValue: document,
+    });
+
     return document;
   }
 
-  async reject(id: string) {
-    return this.prisma.kycDocument.update({
+  async reject(id: string, actorUserId?: string) {
+    const existingDocument = await this.prisma.kycDocument.findUnique({
+      where: { id },
+    });
+
+    if (!existingDocument) {
+      throw new NotFoundException('KYC document not found');
+    }
+
+    const document = await this.prisma.kycDocument.update({
       where: { id },
       data: {
         status: 'REJECTED',
       },
     });
+
+    await this.writeAuditLog({
+      userId: actorUserId,
+      action: 'KYC_REJECTED',
+      entityId: document.id,
+      oldValue: existingDocument,
+      newValue: document,
+    });
+
+    return document;
   }
 
   async findByUserId(userId: string) {
@@ -138,5 +255,28 @@ export class KycDocumentsService {
     }
 
     return this.findByEmployee(employee.id);
+  }
+
+  private async writeAuditLog(data: {
+    userId?: string;
+    action: KycAuditAction;
+    entityId: string;
+    oldValue?: Record<string, unknown> | null;
+    newValue?: Record<string, unknown> | null;
+  }) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: data.userId,
+          action: data.action,
+          entityType: 'KYC_DOCUMENT',
+          entityId: data.entityId,
+          oldValue: data.oldValue as any,
+          newValue: data.newValue as any,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to write KYC audit log', error);
+    }
   }
 }

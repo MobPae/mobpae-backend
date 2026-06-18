@@ -6,14 +6,16 @@ import { AuthService } from './auth.service';
 
 import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
     UsersModule,
+    EmailModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: {
-        expiresIn: '7d',
+        expiresIn: '15m',
       },
     }),
   ],
