@@ -4,9 +4,10 @@ import { EmployerSettlementsController } from './employer-settlements.controller
 import { EmployerSettlementsService } from './employer-settlements.service';
 
 import { PrismaModule } from '../prisma/prisma.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, SettingsModule],
   controllers: [EmployerSettlementsController],
   providers: [EmployerSettlementsService],
 })

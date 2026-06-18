@@ -7,12 +7,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateRepaymentDto } from './dto/create-repayment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PayrollUtil } from '../common/utils/payroll.util';
+import { SettingsPolicyService } from '../settings/settings-policy.service';
 
 @Injectable()
 export class RepaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly settingsPolicy: SettingsPolicyService,
   ) {}
 
   async create(dto: CreateRepaymentDto) {
@@ -43,13 +45,8 @@ export class RepaymentsService {
       throw new BadRequestException('Salary request is not disbursed');
     }
 
-    const interestSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'ANNUAL_INTEREST_RATE',
-      },
-    });
-
-    const annualInterestRate = Number(interestSetting?.value ?? 36);
+    const annualInterestRate =
+      await this.settingsPolicy.getAnnualInterestRate();
 
     const approvedAmount = Number(
       salaryRequest.approvedAmount ?? salaryRequest.amount,

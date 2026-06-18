@@ -7,19 +7,15 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestMembershipDto } from './dto/request-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
+import { SettingsPolicyService } from '../settings/settings-policy.service';
 
 @Injectable()
 export class MembershipService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settingsPolicy: SettingsPolicyService,
+  ) {}
 
-  /**
-   * Employee
-   * Get logged-in employee membership
-   */
-  /**
-   * Employee
-   * Get logged-in employee membership
-   */
   async getMyMembership(userId: string) {
     const employee = await this.prisma.employee.findFirst({
       where: {
@@ -31,24 +27,8 @@ export class MembershipService {
       throw new NotFoundException('Employee not found');
     }
 
-    /**
-     * Membership Configuration
-     */
-    const amountSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_AMOUNT',
-      },
-    });
-
-    const validitySetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_VALIDITY_DAYS',
-      },
-    });
-
-    const membershipFee = Number(amountSetting?.value ?? 449);
-
-    const membershipValidityDays = Number(validitySetting?.value ?? 365);
+    const { amount: membershipFee, validityDays: membershipValidityDays } =
+      await this.settingsPolicy.getMembershipPolicy();
 
     const membership = await this.prisma.membership.findUnique({
       where: {
@@ -56,9 +36,6 @@ export class MembershipService {
       },
     });
 
-    /**
-     * No membership found
-     */
     if (!membership) {
       return {
         active: false,
@@ -78,9 +55,6 @@ export class MembershipService {
       };
     }
 
-    /**
-     * Calculate remaining validity
-     */
     const today = new Date();
 
     const daysRemaining = Math.max(
@@ -91,9 +65,6 @@ export class MembershipService {
       ),
     );
 
-    /**
-     * Employee App Membership Response
-     */
     return {
       active: membership.status === 'ACTIVE',
 
@@ -113,10 +84,6 @@ export class MembershipService {
     };
   }
 
-  /**
-   * Admin
-   * Activate membership manually
-   */
   async activate(employeeId: string) {
     const employee = await this.prisma.employee.findUnique({
       where: {
@@ -128,21 +95,8 @@ export class MembershipService {
       throw new NotFoundException('Employee not found');
     }
 
-    const amountSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_AMOUNT',
-      },
-    });
-
-    const validitySetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_VALIDITY_DAYS',
-      },
-    });
-
-    const membershipAmount = Number(amountSetting?.value ?? 449);
-
-    const validityDays = Number(validitySetting?.value ?? 365);
+    const { amount: membershipAmount, validityDays } =
+      await this.settingsPolicy.getMembershipPolicy();
 
     const startDate = new Date();
 
@@ -182,9 +136,6 @@ export class MembershipService {
     });
   }
 
-  /**
-   * Validation helper
-   */
   async isActive(employeeId: string) {
     const membership = await this.prisma.membership.findUnique({
       where: {
@@ -233,20 +184,8 @@ export class MembershipService {
       throw new BadRequestException('Membership already active');
     }
 
-    const amountSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_AMOUNT',
-      },
-    });
-
-    const validitySetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_VALIDITY_DAYS',
-      },
-    });
-
-    const membershipAmount = Number(amountSetting?.value ?? 449);
-    const validityDays = Number(validitySetting?.value ?? 365);
+    const { amount: membershipAmount, validityDays } =
+      await this.settingsPolicy.getMembershipPolicy();
 
     let discountAmount = 0;
     let couponCode: string | null = null;
@@ -387,13 +326,7 @@ export class MembershipService {
       throw new BadRequestException('Membership already approved');
     }
 
-    const validitySetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_VALIDITY_DAYS',
-      },
-    });
-
-    const validityDays = Number(validitySetting?.value ?? 365);
+    const { validityDays } = await this.settingsPolicy.getMembershipPolicy();
 
     const startDate = new Date();
 
@@ -605,12 +538,13 @@ export class MembershipService {
    * - Free vs Premium Comparison
    */
   async getConfig() {
+    const { amount: membershipFee, validityDays: membershipValidityDays } =
+      await this.settingsPolicy.getMembershipPolicy();
+
     const settings = await this.prisma.setting.findMany({
       where: {
         key: {
           in: [
-            'MEMBERSHIP_AMOUNT',
-            'MEMBERSHIP_VALIDITY_DAYS',
             'FREE_BENEFITS',
             'MEMBERSHIP_BENEFITS',
             'MEMBERSHIP_TITLE',
@@ -626,11 +560,9 @@ export class MembershipService {
       settings.find((s) => s.key === key)?.value;
 
     return {
-      membershipFee: Number(getValue('MEMBERSHIP_AMOUNT') ?? 449),
+      membershipFee,
 
-      membershipValidityDays: Number(
-        getValue('MEMBERSHIP_VALIDITY_DAYS') ?? 365,
-      ),
+      membershipValidityDays,
 
       freePlanTitle: getValue('FREE_PLAN_TITLE') ?? 'MobPae Free',
 
@@ -658,13 +590,8 @@ export class MembershipService {
    * Validate membership coupon
    */
   async validateCoupon(couponCode: string) {
-    const amountSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'MEMBERSHIP_AMOUNT',
-      },
-    });
-
-    const membershipAmount = Number(amountSetting?.value ?? 449);
+    const { amount: membershipAmount } =
+      await this.settingsPolicy.getMembershipPolicy();
 
     const coupon = await this.prisma.membershipCoupon.findUnique({
       where: {

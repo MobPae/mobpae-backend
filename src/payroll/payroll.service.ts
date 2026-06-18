@@ -6,10 +6,14 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
+import { SettingsPolicyService } from '../settings/settings-policy.service';
 
 @Injectable()
 export class PayrollService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settingsPolicy: SettingsPolicyService,
+  ) {}
 
   async getSummary(userId: string) {
     const employer = await this.prisma.employer.findUnique({
@@ -199,13 +203,8 @@ export class PayrollService {
 
     const settlementAmount = principalAmount + interestAmount;
 
-    const graceDaysSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'EMPLOYER_GRACE_DAYS',
-      },
-    });
-
-    const graceDays = Number(graceDaysSetting?.value ?? 3);
+    const { gracePeriodDays: graceDays } =
+      await this.settingsPolicy.getEmployerSettlementPolicy();
 
     const settlementDueDate = new Date(today);
 

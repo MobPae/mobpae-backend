@@ -9,8 +9,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { SettingsService } from '../settings/settings.service';
 import { MembershipService } from '../membership/membership.service';
 import { EmailService } from '../email/email.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 import { PayrollUtil } from '../common/utils/payroll.util';
+import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 
 @Injectable()
 export class SalaryRequestsService {
@@ -20,6 +22,7 @@ export class SalaryRequestsService {
     private readonly settingsService: SettingsService,
     private readonly membershipService: MembershipService,
     private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   /**
@@ -73,7 +76,7 @@ export class SalaryRequestsService {
         },
       });
 
-      const kycCompleted = ['PAN', 'AADHAR', 'SALARY_SLIP'].every((type) =>
+      const kycCompleted = REQUIRED_KYC_DOCUMENTS.every((type) =>
         verifiedDocs.some((doc) => doc.documentType === type),
       );
 
@@ -731,12 +734,6 @@ export class SalaryRequestsService {
       auditData.newValue = data.newValue;
     }
 
-    try {
-      await this.prisma.auditLog.create({
-        data: auditData as any,
-      });
-    } catch (error) {
-      console.error('Failed to write business audit log', error);
-    }
+    await this.auditLogsService.log(auditData);
   }
 }

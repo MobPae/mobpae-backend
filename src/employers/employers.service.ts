@@ -7,12 +7,14 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { CreateEmployerDto } from './dto/create-employer.dto';
 import { EmailService } from '../email/email.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class EmployersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   async findAll() {
@@ -354,13 +356,7 @@ export class EmployersService {
       auditData.newValue = data.newValue;
     }
 
-    try {
-      await this.prisma.auditLog.create({
-        data: auditData as any,
-      });
-    } catch (error) {
-      console.error('Failed to write business audit log', error);
-    }
+    await this.auditLogsService.log(auditData);
   }
 
   private generateTemporaryPassword() {

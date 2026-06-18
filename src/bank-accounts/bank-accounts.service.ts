@@ -5,12 +5,16 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 type BankAuditAction = 'BANK_SUBMITTED' | 'BANK_APPROVED' | 'BANK_REJECTED';
 
 @Injectable()
 export class BankAccountsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
+  ) {}
 
   private maskAccountNumber(accountNumber: string) {
     return '********' + accountNumber.slice(-4);
@@ -298,19 +302,13 @@ export class BankAccountsService {
     oldValue?: Record<string, unknown> | null;
     newValue?: Record<string, unknown> | null;
   }) {
-    try {
-      await this.prisma.auditLog.create({
-        data: {
-          userId: data.userId,
-          action: data.action,
-          entityType: 'BANK_ACCOUNT',
-          entityId: data.entityId,
-          oldValue: data.oldValue as any,
-          newValue: data.newValue as any,
-        },
-      });
-    } catch (error) {
-      console.error('Failed to write bank account audit log', error);
-    }
+    await this.auditLogsService.log({
+      userId: data.userId,
+      action: data.action,
+      entityType: 'BANK_ACCOUNT',
+      entityId: data.entityId,
+      oldValue: data.oldValue,
+      newValue: data.newValue,
+    });
   }
 }

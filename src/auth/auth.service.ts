@@ -9,6 +9,7 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 type RequestMeta = {
   ipAddress?: string;
@@ -21,6 +22,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
     private prisma: PrismaService,
   ) {}
 
@@ -604,24 +606,12 @@ export class AuthService {
       details?: Record<string, unknown>;
     },
   ) {
-    try {
-      await this.prisma.auditLog.create({
-        data: {
-          userId: data.userId,
-          action,
-          entityType: 'AUTH',
-          entityId: data.userId ?? data.email ?? 'unknown',
-          newValue: {
-            email: data.email,
-            ipAddress: data.meta?.ipAddress,
-            deviceInfo: data.meta?.deviceInfo,
-            timestamp: new Date().toISOString(),
-            ...data.details,
-          },
-        },
-      });
-    } catch (error) {
-      console.error('Failed to write auth audit log', error);
-    }
+    await this.auditLogsService.logAuth(action, {
+      userId: data.userId,
+      email: data.email,
+      ipAddress: data.meta?.ipAddress,
+      deviceInfo: data.meta?.deviceInfo,
+      details: data.details,
+    });
   }
 }

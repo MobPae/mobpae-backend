@@ -4,9 +4,108 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogQueryDto } from './dto/audit-log-query.dto';
 
+export type AuditLogAction =
+  | 'LOGIN_SUCCESS'
+  | 'LOGIN_FAILED'
+  | 'LOGOUT'
+  | 'TOKEN_REFRESH'
+  | 'PASSWORD_RESET_REQUESTED'
+  | 'PASSWORD_RESET_COMPLETED'
+  | 'PASSWORD_CHANGED'
+  | 'EMPLOYER_CREATED'
+  | 'EMPLOYER_ACTIVATED'
+  | 'EMPLOYER_SUSPENDED'
+  | 'EMPLOYEE_CREATED'
+  | 'EMPLOYEE_UPDATED'
+  | 'SALARY_REQUEST_CREATED'
+  | 'SALARY_REQUEST_APPROVED'
+  | 'SALARY_REQUEST_REJECTED'
+  | 'DISBURSAL_CREATED'
+  | 'REPAYMENT_CREATED'
+  | 'KYC_SUBMITTED'
+  | 'KYC_APPROVED'
+  | 'KYC_REJECTED'
+  | 'BANK_SUBMITTED'
+  | 'BANK_APPROVED'
+  | 'BANK_REJECTED';
+
+export type AuditEntityType =
+  | 'AUTH'
+  | 'EMPLOYER'
+  | 'EMPLOYEE'
+  | 'SALARY_REQUEST'
+  | 'DISBURSAL'
+  | 'REPAYMENT'
+  | 'KYC_DOCUMENT'
+  | 'BANK_ACCOUNT';
+
 @Injectable()
 export class AuditLogsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async log(data: {
+    userId?: string | null;
+    action: AuditLogAction | string;
+    entityType: AuditEntityType | string;
+    entityId: string;
+    oldValue?: Record<string, unknown> | null;
+    newValue?: Record<string, unknown> | null;
+  }) {
+    const auditData: Prisma.AuditLogCreateInput = {
+      user: data.userId
+        ? {
+            connect: {
+              id: data.userId,
+            },
+          }
+        : undefined,
+      action: data.action,
+      entityType: data.entityType,
+      entityId: data.entityId,
+      oldValue: data.oldValue as Prisma.InputJsonValue,
+      newValue: data.newValue as Prisma.InputJsonValue,
+    };
+
+    try {
+      await this.prisma.auditLog.create({
+        data: auditData,
+      });
+    } catch (error) {
+      console.error('Failed to write audit log', error);
+    }
+  }
+
+  async logAuth(
+    action:
+      | 'LOGIN_SUCCESS'
+      | 'LOGIN_FAILED'
+      | 'LOGOUT'
+      | 'TOKEN_REFRESH'
+      | 'PASSWORD_RESET_REQUESTED'
+      | 'PASSWORD_RESET_COMPLETED'
+      | 'PASSWORD_CHANGED',
+    data: {
+      userId?: string;
+      email?: string;
+      ipAddress?: string;
+      deviceInfo?: string;
+      details?: Record<string, unknown>;
+    },
+  ) {
+    await this.log({
+      userId: data.userId,
+      action,
+      entityType: 'AUTH',
+      entityId: data.userId ?? data.email ?? 'unknown',
+      newValue: {
+        email: data.email,
+        ipAddress: data.ipAddress,
+        deviceInfo: data.deviceInfo,
+        timestamp: new Date().toISOString(),
+        ...data.details,
+      },
+    });
+  }
 
   async findAll(query: AuditLogQueryDto) {
     const page = query.page ?? 1;

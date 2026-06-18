@@ -8,6 +8,8 @@ import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PayrollUtil } from 'src/common/utils/payroll.util';
 import { EmailService } from '../email/email.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { SettingsPolicyService } from '../settings/settings-policy.service';
 
 @Injectable()
 export class DisbursalsService {
@@ -15,6 +17,8 @@ export class DisbursalsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
+    private readonly settingsPolicy: SettingsPolicyService,
   ) {}
 
   async create(dto: CreateDisbursalDto, actorUserId: string) {
@@ -167,13 +171,8 @@ export class DisbursalsService {
     let repaymentCreated = false;
 
     if (!repayment) {
-      const interestSetting = await this.prisma.setting.findUnique({
-        where: {
-          key: 'ANNUAL_INTEREST_RATE',
-        },
-      });
-
-      const annualInterestRate = Number(interestSetting?.value ?? 36);
+      const annualInterestRate =
+        await this.settingsPolicy.getAnnualInterestRate();
 
       const approvedAmount = Number(
         salaryRequest.approvedAmount ?? salaryRequest.amount,
@@ -326,12 +325,6 @@ export class DisbursalsService {
       auditData.newValue = data.newValue;
     }
 
-    try {
-      await this.prisma.auditLog.create({
-        data: auditData as any,
-      });
-    } catch (error) {
-      console.error('Failed to write business audit log', error);
-    }
+    await this.auditLogsService.log(auditData);
   }
 }

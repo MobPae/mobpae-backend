@@ -5,6 +5,8 @@ import * as path from 'path';
 
 @Injectable()
 export class EmailService {
+  private readonly templateCache = new Map<string, string>();
+
   private transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT),
@@ -42,18 +44,8 @@ export class EmailService {
     templateName: string,
     variables: Record<string, any>,
   ): string {
-    const layoutPath = path.join(
-      process.cwd(),
-      'src/email/templates/layout.html',
-    );
-
-    const templatePath = path.join(
-      process.cwd(),
-      `src/email/templates/${templateName}.html`,
-    );
-
-    const layout = fs.readFileSync(layoutPath, 'utf8');
-    const template = fs.readFileSync(templatePath, 'utf8');
+    const layout = this.getTemplate('layout');
+    const template = this.getTemplate(templateName);
 
     const body = this.replaceVariables(template, variables);
 
@@ -62,6 +54,24 @@ export class EmailService {
       year: new Date().getFullYear(),
       content: body,
     });
+  }
+
+  private getTemplate(templateName: string): string {
+    const cachedTemplate = this.templateCache.get(templateName);
+
+    if (cachedTemplate) {
+      return cachedTemplate;
+    }
+
+    const templatePath = path.join(
+      process.cwd(),
+      `src/email/templates/${templateName}.html`,
+    );
+    const template = fs.readFileSync(templatePath, 'utf8');
+
+    this.templateCache.set(templateName, template);
+
+    return template;
   }
 
   async sendEmail(to: string, subject: string, html: string) {

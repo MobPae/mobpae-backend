@@ -8,6 +8,7 @@ import { NotificationsModule } from 'src/notifications/notifications.module';
 import { SettingsModule } from '../settings/settings.module';
 import { MembershipModule } from '../membership/membership.module';
 import { EmailModule } from '../email/email.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { EmailModule } from '../email/email.module';
     SettingsModule,
     MembershipModule,
     EmailModule,
+    AuditLogsModule,
   ],
   controllers: [SalaryRequestsController],
   providers: [SalaryRequestsService],

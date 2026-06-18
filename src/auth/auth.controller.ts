@@ -25,7 +25,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
-  @Throttle({ default: { limit: 5, ttl: 15 * 60 * 1000 } })
+  @Throttle({ default: { limit: 20, ttl: 15 * 60 * 1000 } })
   @ApiOperation({ summary: 'Login and create a single active user session' })
   @ApiResponse({
     status: 201,
@@ -74,7 +74,7 @@ export class AuthController {
   }
 
   @Post('forgot-password')
-  @Throttle({ default: { limit: 3, ttl: 60 * 60 * 1000 } })
+  @Throttle({ default: { limit: 10, ttl: 60 * 60 * 1000 } })
   @ApiOperation({ summary: 'Request password reset link' })
   @ApiBody({ type: ForgotPasswordDto })
   @ApiResponse({
@@ -91,7 +91,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
-  @Throttle({ default: { limit: 5, ttl: 15 * 60 * 1000 } })
+  @Throttle({ default: { limit: 10, ttl: 15 * 60 * 1000 } })
   @ApiOperation({ summary: 'Reset password using a forgot-password token' })
   @ApiBody({ type: ResetPasswordDto })
   @ApiResponse({

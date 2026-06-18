@@ -8,21 +8,19 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 
 type KycAuditAction = 'KYC_SUBMITTED' | 'KYC_APPROVED' | 'KYC_REJECTED';
-const REQUIRED_KYC_DOCUMENTS: KycDocumentType[] = [
-  'PAN',
-  'AADHAR',
-  'SALARY_SLIP',
-];
 
 @Injectable()
 export class KycDocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   async create(userId: string, dto: CreateKycDocumentDto) {
@@ -345,20 +343,14 @@ export class KycDocumentsService {
     oldValue?: Record<string, unknown> | null;
     newValue?: Record<string, unknown> | null;
   }) {
-    try {
-      await this.prisma.auditLog.create({
-        data: {
-          userId: data.userId,
-          action: data.action,
-          entityType: 'KYC_DOCUMENT',
-          entityId: data.entityId,
-          oldValue: data.oldValue as any,
-          newValue: data.newValue as any,
-        },
-      });
-    } catch (error) {
-      console.error('Failed to write KYC audit log', error);
-    }
+    await this.auditLogsService.log({
+      userId: data.userId,
+      action: data.action,
+      entityType: 'KYC_DOCUMENT',
+      entityId: data.entityId,
+      oldValue: data.oldValue,
+      newValue: data.newValue,
+    });
   }
 
   private buildEmployeeKycDocuments(documents: KycDocument[]) {

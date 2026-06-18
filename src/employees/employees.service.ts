@@ -8,10 +8,14 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class EmployeesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogsService: AuditLogsService,
+  ) {}
 
   async create(dto: CreateEmployeeDto, userId: string) {
     const employer = await this.prisma.employer.findUnique({
@@ -595,13 +599,7 @@ export class EmployeesService {
       auditData.newValue = data.newValue;
     }
 
-    try {
-      await this.prisma.auditLog.create({
-        data: auditData as any,
-      });
-    } catch (error) {
-      console.error('Failed to write business audit log', error);
-    }
+    await this.auditLogsService.log(auditData);
   }
 
   private generateTemporaryPassword() {

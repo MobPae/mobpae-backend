@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 
 @Injectable()
 export class DashboardService {
@@ -323,7 +324,7 @@ export class DashboardService {
       },
     });
 
-    const kycCompleted = ['PAN', 'AADHAR', 'SALARY_SLIP'].every((type) =>
+    const kycCompleted = REQUIRED_KYC_DOCUMENTS.every((type) =>
       kycDocuments.some(
         (doc) => doc.documentType === type && doc.status === 'VERIFIED',
       ),

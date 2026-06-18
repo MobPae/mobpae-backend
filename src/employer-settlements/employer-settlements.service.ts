@@ -5,10 +5,14 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { SettingsPolicyService } from '../settings/settings-policy.service';
 
 @Injectable()
 export class EmployerSettlementsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settingsPolicy: SettingsPolicyService,
+  ) {}
 
   /**
    * Admin
@@ -158,21 +162,8 @@ export class EmployerSettlementsService {
 
     const nextDueSettlement = settlements.find((s) => s.status !== 'PAID');
 
-    const graceDaysSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'EMPLOYER_GRACE_DAYS',
-      },
-    });
-
-    const lateFeeSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'EMPLOYER_LATE_FEE_PERCENTAGE',
-      },
-    });
-
-    const gracePeriodDays = Number(graceDaysSetting?.value ?? 3);
-
-    const lateFeePercentage = Number(lateFeeSetting?.value ?? 30);
+    const { gracePeriodDays, lateFeePercentage } =
+      await this.settingsPolicy.getEmployerSettlementPolicy();
 
     let daysRemaining: number | null = null;
 
@@ -217,13 +208,8 @@ export class EmployerSettlementsService {
       throw new NotFoundException('Employer not found');
     }
 
-    const graceSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'EMPLOYER_GRACE_DAYS',
-      },
-    });
-
-    const graceDays = Number(graceSetting?.value ?? 3);
+    const { gracePeriodDays: graceDays } =
+      await this.settingsPolicy.getEmployerSettlementPolicy();
 
     const today = new Date();
 
