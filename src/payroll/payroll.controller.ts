@@ -98,7 +98,10 @@ export class PayrollController {
   processRecovery(
     @Param('employerId')
     employerId: string,
+
+    @Req()
+    req: any,
   ) {
-    return this.payrollService.processRecovery(employerId);
+    return this.payrollService.processRecovery(employerId, req.user.userId);
   }
 }

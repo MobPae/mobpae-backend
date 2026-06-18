@@ -338,47 +338,52 @@ export class EmployeesService {
         const temporaryPassword = this.generateTemporaryPassword();
         const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
-        const user = await this.prisma.user.create({
-          data: {
-            email: employee.email,
-            password: hashedPassword,
-            role: 'EMPLOYEE',
-            isActive: true,
-            passwordChanged: false,
-          },
-        });
+        const createdEmployee = await this.prisma.$transaction(async (tx) => {
+          const user = await tx.user.create({
+            data: {
+              email: employee.email,
+              password: hashedPassword,
+              role: 'EMPLOYEE',
+              isActive: true,
+              passwordChanged: false,
+            },
+          });
 
-        const createdEmployee = await this.prisma.employee.create({
-          data: {
-            userId: user.id,
-            employerId: employer.id,
+          const createdEmployee = await tx.employee.create({
+            data: {
+              userId: user.id,
+              employerId: employer.id,
 
-            employeeCode: employee.employeeCode,
-            name: employee.name,
-            email: employee.email,
-            phone: employee.phone,
+              employeeCode: employee.employeeCode,
+              name: employee.name,
+              email: employee.email,
+              phone: employee.phone,
 
-            salaryInHand: Number(employee.salaryInHand),
+              salaryInHand: Number(employee.salaryInHand),
 
-            employmentStatus: 'ACTIVE',
-            appActivated: false,
-          },
-        });
+              employmentStatus: 'ACTIVE',
+              appActivated: false,
+            },
+          });
 
-        await this.writeAuditLog({
-          userId,
-          action: 'EMPLOYEE_CREATED',
-          entityType: 'EMPLOYEE',
-          entityId: createdEmployee.id,
-          oldValue: null,
-          newValue: {
-            employerId: createdEmployee.employerId,
-            employeeCode: createdEmployee.employeeCode,
-            name: createdEmployee.name,
-            email: createdEmployee.email,
-            employmentStatus: createdEmployee.employmentStatus,
-            appActivated: createdEmployee.appActivated,
-          },
+          await tx.auditLog.create({
+            data: {
+              userId,
+              action: 'EMPLOYEE_CREATED',
+              entityType: 'EMPLOYEE',
+              entityId: createdEmployee.id,
+              newValue: {
+                employerId: createdEmployee.employerId,
+                employeeCode: createdEmployee.employeeCode,
+                name: createdEmployee.name,
+                email: createdEmployee.email,
+                employmentStatus: createdEmployee.employmentStatus,
+                appActivated: createdEmployee.appActivated,
+              },
+            },
+          });
+
+          return createdEmployee;
         });
 
         created.push({

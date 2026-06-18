@@ -129,8 +129,11 @@ export class SalaryRequestsController {
   findOne(
     @Param('id')
     id: string,
+
+    @Req()
+    req: any,
   ) {
-    return this.salaryRequestsService.findOne(id);
+    return this.salaryRequestsService.findOne(id, req.user);
   }
 
   /**

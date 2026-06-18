@@ -7,12 +7,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class PayrollService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settingsPolicy: SettingsPolicyService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   async getSummary(userId: string) {
@@ -139,7 +141,7 @@ export class PayrollService {
     });
   }
 
-  async processRecovery(employerId: string) {
+  async processRecovery(employerId: string, actorUserId?: string) {
     const employer = await this.prisma.employer.findUnique({
       where: {
         id: employerId,
@@ -249,6 +251,39 @@ export class PayrollService {
       });
     });
 
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'PAYROLL_RECOVERY_PROCESSED',
+      entityType: 'PAYROLL',
+      entityId: employerId,
+      newValue: {
+        employerId,
+        payrollMonth,
+        repaymentIds: repayments.map((repayment) => repayment.id),
+        salaryRequestIds: repayments.map(
+          (repayment) => repayment.salaryRequestId,
+        ),
+        processedRepayments: repayments.length,
+      },
+    });
+
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'SETTLEMENT_GENERATED',
+      entityType: 'SETTLEMENT',
+      entityId: settlement.id,
+      newValue: {
+        employerId,
+        payrollMonth,
+        principalAmount,
+        interestAmount,
+        totalAmount: settlementAmount,
+        outstandingAmount: settlementAmount,
+        dueDate: settlementDueDate.toISOString(),
+        status: settlement.status,
+      },
+    });
+
     return {
       employerId,
       payrollMonth,
@@ -270,6 +305,6 @@ export class PayrollService {
       throw new NotFoundException('Employer not found');
     }
 
-    return this.processRecovery(employer.id);
+    return this.processRecovery(employer.id, userId);
   }
 }

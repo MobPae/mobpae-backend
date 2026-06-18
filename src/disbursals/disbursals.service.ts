@@ -162,64 +162,71 @@ export class DisbursalsService {
       );
     }
 
-    let repayment = await this.prisma.repayment.findUnique({
-      where: {
-        salaryRequestId: salaryRequest.id,
-      },
-    });
+    const annualInterestRate =
+      await this.settingsPolicy.getAnnualInterestRate();
+    const approvedAmount = Number(
+      salaryRequest.approvedAmount ?? salaryRequest.amount,
+    );
+    const repaymentCalculation = PayrollUtil.calculateRepayment(
+      approvedAmount,
+      salaryRequest.requestedAt,
+      salaryRequest.employer.payrollCutoffDate,
+      salaryRequest.employer.payrollDate,
+      annualInterestRate,
+    );
 
-    let repaymentCreated = false;
+    const { disbursal, repayment, repaymentCreated } =
+      await this.prisma.$transaction(async (tx) => {
+        let repayment = await tx.repayment.findUnique({
+          where: {
+            salaryRequestId: salaryRequest.id,
+          },
+        });
 
-    if (!repayment) {
-      const annualInterestRate =
-        await this.settingsPolicy.getAnnualInterestRate();
+        let repaymentCreated = false;
 
-      const approvedAmount = Number(
-        salaryRequest.approvedAmount ?? salaryRequest.amount,
-      );
+        if (!repayment) {
+          repayment = await tx.repayment.create({
+            data: {
+              salaryRequestId: salaryRequest.id,
+              principalAmount: approvedAmount,
+              interestAmount: repaymentCalculation.interestAmount,
+              totalAmount: repaymentCalculation.totalAmount,
+              interestRate: annualInterestRate,
+              interestDays: repaymentCalculation.interestDays,
+              dueDate: repaymentCalculation.dueDate,
+              status: 'SCHEDULED',
+            },
+          });
 
-      const repaymentCalculation = PayrollUtil.calculateRepayment(
-        approvedAmount,
-        salaryRequest.requestedAt,
-        salaryRequest.employer.payrollCutoffDate,
-        salaryRequest.employer.payrollDate,
-        annualInterestRate,
-      );
+          repaymentCreated = true;
+        }
 
-      repayment = await this.prisma.repayment.create({
-        data: {
-          salaryRequestId: salaryRequest.id,
-          principalAmount: approvedAmount,
-          interestAmount: repaymentCalculation.interestAmount,
-          totalAmount: repaymentCalculation.totalAmount,
-          interestRate: annualInterestRate,
-          interestDays: repaymentCalculation.interestDays,
-          dueDate: repaymentCalculation.dueDate,
-          status: 'SCHEDULED',
-        },
+        const disbursal = await tx.disbursal.update({
+          where: {
+            id,
+          },
+          data: {
+            status: 'DISBURSED',
+            disbursedAt: new Date(),
+          },
+        });
+
+        await tx.salaryRequest.update({
+          where: {
+            id: disbursal.salaryRequestId,
+          },
+          data: {
+            status: 'DISBURSED',
+          },
+        });
+
+        return {
+          disbursal,
+          repayment,
+          repaymentCreated,
+        };
       });
-
-      repaymentCreated = true;
-    }
-
-    const disbursal = await this.prisma.disbursal.update({
-      where: {
-        id,
-      },
-      data: {
-        status: 'DISBURSED',
-        disbursedAt: new Date(),
-      },
-    });
-
-    await this.prisma.salaryRequest.update({
-      where: {
-        id: disbursal.salaryRequestId,
-      },
-      data: {
-        status: 'DISBURSED',
-      },
-    });
 
     if (salaryRequest.employee.userId) {
       await this.notificationsService.createSystemNotification(
@@ -239,6 +246,15 @@ export class DisbursalsService {
         newValue: this.repaymentAuditValue(repayment),
       });
     }
+
+    await this.writeAuditLog({
+      userId: actorUserId,
+      action: 'DISBURSAL_DISBURSED',
+      entityType: 'DISBURSAL',
+      entityId: disbursal.id,
+      oldValue: this.disbursalAuditValue(existingDisbursal),
+      newValue: this.disbursalAuditValue(disbursal),
+    });
 
     try {
       await this.emailService.sendDisbursalSuccessfulEmail({

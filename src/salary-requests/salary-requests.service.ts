@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -568,7 +569,13 @@ export class SalaryRequestsService {
   * - Repayment details (if created)
   * - Disbursal details (if disbursed)
  */
-  async findOne(id: string) {
+  async findOne(
+    id: string,
+    actor?: {
+      role?: string;
+      userId?: string;
+    },
+  ) {
     const salaryRequest = await this.prisma.salaryRequest.findUnique({
       where: {
         id,
@@ -586,6 +593,18 @@ export class SalaryRequestsService {
 
     if (!salaryRequest) {
       throw new NotFoundException('Salary request not found');
+    }
+
+    if (actor?.role === 'EMPLOYER') {
+      const employer = await this.prisma.employer.findUnique({
+        where: {
+          userId: actor.userId,
+        },
+      });
+
+      if (!employer || salaryRequest.employerId !== employer.id) {
+        throw new ForbiddenException('You can only access your own requests');
+      }
     }
 
     return {

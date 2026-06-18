@@ -163,8 +163,6 @@ export class EmployersService {
   }
 
   async create(dto: CreateEmployerDto, actorUserId: string) {
-    console.log('Create Employer DTO:', dto);
-
     if (!dto.email?.trim()) {
       throw new BadRequestException('Email is required');
     }
@@ -221,6 +219,23 @@ export class EmployersService {
               data: {
                 employerId: existingEmployer.id,
                 status: 'ONBOARDED',
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                userId: actorUserId,
+                action: 'EMPLOYER_ENQUIRY_ONBOARDED',
+                entityType: 'EMPLOYER_ENQUIRY',
+                entityId: enquiry.id,
+                oldValue: {
+                  status: enquiry.status,
+                  employerId: enquiry.employerId,
+                },
+                newValue: {
+                  status: 'ONBOARDED',
+                  employerId: existingEmployer.id,
+                },
               },
             });
 
@@ -283,13 +298,30 @@ export class EmployersService {
         });
 
         if (dto.employerEnquiryId) {
-          await tx.employerEnquiry.update({
+          const updatedEnquiry = await tx.employerEnquiry.update({
             where: {
               id: dto.employerEnquiryId,
             },
             data: {
               employerId: employer.id,
               status: 'ONBOARDED',
+            },
+          });
+
+          await tx.auditLog.create({
+            data: {
+              userId: actorUserId,
+              action: 'EMPLOYER_ENQUIRY_ONBOARDED',
+              entityType: 'EMPLOYER_ENQUIRY',
+              entityId: updatedEnquiry.id,
+              oldValue: {
+                status: enquiry!.status,
+                employerId: enquiry!.employerId,
+              },
+              newValue: {
+                status: updatedEnquiry.status,
+                employerId: updatedEnquiry.employerId,
+              },
             },
           });
         }

@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
+import { NotificationsService } from '../notifications/notifications.service';
 
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 
@@ -21,6 +22,7 @@ export class KycDocumentsService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async create(userId: string, dto: CreateKycDocumentDto) {
@@ -284,6 +286,14 @@ export class KycDocumentsService {
       console.error('Failed to send KYC approved email', error);
     }
 
+    if (document.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        document.employee.userId,
+        'KYC Approved',
+        `${document.documentType} verification has been approved.`,
+      );
+    }
+
     await this.writeAuditLog({
       userId: actorUserId,
       action: 'KYC_APPROVED',
@@ -298,6 +308,9 @@ export class KycDocumentsService {
   async reject(id: string, actorUserId?: string) {
     const existingDocument = await this.prisma.kycDocument.findUnique({
       where: { id },
+      include: {
+        employee: true,
+      },
     });
 
     if (!existingDocument) {
@@ -310,6 +323,14 @@ export class KycDocumentsService {
         status: 'REJECTED',
       },
     });
+
+    if (existingDocument.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        existingDocument.employee.userId,
+        'KYC Rejected',
+        `${existingDocument.documentType} verification has been rejected. Please upload the document again.`,
+      );
+    }
 
     await this.writeAuditLog({
       userId: actorUserId,

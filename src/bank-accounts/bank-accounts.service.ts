@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type BankAuditAction = 'BANK_SUBMITTED' | 'BANK_APPROVED' | 'BANK_REJECTED';
 
@@ -14,6 +15,7 @@ export class BankAccountsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private maskAccountNumber(accountNumber: string) {
@@ -135,6 +137,9 @@ export class BankAccountsService {
       where: {
         id,
       },
+      include: {
+        employee: true,
+      },
     });
 
     if (!existingAccount) {
@@ -158,6 +163,14 @@ export class BankAccountsService {
       newValue: account,
     });
 
+    if (existingAccount.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        existingAccount.employee.userId,
+        'Bank Account Approved',
+        'Your bank account has been verified successfully.',
+      );
+    }
+
     return {
       ...account,
       accountNumber: this.maskAccountNumber(account.accountNumber),
@@ -168,6 +181,9 @@ export class BankAccountsService {
     const existingAccount = await this.prisma.employeeBankAccount.findUnique({
       where: {
         id,
+      },
+      include: {
+        employee: true,
       },
     });
 
@@ -191,6 +207,14 @@ export class BankAccountsService {
       oldValue: existingAccount,
       newValue: account,
     });
+
+    if (existingAccount.employee.userId) {
+      await this.notificationsService.createSystemNotification(
+        existingAccount.employee.userId,
+        'Bank Account Rejected',
+        'Your bank account verification was rejected. Please update your details and submit again.',
+      );
+    }
 
     return {
       ...account,

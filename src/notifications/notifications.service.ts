@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 
@@ -37,7 +41,21 @@ export class NotificationsService {
   /**
    * Marks notification as read.
    */
-  async markAsRead(id: string) {
+  async markAsRead(id: string, userId: string) {
+    const notification = await this.prisma.notification.findUnique({
+      where: {
+        id,
+      },
+    });
+
+    if (!notification) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    if (notification.userId !== userId) {
+      throw new ForbiddenException('You can only update your own notification');
+    }
+
     return this.prisma.notification.update({
       where: {
         id,

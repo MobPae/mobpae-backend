@@ -110,7 +110,14 @@ export class EmployerSettlementsController {
 
     @Body()
     dto: MarkSettlementPaidDto,
+
+    @Req()
+    req: any,
   ) {
-    return this.employerSettlementsService.markPaid(id, dto.referenceNumber);
+    return this.employerSettlementsService.markPaid(
+      id,
+      dto.referenceNumber,
+      req.user.userId,
+    );
   }
 }

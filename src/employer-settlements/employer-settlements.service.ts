@@ -6,12 +6,16 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { EmailService } from '../email/email.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class EmployerSettlementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settingsPolicy: SettingsPolicyService,
+    private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   /**
@@ -86,7 +90,7 @@ export class EmployerSettlementsService {
    * Admin
    * Mark settlement as paid
    */
-  async markPaid(id: string, referenceNumber?: string) {
+  async markPaid(id: string, referenceNumber?: string, actorUserId?: string) {
     const settlement = await this.prisma.employerSettlement.findUnique({
       where: {
         id,
@@ -114,6 +118,25 @@ export class EmployerSettlementsService {
     });
 
     await this.updateEmployerRiskStatus(settlement.employerId);
+
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'SETTLEMENT_PAID',
+      entityType: 'SETTLEMENT',
+      entityId: updatedSettlement.id,
+      oldValue: {
+        status: settlement.status,
+        outstandingAmount: Number(settlement.outstandingAmount),
+        paidDate: settlement.paidDate?.toISOString() ?? null,
+        referenceNumber: settlement.referenceNumber,
+      },
+      newValue: {
+        status: updatedSettlement.status,
+        outstandingAmount: Number(updatedSettlement.outstandingAmount),
+        paidDate: updatedSettlement.paidDate?.toISOString() ?? null,
+        referenceNumber: updatedSettlement.referenceNumber,
+      },
+    });
 
     return updatedSettlement;
   }
@@ -278,10 +301,17 @@ export class EmployerSettlementsService {
       throw new NotFoundException('Settlement not found');
     }
 
-    /**
-     * TODO:
-     * Integrate email service later.
-     */
+    try {
+      await this.emailService.sendSettlementReportEmail({
+        to: settlement.employer.email,
+        companyName: settlement.employer.companyName,
+        payrollMonth: settlement.payrollMonth,
+        outstandingAmount: Number(settlement.outstandingAmount),
+        settlementId: settlement.id,
+      });
+    } catch (error) {
+      console.error('Failed to send settlement report email', error);
+    }
 
     return {
       success: true,
