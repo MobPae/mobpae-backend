@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +13,7 @@ import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { FilesService } from '../files/files.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../email/email.service';
 import {
   containsSearch,
   getOrderBy,
@@ -27,6 +30,7 @@ export class EmployeesService {
     private readonly auditLogsService: AuditLogsService,
     private readonly filesService: FilesService,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async create(dto: CreateEmployeeDto, userId: string) {
@@ -50,52 +54,45 @@ export class EmployeesService {
       throw new BadRequestException('User already exists');
     }
 
+    const existingEmployeeCode = await this.prisma.employee.findFirst({
+      where: {
+        employerId: employer.id,
+        employeeCode: dto.employeeCode,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingEmployeeCode) {
+      throw new ConflictException(
+        'Employee code already exists for this employer',
+      );
+    }
+
     const temporaryPassword = this.generateTemporaryPassword();
 
     const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
-    const employee = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email: dto.email,
-          password: hashedPassword,
-          role: 'EMPLOYEE',
-          isActive: true,
-          passwordChanged: false,
-        },
-      });
+    const employee = await this.createEmployeeInTransaction(
+      dto,
+      userId,
+      employer.id,
+      hashedPassword,
+    );
 
-      const employee = await tx.employee.create({
-        data: {
-          userId: user.id,
-          employerId: employer.id,
-          employeeCode: dto.employeeCode,
-          name: dto.name,
-          email: dto.email,
-          phone: dto.phone,
-          salaryInHand: dto.salaryInHand,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          userId,
-          action: 'EMPLOYEE_CREATED',
-          entityType: 'EMPLOYEE',
-          entityId: employee.id,
-          newValue: {
-            employerId: employee.employerId,
-            employeeCode: employee.employeeCode,
-            name: employee.name,
-            email: employee.email,
-            employmentStatus: employee.employmentStatus,
-            appActivated: employee.appActivated,
-          },
-        },
-      });
-
-      return employee;
+    console.log('TEMP EMPLOYEE LOGIN PASSWORD', {
+      employeeId: employee.id,
+      email: dto.email,
+      password: temporaryPassword,
     });
+
+    await this.sendEmployeeCreatedEmail(
+      dto.email,
+      dto.name,
+      employer.companyName,
+      temporaryPassword,
+    );
 
     return {
       employee,
@@ -104,6 +101,82 @@ export class EmployeesService {
         password: temporaryPassword,
       },
     };
+  }
+
+  private async createEmployeeInTransaction(
+    dto: CreateEmployeeDto,
+    actorUserId: string,
+    employerId: string,
+    hashedPassword: string,
+  ) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            email: dto.email,
+            password: hashedPassword,
+            role: 'EMPLOYEE',
+            isActive: true,
+            passwordChanged: false,
+          },
+        });
+
+        const employee = await tx.employee.create({
+          data: {
+            userId: user.id,
+            employerId,
+            employeeCode: dto.employeeCode,
+            name: dto.name,
+            email: dto.email,
+            phone: dto.phone,
+            salaryInHand: dto.salaryInHand,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            userId: actorUserId,
+            action: 'EMPLOYEE_CREATED',
+            entityType: 'EMPLOYEE',
+            entityId: employee.id,
+            newValue: {
+              employerId: employee.employerId,
+              employeeCode: employee.employeeCode,
+              name: employee.name,
+              email: employee.email,
+              employmentStatus: employee.employmentStatus,
+              appActivated: employee.appActivated,
+            },
+          },
+        });
+
+        return employee;
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const target = Array.isArray(error.meta?.target)
+          ? error.meta.target
+          : [];
+
+        if (
+          target.includes('employerId') &&
+          target.includes('employeeCode')
+        ) {
+          throw new ConflictException(
+            'Employee code already exists for this employer',
+          );
+        }
+
+        if (target.includes('email')) {
+          throw new ConflictException('User already exists');
+        }
+      }
+
+      throw error;
+    }
   }
 
   async findAll(query: EmployeeListQueryDto = {}) {
@@ -464,6 +537,19 @@ export class EmployeesService {
           email: employee.email,
           password: temporaryPassword,
         });
+
+        console.log('TEMP EMPLOYEE LOGIN PASSWORD', {
+          employeeId: createdEmployee.id,
+          email: employee.email,
+          password: temporaryPassword,
+        });
+
+        await this.sendEmployeeCreatedEmail(
+          employee.email,
+          employee.name,
+          employer.companyName,
+          temporaryPassword,
+        );
       } catch (error) {
         errors.push({
           row: index + 1,
@@ -960,5 +1046,28 @@ export class EmployeesService {
 
   private generateTemporaryPassword() {
     return `MobPae-${randomBytes(8).toString('hex')}!1`;
+  }
+
+  private async sendEmployeeCreatedEmail(
+    email: string,
+    name: string,
+    employerName: string,
+    temporaryPassword: string,
+  ) {
+    try {
+      await this.emailService.sendEmployeeCreatedEmail({
+        to: email,
+        employeeName: name,
+        employerName,
+        loginEmail: email,
+        temporaryPassword,
+        loginUrl:
+          process.env.EMPLOYEE_LOGIN_URL ??
+          process.env.FRONTEND_URL ??
+          'https://mobpae.com/login',
+      });
+    } catch (error) {
+      console.error('Failed to send employee created email', error);
+    }
   }
 }

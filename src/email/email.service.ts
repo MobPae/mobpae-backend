@@ -139,6 +139,29 @@ export class EmailService {
     );
   }
 
+  async sendEmployeeCreatedEmail(data: {
+    to: string;
+    employeeName: string;
+    employerName: string;
+    loginEmail: string;
+    temporaryPassword: string;
+    loginUrl: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Your MobPae Employee Account is Ready',
+      'employee-created',
+      {
+        title: 'Employee Account Ready',
+        employeeName: data.employeeName,
+        employerName: data.employerName,
+        loginEmail: data.loginEmail,
+        temporaryPassword: data.temporaryPassword,
+        loginUrl: data.loginUrl,
+      },
+    );
+  }
+
   async sendKycApprovedEmail(data: {
     to: string;
     employeeName: string;
