@@ -11,6 +11,7 @@ export class ReportsService {
       totalEmployers,
       activeEmployers,
       suspendedEmployers,
+      pendingEmployers,
       totalEmployees,
       activeEmployees,
       pendingKyc,
@@ -33,6 +34,11 @@ export class ReportsService {
       this.prisma.employer.count({
         where: {
           status: 'SUSPENDED',
+        },
+      }),
+      this.prisma.employer.count({
+        where: {
+          status: 'PENDING',
         },
       }),
       this.prisma.employee.count(),
@@ -120,6 +126,7 @@ export class ReportsService {
       totalEmployers,
       activeEmployers,
       suspendedEmployers,
+      pendingEmployers,
       totalEmployees,
       activeEmployees,
       pendingKyc,
