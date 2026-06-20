@@ -42,6 +42,7 @@ function createService(prismaOverrides: Record<string, any> = {}) {
       auditLogsService as any,
       filesService as any,
       notificationsService as any,
+      {} as any,
     ),
   };
 }

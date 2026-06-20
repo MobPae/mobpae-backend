@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -16,30 +16,51 @@ export class RepaymentsController {
   constructor(private readonly repaymentsService: RepaymentsService) {}
 
   /**
-   * Admin
-   * View repayments of any employee
+   * Admin — list all repayments across all employees
+   */
+  @Get()
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Get all repayments (Admin)' })
+  findAll() {
+    return this.repaymentsService.findAllForAdmin();
+  }
+
+  /**
+   * Employer — list repayments for their own employees
+   */
+  @Get('employer')
+  @Roles('EMPLOYER')
+  @ApiOperation({ summary: 'Get repayments for employer employees' })
+  findForEmployer(@Req() req: any) {
+    return this.repaymentsService.findAllForEmployer(req.user.userId);
+  }
+
+  /**
+   * Admin — mark a repayment as paid
+   */
+  @Post(':id/pay')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Mark repayment as paid (Admin)' })
+  pay(@Param('id') id: string) {
+    return this.repaymentsService.pay(id);
+  }
+
+  /**
+   * Admin — view repayments of a specific employee
    */
   @Get('employee/:employeeId')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get repayments by employee for Admin',
-  })
-  findByEmployee(
-    @Param('employeeId')
-    employeeId: string,
-  ) {
+  @ApiOperation({ summary: 'Get repayments by employee (Admin)' })
+  findByEmployee(@Param('employeeId') employeeId: string) {
     return this.repaymentsService.findByEmployee(employeeId);
   }
 
   /**
-   * Employee
-   * View own repayments
+   * Employee — view own repayments
    */
   @Get('my')
   @Roles('EMPLOYEE')
-  @ApiOperation({
-    summary: 'Get my repayments',
-  })
+  @ApiOperation({ summary: 'Get my repayments' })
   getMyRepayments(@Req() req: any) {
     return this.repaymentsService.findByUserId(req.user.userId);
   }

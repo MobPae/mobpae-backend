@@ -61,6 +61,33 @@ export class EmployerEnquiriesService {
     return enquiry;
   }
 
+  async updateStatus(id: string, status: string, remarks?: string) {
+    const updated = await this.prisma.employerEnquiry.update({
+      where: { id },
+      data: {
+        status: status as any,
+        ...(remarks !== undefined ? { remarks } : {}),
+      },
+    });
+
+    // Only email for CONTACTED and REJECTED statuses
+    if (status === 'CONTACTED' || status === 'REJECTED') {
+      try {
+        await this.emailService.sendEnquiryStatusUpdatedEmail({
+          to: updated.email,
+          companyName: updated.companyName,
+          contactPerson: updated.contactPerson,
+          status,
+          remarks,
+        });
+      } catch (err) {
+        console.error('Failed to send enquiry status updated email', err);
+      }
+    }
+
+    return updated;
+  }
+
   async findAll(query: EmployerEnquiryListQueryDto = {}) {
     const { page, limit, skip, take } = getPagination(query);
     const where: any = {

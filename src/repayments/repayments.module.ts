@@ -4,9 +4,10 @@ import { RepaymentsController } from './repayments.controller';
 import { RepaymentsService } from './repayments.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SettingsModule } from '../settings/settings.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule, SettingsModule],
+  imports: [PrismaModule, NotificationsModule, EmailModule, SettingsModule],
   controllers: [RepaymentsController],
   providers: [RepaymentsService],
 })

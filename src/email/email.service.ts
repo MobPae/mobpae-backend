@@ -295,6 +295,198 @@ export class EmailService {
     );
   }
 
+  async sendSalaryRequestRejectedEmail(data: {
+    to: string;
+    employeeName: string;
+    amount: number;
+    requestDate: Date;
+    remarks: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Salary Advance Request Not Approved',
+      'salary-request-rejected',
+      {
+        title: 'Salary Request Rejected',
+        employeeName: data.employeeName,
+        amount: this.formatCurrency(data.amount),
+        requestDate: this.formatDate(data.requestDate),
+        remarks: data.remarks,
+      },
+    );
+  }
+
+  async sendRepaymentPaidEmail(data: {
+    to: string;
+    employeeName: string;
+    totalAmount: number;
+    paidDate: Date;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Repayment Completed – MobPae',
+      'repayment-paid',
+      {
+        title: 'Repayment Completed',
+        employeeName: data.employeeName,
+        totalAmount: this.formatCurrency(data.totalAmount),
+        paidDate: this.formatDate(data.paidDate),
+      },
+    );
+  }
+
+  async sendKycRejectedEmail(data: {
+    to: string;
+    employeeName: string;
+    documentType: string;
+    reason?: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'KYC Document Could Not Be Verified',
+      'kyc-rejected',
+      {
+        title: 'KYC Rejected',
+        employeeName: data.employeeName,
+        documentType: data.documentType,
+        reason: data.reason ?? 'Document unclear or invalid.',
+      },
+    );
+  }
+
+  async sendBankAccountVerifiedEmail(data: {
+    to: string;
+    employeeName: string;
+    accountHolder: string;
+    bankName?: string;
+    maskedAccount: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Bank Account Verified – MobPae',
+      'bank-account-verified',
+      {
+        title: 'Bank Account Verified',
+        employeeName: data.employeeName,
+        accountHolder: data.accountHolder,
+        bankName: data.bankName ?? '-',
+        maskedAccount: data.maskedAccount,
+      },
+    );
+  }
+
+  async sendBankAccountRejectedEmail(data: {
+    to: string;
+    employeeName: string;
+    maskedAccount: string;
+    reason?: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Bank Account Verification Failed – MobPae',
+      'bank-account-rejected',
+      {
+        title: 'Bank Account Rejected',
+        employeeName: data.employeeName,
+        maskedAccount: data.maskedAccount,
+        reason: data.reason ?? 'Details could not be verified.',
+      },
+    );
+  }
+
+  async sendMembershipApprovedEmail(data: {
+    to: string;
+    employeeName: string;
+    plan: string;
+    startDate: Date;
+    endDate: Date;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Your MobPae Membership is Active',
+      'membership-approved',
+      {
+        title: 'Membership Approved',
+        employeeName: data.employeeName,
+        plan: data.plan,
+        startDate: this.formatDate(data.startDate),
+        endDate: this.formatDate(data.endDate),
+      },
+    );
+  }
+
+  async sendMembershipRejectedEmail(data: {
+    to: string;
+    employeeName: string;
+    remarks?: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Membership Request Not Approved – MobPae',
+      'membership-rejected',
+      {
+        title: 'Membership Rejected',
+        employeeName: data.employeeName,
+        remarks: data.remarks ?? 'No reason provided.',
+      },
+    );
+  }
+
+  async sendSelfieVerifiedEmail(data: {
+    to: string;
+    employeeName: string;
+    verifiedDate: Date;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Selfie Verification Approved – MobPae',
+      'selfie-verified',
+      {
+        title: 'Selfie Verified',
+        employeeName: data.employeeName,
+        verifiedDate: this.formatDate(data.verifiedDate),
+      },
+    );
+  }
+
+  async sendSelfieRejectedEmail(data: {
+    to: string;
+    employeeName: string;
+    remarks?: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Selfie Verification Failed – MobPae',
+      'selfie-rejected',
+      {
+        title: 'Selfie Rejected',
+        employeeName: data.employeeName,
+        remarks: data.remarks ?? 'Please resubmit a clear selfie.',
+      },
+    );
+  }
+
+  async sendEnquiryStatusUpdatedEmail(data: {
+    to: string;
+    companyName: string;
+    contactPerson: string;
+    status: string;
+    remarks?: string;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Update on Your MobPae Enquiry',
+      'enquiry-status-updated',
+      {
+        title: 'Enquiry Status Update',
+        companyName: data.companyName,
+        contactPerson: data.contactPerson,
+        status: data.status,
+        remarks: data.remarks ?? 'No additional notes.',
+      },
+    );
+  }
+
   private formatDate(date: Date): string {
     return date.toLocaleDateString('en-IN', {
       day: '2-digit',

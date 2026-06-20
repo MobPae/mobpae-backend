@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -21,30 +21,39 @@ export class EmployerEnquiriesController {
   ) {}
 
   /**
-   * Public
-   * Employer enquiry from landing page
+   * Public — enquiry from landing page
    */
   @Post()
-  create(
-    @Body()
-    dto: CreateEmployerEnquiryDto,
-  ) {
+  create(@Body() dto: CreateEmployerEnquiryDto) {
     return this.employerEnquiriesService.create(dto);
   }
 
   /**
-   * Admin
-   * View all employer enquiries
+   * Admin — list all enquiries
    */
   @Get()
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @ApiOperation({
-    summary:
-      'List employer enquiries with pagination, search, sorting, and filters',
+    summary: 'List employer enquiries with pagination, search, sorting, and filters',
   })
   findAll(@Query() query: EmployerEnquiryListQueryDto) {
     return this.employerEnquiriesService.findAll(query);
+  }
+
+  /**
+   * Admin — update enquiry status (NEW → CONTACTED / REJECTED / ONBOARDED)
+   */
+  @Patch(':id/status')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Update enquiry status (Admin)' })
+  updateStatus(
+    @Param('id') id: string,
+    @Body() body: { status: string; remarks?: string },
+  ) {
+    return this.employerEnquiriesService.updateStatus(id, body.status, body.remarks);
   }
 }

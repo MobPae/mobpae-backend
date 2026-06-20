@@ -70,6 +70,7 @@ describe('admin list pagination coverage', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     const result = await service.findAll({
@@ -258,7 +259,7 @@ describe('admin list pagination coverage', () => {
 
   it('paginates, searches, sorts, and filters memberships', async () => {
     const prisma = createPrisma('membership');
-    const service = new MembershipService(prisma, {} as any);
+    const service = new MembershipService(prisma, {} as any, {} as any, {} as any);
 
     const result = await service.findAll({
       page: 2,

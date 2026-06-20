@@ -427,6 +427,8 @@ enum KycStatus {
 
 enum EmployerEnquiryStatus {
   NEW
+  CONTACTED
+  REJECTED
   ONBOARDED
 }
 

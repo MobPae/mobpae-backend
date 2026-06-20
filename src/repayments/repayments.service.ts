@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRepaymentDto } from './dto/create-repayment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../email/email.service';
 import { PayrollUtil } from '../common/utils/payroll.util';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
 
@@ -14,6 +15,7 @@ export class RepaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
     private readonly settingsPolicy: SettingsPolicyService,
   ) {}
 
@@ -154,6 +156,19 @@ export class RepaymentsService {
         'Repayment Completed',
         'Your salary advance repayment has been completed successfully.',
       );
+    }
+
+    if (salaryRequest?.employee) {
+      try {
+        await this.emailService.sendRepaymentPaidEmail({
+          to: salaryRequest.employee.email,
+          employeeName: salaryRequest.employee.name,
+          totalAmount: Number(repayment.totalAmount),
+          paidDate: repayment.paidDate ?? new Date(),
+        });
+      } catch (err) {
+        console.error('Failed to send repayment paid email', err);
+      }
     }
 
     return repayment;

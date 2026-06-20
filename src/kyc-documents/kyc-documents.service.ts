@@ -354,6 +354,16 @@ export class KycDocumentsService {
       );
     }
 
+    try {
+      await this.emailService.sendKycRejectedEmail({
+        to: existingDocument.employee.email,
+        employeeName: existingDocument.employee.name,
+        documentType: existingDocument.documentType,
+      });
+    } catch (err) {
+      console.error('Failed to send KYC rejected email', err);
+    }
+
     await this.writeAuditLog({
       userId: actorUserId,
       action: 'KYC_REJECTED',

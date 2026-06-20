@@ -282,6 +282,7 @@ describe('critical MVP workflow unit coverage', () => {
       mockAudit() as any,
       {} as any,
       mockNotifications() as any,
+      {} as any,
     );
 
     const result = await service.bulkCreate('employer-user', [
@@ -455,6 +456,7 @@ describe('critical MVP workflow unit coverage', () => {
       prisma as any,
       audit as any,
       notifications as any,
+      {} as any,
     );
 
     const result = await service.verify('bank-1', 'admin-1');

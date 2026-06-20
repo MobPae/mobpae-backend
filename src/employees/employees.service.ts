@@ -876,6 +876,16 @@ export class EmployeesService {
       );
     }
 
+    try {
+      await this.emailService.sendSelfieVerifiedEmail({
+        to: employee.email,
+        employeeName: employee.name,
+        verifiedDate: verifiedAt,
+      });
+    } catch (err) {
+      console.error('Failed to send selfie verified email', err);
+    }
+
     await this.writeAuditLog({
       userId: adminUserId,
       action: 'SELFIE_VERIFIED',
@@ -929,6 +939,16 @@ export class EmployeesService {
         'Selfie Rejected',
         remarks || 'Your selfie verification has been rejected.',
       );
+    }
+
+    try {
+      await this.emailService.sendSelfieRejectedEmail({
+        to: employee.email,
+        employeeName: employee.name,
+        remarks,
+      });
+    } catch (err) {
+      console.error('Failed to send selfie rejected email', err);
     }
 
     await this.writeAuditLog({

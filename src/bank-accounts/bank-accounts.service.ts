@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../email/email.service';
 
 type BankAuditAction = 'BANK_SUBMITTED' | 'BANK_APPROVED' | 'BANK_REJECTED';
 
@@ -16,6 +17,7 @@ export class BankAccountsService {
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   private maskAccountNumber(accountNumber: string) {
@@ -171,6 +173,18 @@ export class BankAccountsService {
       );
     }
 
+    try {
+      await this.emailService.sendBankAccountVerifiedEmail({
+        to: existingAccount.employee.email,
+        employeeName: existingAccount.employee.name,
+        accountHolder: existingAccount.accountHolderName,
+        bankName: existingAccount.bankName ?? undefined,
+        maskedAccount: this.maskAccountNumber(existingAccount.accountNumber),
+      });
+    } catch (err) {
+      console.error('Failed to send bank account verified email', err);
+    }
+
     return {
       ...account,
       accountNumber: this.maskAccountNumber(account.accountNumber),
@@ -214,6 +228,16 @@ export class BankAccountsService {
         'Bank Account Rejected',
         'Your bank account verification was rejected. Please update your details and submit again.',
       );
+    }
+
+    try {
+      await this.emailService.sendBankAccountRejectedEmail({
+        to: existingAccount.employee.email,
+        employeeName: existingAccount.employee.name,
+        maskedAccount: this.maskAccountNumber(existingAccount.accountNumber),
+      });
+    } catch (err) {
+      console.error('Failed to send bank account rejected email', err);
     }
 
     return {

@@ -8,6 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RequestMembershipDto } from './dto/request-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   containsSearch,
   getOrderBy,
@@ -22,6 +24,8 @@ export class MembershipService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settingsPolicy: SettingsPolicyService,
+    private readonly emailService: EmailService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getMyMembership(userId: string) {
@@ -335,7 +339,7 @@ export class MembershipService {
 
     endDate.setDate(endDate.getDate() + validityDays);
 
-    return this.prisma.$transaction(async (tx) => {
+    const updatedMembership = await this.prisma.$transaction(async (tx) => {
       if (membership.couponCode) {
         const coupon = await tx.membershipCoupon.findUnique({
           where: {
@@ -369,8 +373,32 @@ export class MembershipService {
           verifiedBy: adminUserId,
           remarks: null,
         },
+        include: { employee: true },
       });
     });
+
+    // Post-transaction: send notification + email
+    if (updatedMembership.employee?.userId) {
+      await this.notificationsService.createSystemNotification(
+        updatedMembership.employee.userId,
+        'Membership Approved',
+        'Your MobPae membership is now active.',
+      ).catch((err) => console.error('Membership approved notification error', err));
+    }
+
+    try {
+      await this.emailService.sendMembershipApprovedEmail({
+        to: updatedMembership.employee.email,
+        employeeName: updatedMembership.employee.name,
+        plan: updatedMembership.planName,
+        startDate,
+        endDate,
+      });
+    } catch (err) {
+      console.error('Failed to send membership approved email', err);
+    }
+
+    return updatedMembership;
   }
 
   async reject(membershipId: string, remarks: string) {
@@ -378,13 +406,14 @@ export class MembershipService {
       where: {
         id: membershipId,
       },
+      include: { employee: true },
     });
 
     if (!membership) {
       throw new NotFoundException('Membership not found');
     }
 
-    return this.prisma.membership.update({
+    const updated = await this.prisma.membership.update({
       where: {
         id: membershipId,
       },
@@ -393,6 +422,26 @@ export class MembershipService {
         remarks,
       },
     });
+
+    if (membership.employee?.userId) {
+      await this.notificationsService.createSystemNotification(
+        membership.employee.userId,
+        'Membership Not Approved',
+        remarks || 'Your membership request was not approved.',
+      ).catch((err) => console.error('Membership rejected notification error', err));
+    }
+
+    try {
+      await this.emailService.sendMembershipRejectedEmail({
+        to: membership.employee.email,
+        employeeName: membership.employee.name,
+        remarks,
+      });
+    } catch (err) {
+      console.error('Failed to send membership rejected email', err);
+    }
+
+    return updated;
   }
 
   /**

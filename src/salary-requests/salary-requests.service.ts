@@ -507,6 +507,18 @@ export class SalaryRequestsService {
       );
     }
 
+    try {
+      await this.emailService.sendSalaryRequestRejectedEmail({
+        to: request.employee.email,
+        employeeName: request.employee.name,
+        amount: Number(request.amount),
+        requestDate: request.requestedAt,
+        remarks: remarks || 'No reason provided.',
+      });
+    } catch (err) {
+      console.error('Failed to send salary request rejected email', err);
+    }
+
     return updatedRequest;
   }
 

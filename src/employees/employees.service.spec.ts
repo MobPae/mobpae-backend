@@ -7,6 +7,7 @@ describe('EmployeesService', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
 
     expect(service).toBeDefined();
