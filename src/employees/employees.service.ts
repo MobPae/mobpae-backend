@@ -445,6 +445,19 @@ export class EmployeesService {
       const employee = employees[index];
 
       try {
+        const salaryInHand = Number(employee.salaryInHand);
+
+        if (!Number.isFinite(salaryInHand) || salaryInHand <= 0) {
+          errors.push({
+            row: index + 1,
+            employeeCode: employee.employeeCode,
+            email: employee.email,
+            message: 'Salary in hand must be greater than zero',
+          });
+
+          continue;
+        }
+
         const existingEmployeeCode = await this.prisma.employee.findFirst({
           where: {
             employerId: employer.id,
@@ -504,7 +517,7 @@ export class EmployeesService {
               email: employee.email,
               phone: employee.phone,
 
-              salaryInHand: Number(employee.salaryInHand),
+              salaryInHand,
 
               employmentStatus: 'ACTIVE',
               appActivated: false,
@@ -627,7 +640,33 @@ export class EmployeesService {
     const percentageBasedAmount =
       Number(employee.salaryInHand) * (advancePercentage / 100);
 
-    const availableAdvance = Math.min(percentageBasedAmount, maximumAdvance);
+    const approvedLimit = Math.min(percentageBasedAmount, maximumAdvance);
+
+    const activeRequests = await this.prisma.salaryRequest.findMany({
+      where: {
+        employeeId: employee.id,
+        status: {
+          in: [
+            'SUBMITTED',
+            'EMPLOYER_APPROVED',
+            'READY_FOR_DISBURSAL',
+            'DISBURSED',
+            'REPAYMENT_SCHEDULED',
+          ],
+        },
+      },
+      select: {
+        amount: true,
+        approvedAmount: true,
+      },
+    });
+
+    const activeRequestAmount = activeRequests.reduce(
+      (total, request) =>
+        total + Number(request.approvedAmount ?? request.amount),
+      0,
+    );
+    const availableAdvance = Math.max(0, approvedLimit - activeRequestAmount);
 
     /**
      * KYC Status
@@ -662,6 +701,8 @@ export class EmployeesService {
        * Salary Info
        */
       salaryInHand: Number(employee.salaryInHand),
+      approvedLimit,
+      activeRequestAmount,
       availableAdvance,
 
       /**

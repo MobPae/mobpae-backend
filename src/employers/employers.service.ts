@@ -118,6 +118,8 @@ export class EmployersService {
       });
     }
 
+    let emailDelivered: boolean | null = null;
+
     if (activationPassword) {
       try {
         await this.emailService.sendEmployerApprovedEmail({
@@ -130,12 +132,21 @@ export class EmployersService {
             process.env.FRONTEND_URL ??
             'https://mobpae.com/login',
         });
+        emailDelivered = true;
       } catch (error) {
+        emailDelivered = false;
         console.error('Failed to send employer approved email', error);
       }
     }
 
-    return updatedEmployer;
+    return {
+      ...updatedEmployer,
+      emailDelivered,
+      temporaryPassword:
+        activationPassword && emailDelivered === false
+          ? activationPassword
+          : null,
+    };
   }
 
   async getProfile(userId: string) {

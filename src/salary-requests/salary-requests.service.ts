@@ -22,6 +22,11 @@ import {
   paginate,
 } from '../common/utils/pagination.util';
 import { SalaryRequestListQueryDto } from './dto/salary-request-list-query.dto';
+import type { SalaryRequest } from '@prisma/client';
+import {
+  BulkSalaryRequestAction,
+  BulkSalaryRequestActionDto,
+} from './dto/bulk-salary-request-action.dto';
 
 @Injectable()
 export class SalaryRequestsService {
@@ -259,11 +264,13 @@ export class SalaryRequestsService {
     });
   }
 
-  async findPendingByEmployer(employerId: string) {
+  async findPendingByEmployer(employerUserId: string) {
     return this.prisma.salaryRequest.findMany({
       where: {
         employee: {
-          employerId,
+          employer: {
+            userId: employerUserId,
+          },
         },
         status: 'SUBMITTED',
       },
@@ -279,6 +286,13 @@ export class SalaryRequestsService {
       status: query.status,
       employerId: query.employerId,
       employeeId: query.employeeId,
+      createdAt:
+        query.startDate || query.endDate
+          ? {
+              gte: query.startDate ? new Date(query.startDate) : undefined,
+              lte: query.endDate ? new Date(query.endDate) : undefined,
+            }
+          : undefined,
       ...(hasSearch(query)
         ? {
             OR: [
@@ -335,6 +349,47 @@ export class SalaryRequestsService {
     return paginate(data, total, page, limit);
   }
 
+  async bulkAction(dto: BulkSalaryRequestActionDto, userId: string) {
+    const results: SalaryRequest[] = [];
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+    const failures: Array<{ id: string; message: string }> = [];
+
+    for (const id of dto.ids) {
+      try {
+        const request =
+          dto.action === BulkSalaryRequestAction.APPROVE
+            ? await this.approve(id, userId)
+            : await this.reject(
+                id,
+                dto.remarks || 'Rejected by employer.',
+                userId,
+              );
+
+        results.push(request);
+        succeeded.push(id);
+      } catch (error) {
+        failed.push(id);
+        failures.push({
+          id,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Unable to process request',
+        });
+      }
+    }
+
+    return {
+      action: dto.action,
+      processed: succeeded.length,
+      succeeded,
+      failed,
+      failures,
+      results,
+    };
+  }
+
   /**
    * Employer approval of salary advance request.
    *
@@ -375,18 +430,39 @@ export class SalaryRequestsService {
       throw new BadRequestException('Unauthorized request access');
     }
 
+    if (request.status === 'EMPLOYER_APPROVED') {
+      return request;
+    }
+
     if (request.status !== 'SUBMITTED') {
       throw new BadRequestException('Only submitted requests can be approved');
     }
 
-    const updatedRequest = await this.prisma.salaryRequest.update({
+    const transition = await this.prisma.salaryRequest.updateMany({
       where: {
         id,
+        status: 'SUBMITTED',
       },
       data: {
         status: 'EMPLOYER_APPROVED',
       },
     });
+
+    const updatedRequest = await this.prisma.salaryRequest.findUnique({
+      where: { id },
+    });
+
+    if (!updatedRequest) {
+      throw new NotFoundException('Salary request not found');
+    }
+
+    if (transition.count === 0) {
+      if (updatedRequest.status === 'EMPLOYER_APPROVED') {
+        return updatedRequest;
+      }
+
+      throw new BadRequestException('Only submitted requests can be approved');
+    }
 
     await this.writeAuditLog({
       userId,
@@ -472,13 +548,18 @@ export class SalaryRequestsService {
       throw new BadRequestException('Unauthorized request access');
     }
 
+    if (request.status === 'EMPLOYER_REJECTED') {
+      return request;
+    }
+
     if (request.status !== 'SUBMITTED') {
       throw new BadRequestException('Only submitted requests can be rejected');
     }
 
-    const updatedRequest = await this.prisma.salaryRequest.update({
+    const transition = await this.prisma.salaryRequest.updateMany({
       where: {
         id,
+        status: 'SUBMITTED',
       },
 
       data: {
@@ -487,6 +568,22 @@ export class SalaryRequestsService {
         remarks,
       },
     });
+
+    const updatedRequest = await this.prisma.salaryRequest.findUnique({
+      where: { id },
+    });
+
+    if (!updatedRequest) {
+      throw new NotFoundException('Salary request not found');
+    }
+
+    if (transition.count === 0) {
+      if (updatedRequest.status === 'EMPLOYER_REJECTED') {
+        return updatedRequest;
+      }
+
+      throw new BadRequestException('Only submitted requests can be rejected');
+    }
 
     await this.writeAuditLog({
       userId,

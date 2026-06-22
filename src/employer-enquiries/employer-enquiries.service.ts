@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateEmployerEnquiryDto } from './dto/create-employer-enquiry.dto';
-import { EmailService } from 'src/email/email.service';
+import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import {
   containsSearch,

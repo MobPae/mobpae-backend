@@ -13,7 +13,12 @@ import { CreateNotificationDto } from './dto/create-notification.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { NotificationListQueryDto } from './dto/notification-list-query.dto';
 
 @ApiTags('Notifications')
@@ -42,6 +47,19 @@ export class NotificationsController {
   @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
   findMine(@Req() req: any) {
     return this.notificationsService.findByUser(req.user.userId);
+  }
+
+  @Get('me/count')
+  @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
+  @ApiOperation({ summary: 'Get my unread notification count' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: { unread: 4 },
+    },
+  })
+  getMyUnreadCount(@Req() req: any) {
+    return this.notificationsService.countUnread(req.user.userId);
   }
 
   @Get('user/:userId')

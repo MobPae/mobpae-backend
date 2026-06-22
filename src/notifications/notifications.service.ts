@@ -90,6 +90,17 @@ export class NotificationsService {
     });
   }
 
+  async countUnread(userId: string) {
+    const unread = await this.prisma.notification.count({
+      where: {
+        userId,
+        isRead: false,
+      },
+    });
+
+    return { unread };
+  }
+
   /**
    * Marks notification as read.
    */

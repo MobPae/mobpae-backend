@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -7,6 +15,7 @@ import { RepaymentsService } from './repayments.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RepaymentListQueryDto } from './dto/repayment-list-query.dto';
 
 @ApiTags('Repayments')
 @ApiBearerAuth()
@@ -21,8 +30,8 @@ export class RepaymentsController {
   @Get()
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Get all repayments (Admin)' })
-  findAll() {
-    return this.repaymentsService.findAllForAdmin();
+  findAll(@Query() query: RepaymentListQueryDto) {
+    return this.repaymentsService.findAllForAdmin(query);
   }
 
   /**

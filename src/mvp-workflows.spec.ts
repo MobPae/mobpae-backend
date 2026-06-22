@@ -516,9 +516,11 @@ describe('critical MVP workflow unit coverage', () => {
       salaryRequest: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue(baseRequest),
-        findUnique: jest.fn().mockResolvedValue(baseRequest),
-        update: jest
+        findUnique: jest
           .fn()
+          .mockResolvedValueOnce({
+            ...baseRequest,
+          })
           .mockResolvedValueOnce({
             ...baseRequest,
             status: 'EMPLOYER_APPROVED',
@@ -526,9 +528,14 @@ describe('critical MVP workflow unit coverage', () => {
           .mockResolvedValueOnce({
             ...baseRequest,
             id: 'request-2',
+          })
+          .mockResolvedValueOnce({
+            ...baseRequest,
+            id: 'request-2',
             status: 'EMPLOYER_REJECTED',
             remarks: 'Need more info',
           }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       repayment: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -658,7 +665,8 @@ describe('critical MVP workflow unit coverage', () => {
         }),
       },
       disbursal: {
-        update: jest.fn().mockResolvedValue({
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue({
           ...existingDisbursal,
           status: 'DISBURSED',
           disbursedAt: now,
@@ -690,8 +698,9 @@ describe('critical MVP workflow unit coverage', () => {
 
     expect(prisma.$transaction).toHaveBeenCalled();
     expect(tx.repayment.create).toHaveBeenCalled();
-    expect(tx.disbursal.update).toHaveBeenCalledWith(
+    expect(tx.disbursal.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: 'PENDING' }),
         data: expect.objectContaining({ status: 'DISBURSED' }),
       }),
     );
@@ -774,14 +783,17 @@ describe('critical MVP workflow unit coverage', () => {
     };
     const prisma = {
       employerSettlement: {
-        findUnique: jest.fn().mockResolvedValue(settlement),
-        update: jest.fn().mockResolvedValue({
-          ...settlement,
-          status: 'PAID',
-          paidDate: now,
-          outstandingAmount: 0,
-          referenceNumber: 'UTR123',
-        }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(settlement)
+          .mockResolvedValue({
+            ...settlement,
+            status: 'PAID',
+            paidDate: now,
+            outstandingAmount: 0,
+            referenceNumber: 'UTR123',
+          }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([]),
       },
       employer: {

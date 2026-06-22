@@ -9,6 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
 import { PayrollUtil } from '../common/utils/payroll.util';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { RepaymentListQueryDto } from './dto/repayment-list-query.dto';
 
 @Injectable()
 export class RepaymentsService {
@@ -122,24 +123,61 @@ export class RepaymentsService {
    * Employee becomes eligible for future requests.
    */
   async pay(id: string) {
-    const repayment = await this.prisma.repayment.update({
-      where: {
-        id,
-      },
-      data: {
-        status: 'PAID',
-        paidDate: new Date(),
-      },
+    const existingRepayment = await this.prisma.repayment.findUnique({
+      where: { id },
     });
 
-    await this.prisma.salaryRequest.update({
-      where: {
-        id: repayment.salaryRequestId,
+    if (!existingRepayment) {
+      throw new NotFoundException('Repayment not found');
+    }
+
+    if (existingRepayment.status === 'PAID') {
+      return existingRepayment;
+    }
+
+    const { repayment, transitioned } = await this.prisma.$transaction(
+      async (tx) => {
+        const claim = await tx.repayment.updateMany({
+          where: {
+            id,
+            status: {
+              not: 'PAID',
+            },
+          },
+          data: {
+            status: 'PAID',
+            paidDate: new Date(),
+          },
+        });
+
+        const repayment = await tx.repayment.findUnique({
+          where: { id },
+        });
+
+        if (!repayment) {
+          throw new NotFoundException('Repayment not found');
+        }
+
+        if (claim.count === 0) {
+          return { repayment, transitioned: false };
+        }
+
+        await tx.salaryRequest.update({
+          where: {
+            id: repayment.salaryRequestId,
+          },
+          data: {
+            status: 'REPAID',
+          },
+        });
+
+        return { repayment, transitioned: true };
       },
-      data: {
-        status: 'REPAID',
-      },
-    });
+    );
+
+    if (!transitioned) {
+      return repayment;
+    }
 
     const salaryRequest = await this.prisma.salaryRequest.findUnique({
       where: {
@@ -174,8 +212,18 @@ export class RepaymentsService {
     return repayment;
   }
 
-  async findAllForAdmin() {
+  async findAllForAdmin(query: RepaymentListQueryDto = {}) {
     return this.prisma.repayment.findMany({
+      where: {
+        status: query.status,
+        dueDate:
+          query.startDate || query.endDate
+            ? {
+                gte: query.startDate ? new Date(query.startDate) : undefined,
+                lte: query.endDate ? new Date(query.endDate) : undefined,
+              }
+            : undefined,
+      },
       include: {
         salaryRequest: {
           include: {

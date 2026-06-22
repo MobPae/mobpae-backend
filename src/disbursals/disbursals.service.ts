@@ -6,10 +6,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PayrollUtil } from 'src/common/utils/payroll.util';
+import { PayrollUtil } from '../common/utils/payroll.util';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { DisbursalListQueryDto } from './dto/disbursal-list-query.dto';
 
 @Injectable()
 export class DisbursalsService {
@@ -32,6 +33,16 @@ export class DisbursalsService {
       throw new BadRequestException('Salary request not found');
     }
 
+    const existingDisbursal = await this.prisma.disbursal.findUnique({
+      where: {
+        salaryRequestId: salaryRequest.id,
+      },
+    });
+
+    if (existingDisbursal) {
+      return existingDisbursal;
+    }
+
     const employer = await this.prisma.employer.findUnique({
       where: {
         id: salaryRequest.employerId,
@@ -51,12 +62,6 @@ export class DisbursalsService {
     if (salaryRequest.status !== 'EMPLOYER_APPROVED') {
       throw new BadRequestException('Salary request is not approved');
     }
-
-    const existingDisbursal = await this.prisma.disbursal.findUnique({
-      where: {
-        salaryRequestId: salaryRequest.id,
-      },
-    });
 
     const disbursal = await this.prisma.disbursal.upsert({
       where: {
@@ -79,22 +84,37 @@ export class DisbursalsService {
       },
     });
 
-    if (!existingDisbursal) {
-      await this.writeAuditLog({
-        userId: actorUserId,
-        action: 'DISBURSAL_CREATED',
-        entityType: 'DISBURSAL',
-        entityId: disbursal.id,
-        oldValue: null,
-        newValue: this.disbursalAuditValue(disbursal),
-      });
-    }
+    await this.writeAuditLog({
+      userId: actorUserId,
+      action: 'DISBURSAL_CREATED',
+      entityType: 'DISBURSAL',
+      entityId: disbursal.id,
+      oldValue: null,
+      newValue: this.disbursalAuditValue(disbursal),
+    });
 
     return disbursal;
   }
 
-  async findAllForAdmin() {
+  async findAllForAdmin(query: DisbursalListQueryDto = {}) {
     return this.prisma.disbursal.findMany({
+      where: {
+        status: query.status,
+        createdAt:
+          query.startDate || query.endDate
+            ? {
+                gte: query.startDate ? new Date(query.startDate) : undefined,
+                lte: query.endDate ? new Date(query.endDate) : undefined,
+              }
+            : undefined,
+        salaryRequest:
+          query.employerId || query.employeeId
+            ? {
+                employerId: query.employerId,
+                employeeId: query.employeeId,
+              }
+            : undefined,
+      },
       include: {
         salaryRequest: {
           include: {
@@ -139,6 +159,10 @@ export class DisbursalsService {
     }
 
     if (existingDisbursal.status !== 'PENDING') {
+      if (existingDisbursal.status === 'DISBURSED') {
+        return existingDisbursal;
+      }
+
       throw new BadRequestException('Disbursal is not pending');
     }
 
@@ -175,8 +199,39 @@ export class DisbursalsService {
       annualInterestRate,
     );
 
-    const { disbursal, repayment, repaymentCreated } =
+    const { disbursal, repayment, repaymentCreated, transitioned } =
       await this.prisma.$transaction(async (tx) => {
+        const claim = await tx.disbursal.updateMany({
+          where: {
+            id,
+            status: 'PENDING',
+          },
+          data: {
+            status: 'DISBURSED',
+            disbursedAt: new Date(),
+          },
+        });
+
+        if (claim.count === 0) {
+          const [disbursal, repayment] = await Promise.all([
+            tx.disbursal.findUnique({ where: { id } }),
+            tx.repayment.findUnique({
+              where: { salaryRequestId: salaryRequest.id },
+            }),
+          ]);
+
+          if (!disbursal) {
+            throw new NotFoundException('Disbursal not found');
+          }
+
+          return {
+            disbursal,
+            repayment,
+            repaymentCreated: false,
+            transitioned: false,
+          };
+        }
+
         let repayment = await tx.repayment.findUnique({
           where: {
             salaryRequestId: salaryRequest.id,
@@ -202,15 +257,13 @@ export class DisbursalsService {
           repaymentCreated = true;
         }
 
-        const disbursal = await tx.disbursal.update({
-          where: {
-            id,
-          },
-          data: {
-            status: 'DISBURSED',
-            disbursedAt: new Date(),
-          },
+        const disbursal = await tx.disbursal.findUnique({
+          where: { id },
         });
+
+        if (!disbursal) {
+          throw new NotFoundException('Disbursal not found');
+        }
 
         await tx.salaryRequest.update({
           where: {
@@ -225,8 +278,13 @@ export class DisbursalsService {
           disbursal,
           repayment,
           repaymentCreated,
+          transitioned: true,
         };
       });
+
+    if (!transitioned) {
+      return disbursal;
+    }
 
     if (salaryRequest.employee.userId) {
       await this.notificationsService.createSystemNotification(

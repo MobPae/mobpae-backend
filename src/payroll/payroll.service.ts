@@ -168,9 +168,15 @@ export class PayrollService {
     });
 
     if (existingSettlement) {
-      throw new BadRequestException(
-        `Settlement already generated for ${payrollMonth}`,
-      );
+      return {
+        employerId,
+        payrollMonth,
+        processedRepayments: 0,
+        settlementId: existingSettlement.id,
+        settlementAmount: Number(existingSettlement.totalAmount),
+        dueDate: existingSettlement.dueDate,
+        alreadyProcessed: true,
+      };
     }
 
     const repayments = await this.prisma.repayment.findMany({
@@ -291,6 +297,7 @@ export class PayrollService {
       settlementId: settlement.id,
       settlementAmount,
       dueDate: settlementDueDate,
+      alreadyProcessed: false,
     };
   }
 

@@ -143,6 +143,8 @@ describe('admin list pagination coverage', () => {
       status: 'SUBMITTED',
       employerId: 'employer-1',
       employeeId: 'employee-1',
+      startDate: '2026-06-01T00:00:00.000Z',
+      endDate: '2026-06-30T23:59:59.999Z',
       sortBy: 'requestedAt',
       sortOrder: 'asc',
     });
@@ -154,6 +156,10 @@ describe('admin list pagination coverage', () => {
           status: 'SUBMITTED',
           employerId: 'employer-1',
           employeeId: 'employee-1',
+          createdAt: {
+            gte: new Date('2026-06-01T00:00:00.000Z'),
+            lte: new Date('2026-06-30T23:59:59.999Z'),
+          },
           OR: expect.any(Array),
         }),
         orderBy: { requestedAt: 'asc' },
@@ -259,7 +265,7 @@ describe('admin list pagination coverage', () => {
 
   it('paginates, searches, sorts, and filters memberships', async () => {
     const prisma = createPrisma('membership');
-    const service = new MembershipService(prisma, {} as any, {} as any, {} as any);
+    const service = new MembershipService(prisma, {} as any, {} as any, {} as any, {} as any);
 
     const result = await service.findAll({
       page: 2,

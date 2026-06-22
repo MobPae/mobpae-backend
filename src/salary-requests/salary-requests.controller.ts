@@ -9,7 +9,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { SalaryRequestsService } from './salary-requests.service';
 
@@ -17,6 +22,7 @@ import { CreateSalaryRequestDto } from './dto/create-salary-request.dto';
 import { RejectSalaryRequestDto } from './dto/reject-salary-request.dto';
 import { PreviewSalaryRequestDto } from './dto/preview-salary-request.dto';
 import { SalaryRequestListQueryDto } from './dto/salary-request-list-query.dto';
+import { BulkSalaryRequestActionDto } from './dto/bulk-salary-request-action.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -119,6 +125,35 @@ export class SalaryRequestsController {
   })
   findAllForAdmin(@Query() query: SalaryRequestListQueryDto) {
     return this.salaryRequestsService.findAllForAdmin(query);
+  }
+
+  /**
+   * Employer - Approve or reject multiple requests
+   */
+  @Post('bulk-action')
+  @Roles('EMPLOYER')
+  @ApiOperation({ summary: 'Approve or reject multiple salary requests' })
+  @ApiResponse({
+    status: 201,
+    description: 'Requests processed through the standard action flow.',
+    schema: {
+      example: {
+        action: 'APPROVE',
+        processed: 1,
+        succeeded: ['request-id-1'],
+        failed: ['request-id-2'],
+        failures: [
+          {
+            id: 'request-id-2',
+            message: 'Only submitted requests can be approved',
+          },
+        ],
+        results: [],
+      },
+    },
+  })
+  bulkAction(@Body() dto: BulkSalaryRequestActionDto, @Req() req: any) {
+    return this.salaryRequestsService.bulkAction(dto, req.user.userId);
   }
 
   /**

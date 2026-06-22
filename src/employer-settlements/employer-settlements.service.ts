@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -149,12 +150,15 @@ export class EmployerSettlementsService {
     }
 
     if (settlement.status === 'PAID') {
-      throw new BadRequestException('Settlement already paid');
+      return settlement;
     }
 
-    const updatedSettlement = await this.prisma.employerSettlement.update({
+    const transition = await this.prisma.employerSettlement.updateMany({
       where: {
         id,
+        status: {
+          not: 'PAID',
+        },
       },
       data: {
         status: 'PAID',
@@ -163,6 +167,18 @@ export class EmployerSettlementsService {
         referenceNumber,
       },
     });
+
+    const updatedSettlement = await this.prisma.employerSettlement.findUnique({
+      where: { id },
+    });
+
+    if (!updatedSettlement) {
+      throw new NotFoundException('Settlement not found');
+    }
+
+    if (transition.count === 0) {
+      return updatedSettlement;
+    }
 
     await this.updateEmployerRiskStatus(settlement.employerId);
 
@@ -287,7 +303,7 @@ export class EmployerSettlementsService {
       where: {
         employerId,
         status: {
-          in: ['PENDING', 'PARTIALLY_PAID'],
+          in: ['PENDING', 'PARTIALLY_PAID', 'OVERDUE'],
         },
       },
     });
@@ -334,7 +350,7 @@ export class EmployerSettlementsService {
     };
   }
 
-  async sendReport(id: string) {
+  async sendReport(id: string, actor?: { role?: string; userId?: string }) {
     const settlement = await this.prisma.employerSettlement.findUnique({
       where: {
         id,
@@ -346,6 +362,15 @@ export class EmployerSettlementsService {
 
     if (!settlement) {
       throw new NotFoundException('Settlement not found');
+    }
+
+    if (
+      actor?.role === 'EMPLOYER' &&
+      settlement.employer.userId !== actor.userId
+    ) {
+      throw new ForbiddenException(
+        'You can only send reports for your own settlements',
+      );
     }
 
     try {

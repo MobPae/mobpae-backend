@@ -226,7 +226,10 @@ export class MembershipController {
 
     @Body()
     dto: RejectMembershipDto,
+
+    @Req()
+    req: any,
   ) {
-    return this.membershipService.reject(id, dto.remarks);
+    return this.membershipService.reject(id, dto.remarks, req.user.userId);
   }
 }

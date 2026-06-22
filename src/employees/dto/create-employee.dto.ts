@@ -1,4 +1,4 @@
-import { IsEmail, IsNumber, IsString } from 'class-validator';
+import { IsEmail, IsNumber, IsPositive, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateEmployeeDto {
@@ -16,5 +16,6 @@ export class CreateEmployeeDto {
 
   @Type(() => Number)
   @IsNumber()
+  @IsPositive()
   salaryInHand: number;
 }

@@ -94,12 +94,12 @@ export class EmployerSettlementsController {
    * Admin
    */
   @Post(':id/send-report')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'EMPLOYER')
   @ApiOperation({
     summary: 'Send settlement report to employer',
   })
-  sendReport(@Param('id') id: string) {
-    return this.employerSettlementsService.sendReport(id);
+  sendReport(@Param('id') id: string, @Req() req: any) {
+    return this.employerSettlementsService.sendReport(id, req.user);
   }
 
   @Post(':id/mark-paid')

@@ -1,4 +1,12 @@
-import { IsEmail, IsOptional, IsString, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  IsInt,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class CreateEmployerDto {
   @IsString()
@@ -17,11 +25,17 @@ export class CreateEmployerDto {
   phone: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
+  @Min(1)
+  @Max(31)
   payrollDate?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
+  @Min(1)
+  @Max(31)
   payrollCutoffDate?: number;
 
   @IsOptional()

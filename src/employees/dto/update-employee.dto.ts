@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsNumber,
   IsOptional,
+  IsPositive,
   IsString,
 } from 'class-validator';
 
@@ -24,6 +25,7 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @IsPositive()
   salaryInHand?: number;
 
   @IsOptional()

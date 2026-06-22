@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { DisbursalsService } from './disbursals.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { DisbursalListQueryDto } from './dto/disbursal-list-query.dto';
 
 @ApiTags('Disbursals')
 @ApiBearerAuth()
@@ -28,8 +29,11 @@ export class DisbursalsController {
 
   @Get()
   @Roles('ADMIN')
-  findAll() {
-    return this.disbursalsService.findAllForAdmin();
+  @ApiOperation({
+    summary: 'List disbursals with status, ownership, and created-date filters',
+  })
+  findAll(@Query() query: DisbursalListQueryDto) {
+    return this.disbursalsService.findAllForAdmin(query);
   }
 
   @Post(':id/disburse')

@@ -18,6 +18,7 @@ import {
   paginate,
 } from '../common/utils/pagination.util';
 import { MembershipListQueryDto } from './dto/membership-list-query.dto';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class MembershipService {
@@ -26,6 +27,7 @@ export class MembershipService {
     private readonly settingsPolicy: SettingsPolicyService,
     private readonly emailService: EmailService,
     private readonly notificationsService: NotificationsService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   async getMyMembership(userId: string) {
@@ -401,7 +403,7 @@ export class MembershipService {
     return updatedMembership;
   }
 
-  async reject(membershipId: string, remarks: string) {
+  async reject(membershipId: string, remarks: string, actorUserId: string) {
     const membership = await this.prisma.membership.findUnique({
       where: {
         id: membershipId,
@@ -420,6 +422,21 @@ export class MembershipService {
       data: {
         status: 'REJECTED',
         remarks,
+      },
+    });
+
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'MEMBERSHIP_REJECTED',
+      entityType: 'MEMBERSHIP',
+      entityId: membershipId,
+      oldValue: {
+        status: membership.status,
+        remarks: membership.remarks,
+      },
+      newValue: {
+        status: updated.status,
+        remarks: updated.remarks,
       },
     });
 

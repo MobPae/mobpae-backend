@@ -5,9 +5,16 @@ import { MembershipService } from './membership.service';
 import { SettingsModule } from '../settings/settings.module';
 import { EmailModule } from '../email/email.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [PrismaModule, SettingsModule, EmailModule, NotificationsModule],
+  imports: [
+    PrismaModule,
+    SettingsModule,
+    EmailModule,
+    NotificationsModule,
+    AuditLogsModule,
+  ],
   controllers: [MembershipController],
   providers: [MembershipService],
   exports: [MembershipService],

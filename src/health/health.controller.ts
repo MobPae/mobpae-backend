@@ -20,13 +20,6 @@ export class HealthController {
     },
   })
   async check() {
-    if (process.env.NODE_ENV === 'production') {
-      return {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-      };
-    }
-
     await this.prisma.$queryRaw`SELECT 1`;
 
     return {
