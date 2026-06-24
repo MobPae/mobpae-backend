@@ -263,6 +263,7 @@ export class DashboardService {
   async getEmployeeDashboard(employeeId: string) {
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
+      include: { employer: { select: { payrollDate: true, payrollCutoffDate: true } } },
     });
 
     if (!employee) {
@@ -342,6 +343,8 @@ export class DashboardService {
       advanceSettings,
       activeRequestStatus: latestRequest?.status || null,
       activeRepaymentStatus: repayment?.status || null,
+      payrollDay: employee.employer?.payrollDate ?? null,
+      payrollCutoffDate: employee.employer?.payrollCutoffDate ?? null,
     };
   }
 

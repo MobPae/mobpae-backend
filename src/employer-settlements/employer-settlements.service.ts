@@ -18,6 +18,25 @@ import {
 } from '../common/utils/pagination.util';
 import { EmployerSettlementListQueryDto } from './dto/employer-settlement-list-query.dto';
 
+/**
+ * Derives the correct settlement status from persisted data.
+ * Handles legacy rows where outstandingAmount=0 but status was never updated.
+ *   - totalAmount = 0  → NO_DUES  (payroll ran, no advances due that month)
+ *   - outstandingAmount = 0, totalAmount > 0  → PAID  (all dues collected)
+ *   - otherwise → keep persisted status
+ */
+function deriveStatus(s: {
+  status: string;
+  totalAmount: unknown;
+  outstandingAmount: unknown;
+}): string {
+  const total = Number(s.totalAmount);
+  const outstanding = Number(s.outstandingAmount);
+  if (total === 0) return 'NO_DUES';
+  if (outstanding === 0 && s.status !== 'PAID') return 'PAID';
+  return s.status;
+}
+
 @Injectable()
 export class EmployerSettlementsService {
   constructor(
@@ -82,7 +101,8 @@ export class EmployerSettlementsService {
       }),
     ]);
 
-    return paginate(data, total, page, limit);
+    const normalized = data.map((s) => ({ ...s, status: deriveStatus(s) as any }));
+    return paginate(normalized, total, page, limit);
   }
 
   /**
@@ -106,7 +126,7 @@ export class EmployerSettlementsService {
       throw new NotFoundException('Settlement not found');
     }
 
-    return settlement;
+    return { ...settlement, status: deriveStatus(settlement) as any };
   }
 
   /**
@@ -124,7 +144,7 @@ export class EmployerSettlementsService {
       throw new BadRequestException('Employer not found');
     }
 
-    return this.prisma.employerSettlement.findMany({
+    const settlements = await this.prisma.employerSettlement.findMany({
       where: {
         employerId: employer.id,
       },
@@ -132,6 +152,8 @@ export class EmployerSettlementsService {
         payrollMonth: 'desc',
       },
     });
+
+    return settlements.map((s) => ({ ...s, status: deriveStatus(s) as any }));
   }
 
   /**

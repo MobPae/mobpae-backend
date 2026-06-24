@@ -1025,16 +1025,41 @@ export class EmployeesService {
       throw new NotFoundException('Employer not found');
     }
 
-    return this.prisma.employee.findMany({
+    const employees = await this.prisma.employee.findMany({
       where: {
         employerId: employer.id,
       },
       include: {
         employer: true,
+        kycDocuments: { select: { status: true }, orderBy: { createdAt: 'desc' } },
+        bankAccount:  { select: { verified: true } },
       },
       orderBy: {
         createdAt: 'desc',
       },
+    });
+
+    return employees.map((emp) => {
+      // Derive kycStatus from documents
+      const hasVerified  = emp.kycDocuments.some(d => d.status === 'VERIFIED');
+      const hasPending   = emp.kycDocuments.some(d => d.status === 'PENDING');
+      const hasRejected  = emp.kycDocuments.some(d => d.status === 'REJECTED');
+      const kycStatus = emp.kycDocuments.length === 0
+        ? 'NOT_SUBMITTED'
+        : hasVerified ? 'VERIFIED'
+        : hasPending  ? 'PENDING'
+        : hasRejected ? 'REJECTED'
+        : 'PENDING';
+
+      // Derive bankAccountStatus
+      const bankAccountStatus = !emp.bankAccount
+        ? 'NOT_ADDED'
+        : emp.bankAccount.verified
+        ? 'VERIFIED'
+        : 'PENDING';
+
+      const { kycDocuments, bankAccount, ...rest } = emp;
+      return { ...rest, kycStatus, bankAccountStatus };
     });
   }
 

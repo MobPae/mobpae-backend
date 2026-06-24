@@ -40,6 +40,7 @@ import { SessionsModule } from './sessions/sessions.module';
 import { FilesModule } from './files/files.module';
 import { ReportsModule } from './reports/reports.module';
 import { BusinessJobsModule } from './business-jobs/business-jobs.module';
+import { AppInformationModule } from './app-information/app-information.module';
 
 @Module({
   imports: [
@@ -55,11 +56,8 @@ import { BusinessJobsModule } from './business-jobs/business-jobs.module';
         SMTP_SECURE: Joi.boolean()
           .truthy('true')
           .falsy('false')
-          .when('SMTP_PORT', {
-            is: 465,
-            then: (schema) => schema.valid(true).default(true),
-            otherwise: (schema) => schema.default(false),
-          }),
+          .default(false)
+          .optional(),
         MAIL_FROM: Joi.string().email().required(),
         MAIL_FROM_NAME: Joi.string().required(),
         FRONTEND_URL: Joi.string().uri().required(),
@@ -127,6 +125,8 @@ import { BusinessJobsModule } from './business-jobs/business-jobs.module';
     ReportsModule,
 
     BusinessJobsModule,
+
+    AppInformationModule,
   ],
   controllers: [AppController],
   providers: [

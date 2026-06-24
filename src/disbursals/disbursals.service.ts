@@ -265,12 +265,17 @@ export class DisbursalsService {
           throw new NotFoundException('Disbursal not found');
         }
 
+        // Status moves to REPAYMENT_SCHEDULED because the repayment record
+        // was just created in this same transaction. The SalaryRequest skips
+        // straight to REPAYMENT_SCHEDULED so the employee's 6-step timeline
+        // renders correctly. The Disbursal record itself holds the DISBURSED
+        // status for admin views.
         await tx.salaryRequest.update({
           where: {
             id: disbursal.salaryRequestId,
           },
           data: {
-            status: 'DISBURSED',
+            status: 'REPAYMENT_SCHEDULED',
           },
         });
 

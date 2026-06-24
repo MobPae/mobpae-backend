@@ -7,19 +7,29 @@ import * as path from 'path';
 export class EmailService {
   private readonly templateCache = new Map<string, string>();
 
-  private transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: process.env.SMTP_SECURE === 'true',
-    requireTLS: Number(process.env.SMTP_PORT) === 587,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    tls: {
-      rejectUnauthorized: true,
-    },
-  });
+  private _transporter: nodemailer.Transporter | null = null;
+
+  private get transporter(): nodemailer.Transporter {
+    if (!this._transporter) {
+      const port = Number(process.env.SMTP_PORT ?? 587);
+      const secure = process.env.SMTP_SECURE === 'true';
+      console.log(`[EmailService] Initialising SMTP transporter — host=${process.env.SMTP_HOST} port=${port} secure=${secure} user=${process.env.SMTP_USER}`);
+      this._transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port,
+        secure,
+        requireTLS: port === 587,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+        tls: {
+          rejectUnauthorized: false, // Allow self-signed certs in dev; prod certs should work fine
+        },
+      });
+    }
+    return this._transporter;
+  }
 
   /**
    * Simple template variable replacement
@@ -75,17 +85,23 @@ export class EmailService {
   }
 
   async sendEmail(to: string, subject: string, html: string) {
-    const info = await this.transporter.sendMail({
-      from: `"${process.env.MAIL_FROM_NAME}" <${process.env.MAIL_FROM}>`,
-      to,
-      subject,
-      html,
-    });
-
-    return {
-      messageId: info.messageId,
-      accepted: info.accepted,
-    };
+    console.log(`[EmailService] Sending email — to=${to} subject="${subject}"`);
+    try {
+      const info = await this.transporter.sendMail({
+        from: `"${process.env.MAIL_FROM_NAME}" <${process.env.MAIL_FROM}>`,
+        to,
+        subject,
+        html,
+      });
+      console.log(`[EmailService] Sent — messageId=${info.messageId} accepted=${JSON.stringify(info.accepted)}`);
+      return {
+        messageId: info.messageId,
+        accepted: info.accepted,
+      };
+    } catch (err) {
+      console.error(`[EmailService] FAILED to send email to ${to} — subject="${subject}"`, err);
+      throw err;
+    }
   }
 
   private async sendTemplateEmail(

@@ -399,6 +399,7 @@ enum RepaymentStatus {
 }
 
 enum EmployerSettlementStatus {
+  NO_DUES
   PENDING
   PARTIALLY_PAID
   PAID
@@ -443,4 +444,29 @@ enum NotificationType {
   SYSTEM
   EMAIL
   SMS
+}
+
+model AppInformation {
+  id        String          @id @default(uuid())
+  type      AppInfoType
+  title     String
+  content   String          @db.Text
+  version   String?
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([type])
+  @@index([type, isActive])
+  @@map("app_information")
+}
+
+enum AppInfoType {
+  ABOUT
+  PRIVACY_POLICY
+  TERMS_CONDITIONS
+  HOW_IT_WORKS
+  FAQ
+  CONTACT
+  WHATS_NEW
 }

@@ -130,6 +130,18 @@ export class NotificationsService {
   }
 
   /**
+   * Marks all notifications as read for a user.
+   */
+  async markAllAsRead(userId: string) {
+    const result = await this.prisma.notification.updateMany({
+      where: { userId, isRead: false },
+      data: { isRead: true },
+    });
+
+    return { updated: result.count };
+  }
+
+  /**
    * Creates a system notification.
    */
 

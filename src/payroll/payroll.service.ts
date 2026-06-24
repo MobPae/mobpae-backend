@@ -193,10 +193,30 @@ export class PayrollService {
       },
     });
 
+    // No eligible repayments — record a NO_DUES settlement for this month
     if (!repayments.length) {
-      throw new BadRequestException(
-        'No eligible repayments found for processing',
-      );
+      const settlement = await this.prisma.employerSettlement.create({
+        data: {
+          employerId,
+          payrollMonth,
+          principalAmount: 0,
+          interestAmount: 0,
+          lateFeeAmount: 0,
+          totalAmount: 0,
+          outstandingAmount: 0,
+          dueDate: new Date(),
+          status: 'NO_DUES' as any,
+        },
+      });
+      return {
+        employerId,
+        payrollMonth,
+        processedRepayments: 0,
+        settlementId: settlement.id,
+        settlementAmount: 0,
+        dueDate: settlement.dueDate,
+        noDues: true,
+      };
     }
 
     const principalAmount = repayments.reduce(

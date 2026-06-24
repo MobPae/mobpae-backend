@@ -15,6 +15,21 @@ import {
   SalaryRequestStatus,
   SelfieStatus,
 } from '@prisma/client';
+
+/**
+ * Local enum mirrors AppInfoType in schema.prisma.
+ * Replace with `import { AppInfoType } from '@prisma/client'` after `npx prisma generate`.
+ */
+const AppInfoType = {
+  ABOUT: 'ABOUT',
+  PRIVACY_POLICY: 'PRIVACY_POLICY',
+  TERMS_CONDITIONS: 'TERMS_CONDITIONS',
+  HOW_IT_WORKS: 'HOW_IT_WORKS',
+  FAQ: 'FAQ',
+  CONTACT: 'CONTACT',
+  WHATS_NEW: 'WHATS_NEW',
+} as const;
+type AppInfoType = (typeof AppInfoType)[keyof typeof AppInfoType];
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -983,6 +998,219 @@ async function upsertAuditLog(
   });
 }
 
+async function seedAppInformation() {
+  const entries: Array<{
+    type: AppInfoType;
+    title: string;
+    content: string;
+    version: string;
+  }> = [
+    {
+      type: AppInfoType.ABOUT,
+      title: 'About MobPae',
+      version: '1.0.0',
+      content: `MobPae is a salary advance platform that empowers employees to access a portion of their earned salary before payday — instantly, securely, and without any hidden charges.
+
+We partner with employers to offer this benefit as part of their employee wellness programme. Once your employer is onboarded, you can request an advance in minutes directly from the MobPae app.
+
+**Our Mission**
+To eliminate financial stress for working India by making salary advances simple, transparent, and accessible to every employee.
+
+**How We Work**
+MobPae works with your employer to offer salary advances against your earned salary. The advance amount is automatically deducted from your next salary, so there is nothing extra to pay separately.
+
+**Contact**
+Email: support@mobpae.com
+Website: https://mobpae.com`,
+    },
+    {
+      type: AppInfoType.PRIVACY_POLICY,
+      title: 'Privacy Policy',
+      version: '1.0.0',
+      content: `Last updated: June 2026
+
+MobPae ("we", "our", "us") is committed to protecting your personal information. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and services.
+
+**Information We Collect**
+- Personal identification: name, email address, phone number, employee code
+- Financial information: salary details, bank account information (for disbursal and repayment)
+- KYC documents: Aadhaar, PAN card, salary slips as required by law
+- Selfie / photo for identity verification
+- Device and usage data to improve the app experience
+
+**How We Use Your Information**
+- To process salary advance requests
+- To verify your identity and comply with KYC regulations
+- To communicate important updates about your requests
+- To improve our products and services
+
+**Data Security**
+We implement industry-standard security measures to protect your personal data. All sensitive data is encrypted in transit and at rest.
+
+**Data Sharing**
+We share your data only with your employer (for advance processing) and with regulated financial partners. We never sell your personal data to third parties.
+
+**Your Rights**
+You may request access to, correction of, or deletion of your personal data by contacting us at support@mobpae.com.
+
+**Contact**
+For privacy-related queries, email us at support@mobpae.com.`,
+    },
+    {
+      type: AppInfoType.TERMS_CONDITIONS,
+      title: 'Terms & Conditions',
+      version: '1.0.0',
+      content: `Last updated: June 2026
+
+Please read these Terms and Conditions carefully before using the MobPae application.
+
+**1. Acceptance of Terms**
+By accessing or using MobPae, you agree to be bound by these Terms. If you do not agree, please do not use the app.
+
+**2. Eligibility**
+You must be an employee of an employer that has been onboarded with MobPae and must have completed KYC verification to use salary advance services.
+
+**3. Salary Advance**
+- Advances are limited to a percentage of your salary as configured by your employer and MobPae.
+- Interest is charged on the advance amount from the request date to the repayment date, at the applicable annual rate displayed in the app.
+- Repayment is automatically deducted from your salary on the next payroll date.
+
+**4. Membership**
+Access to salary advances requires an active MobPae membership. Membership is subject to fees and validity periods displayed in the app.
+
+**5. KYC and Verification**
+You must provide accurate and up-to-date KYC documents. Providing false information may result in suspension of your account.
+
+**6. Prohibited Use**
+You may not use MobPae for any unlawful purpose or in violation of any applicable regulations.
+
+**7. Limitation of Liability**
+MobPae shall not be liable for any indirect, incidental, or consequential damages arising from your use of the service.
+
+**8. Changes to Terms**
+We reserve the right to modify these Terms at any time. Continued use of the app after changes constitutes acceptance.
+
+**Contact**
+For questions about these Terms, contact us at support@mobpae.com.`,
+    },
+    {
+      type: AppInfoType.HOW_IT_WORKS,
+      title: 'How It Works',
+      version: '1.0.0',
+      content: `Getting a salary advance with MobPae is simple and takes just a few minutes.
+
+**Step 1 — Sign Up**
+Your employer will send you an invitation to join MobPae. Download the app and log in with the credentials provided.
+
+**Step 2 — Complete KYC**
+Upload your Aadhaar, PAN card, and a recent salary slip. Take a selfie for identity verification. Our team reviews documents within 24 hours.
+
+**Step 3 — Add Bank Account**
+Link your bank account where you want the advance to be credited.
+
+**Step 4 — Activate Membership**
+Activate your MobPae membership to unlock salary advances.
+
+**Step 5 — Request an Advance**
+Select the amount you need (up to your approved limit), review the repayment details, and submit. Your employer approves the request.
+
+**Step 6 — Receive Money**
+Once approved, the advance is disbursed directly to your bank account.
+
+**Step 7 — Automatic Repayment**
+The advance plus applicable interest is automatically deducted from your next salary. No action needed from your side.`,
+    },
+    {
+      type: AppInfoType.FAQ,
+      title: 'Frequently Asked Questions',
+      version: '1.0.0',
+      content: `**Q: Who can use MobPae?**
+A: Any employee whose employer is registered and active on the MobPae platform. You will receive an invitation from your employer to join.
+
+**Q: How much can I borrow?**
+A: The advance limit is based on your salary and your employer's policy — typically up to 10% of your monthly salary, subject to a maximum limit.
+
+**Q: What are the charges?**
+A: MobPae charges a simple annual interest rate on the advance amount, calculated for the number of days between your request date and your payday. There are no processing fees or hidden charges.
+
+**Q: When is the advance repaid?**
+A: The advance (principal + interest) is automatically deducted from your salary on the next payroll date. You do not need to transfer money separately.
+
+**Q: What documents do I need?**
+A: Aadhaar card, PAN card, latest salary slip, and a live selfie for identity verification.
+
+**Q: How long does verification take?**
+A: KYC verification is typically completed within 24 hours of document submission.
+
+**Q: Can I take multiple advances?**
+A: Only one active advance is allowed at a time. Once your existing advance is fully repaid, you can apply for another.
+
+**Q: What if my request is rejected?**
+A: Your employer reviews and approves requests. If rejected, you will receive a notification with the reason. You can reapply once any issues are resolved.
+
+**Q: Is my data safe?**
+A: Yes. All data is encrypted and stored securely. We never share your personal information with third parties except as required to process your advance.
+
+**Q: How do I contact support?**
+A: Email us at support@mobpae.com and our team will respond within one business day.`,
+    },
+    {
+      type: AppInfoType.CONTACT,
+      title: 'Contact & Support',
+      version: '1.0.0',
+      content: `We are here to help. Reach out to us through any of the following channels.
+
+**Email Support**
+support@mobpae.com
+Response time: within 1 business day
+
+**Business Hours**
+Monday – Friday: 9:00 AM – 6:00 PM IST
+Saturday: 10:00 AM – 2:00 PM IST
+Sunday: Closed
+
+**Website**
+https://mobpae.com
+
+**For Employers**
+If you are an employer and want to onboard your company to MobPae, please submit an enquiry on our website or email us at support@mobpae.com.`,
+    },
+    {
+      type: AppInfoType.WHATS_NEW,
+      title: "What's New",
+      version: '2.0.0',
+      content: `**Version 2.0.0 — June 2026**
+
+- New app design with improved navigation
+- Faster KYC verification
+- Advance calculator with real-time repayment preview
+- Improved notification centre
+- Profile photo upload
+- Bug fixes and performance improvements
+
+**Version 1.0.0 — January 2026**
+
+- Initial launch
+- Salary advance requests
+- KYC document upload
+- Bank account linking
+- Membership activation`,
+    },
+  ];
+
+  // Cast needed until `npx prisma generate` is run locally after migration
+  const db = (prisma as any).appInformation;
+  for (const entry of entries) {
+    await db.upsert({
+      where: { type: entry.type },
+      update: { title: entry.title, content: entry.content, version: entry.version, isActive: true },
+      create: { type: entry.type, title: entry.title, content: entry.content, version: entry.version, isActive: true },
+    });
+  }
+
+  console.log('App information seeded.');
+}
+
 async function main() {
   console.log('Seeding MobPae demo data...');
 
@@ -1005,6 +1233,7 @@ async function main() {
   );
   await seedSettlements(employer.id, admin.id);
   await seedNotifications(admin.id, employerUser.id);
+  await seedAppInformation();
 
   console.log('Demo seed complete.');
   console.log(`Admin: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);

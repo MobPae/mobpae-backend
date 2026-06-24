@@ -64,6 +64,8 @@ export class KycDocumentsService {
         newValue: updatedDocument,
       });
 
+      await this.notifyAdminsKycSubmitted(employee.name, dto.documentType);
+
       return updatedDocument;
     }
 
@@ -83,7 +85,30 @@ export class KycDocumentsService {
       newValue: document,
     });
 
+    await this.notifyAdminsKycSubmitted(employee.name, dto.documentType);
+
     return document;
+  }
+
+  private async notifyAdminsKycSubmitted(employeeName: string, documentType: KycDocumentType) {
+    const admins = await this.prisma.user.findMany({
+      where: { role: 'ADMIN', isActive: true },
+      select: { id: true },
+    });
+    const docLabel = documentType === 'PAN' ? 'PAN Card'
+      : documentType === 'AADHAR' ? 'Aadhaar'
+      : documentType === 'SALARY_SLIP' ? 'Salary Slip'
+      : documentType;
+
+    await Promise.all(
+      admins.map((admin) =>
+        this.notificationsService.createSystemNotification(
+          admin.id,
+          'KYC Document Submitted',
+          `${employeeName} submitted ${docLabel} for verification.`,
+        ),
+      ),
+    );
   }
 
   async findByEmployee(employeeId: string) {

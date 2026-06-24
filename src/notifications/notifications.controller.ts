@@ -68,6 +68,14 @@ export class NotificationsController {
     return this.notificationsService.findByUser(userId);
   }
 
+  @Post('me/read-all')
+  @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
+  @ApiOperation({ summary: 'Mark all my notifications as read' })
+  @ApiResponse({ status: 200, schema: { example: { updated: 4 } } })
+  markAllAsRead(@Req() req: any) {
+    return this.notificationsService.markAllAsRead(req.user.userId);
+  }
+
   @Post(':id/read')
   @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
   markAsRead(@Param('id') id: string, @Req() req: any) {

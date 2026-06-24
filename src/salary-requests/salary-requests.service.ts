@@ -57,6 +57,11 @@ export class SalaryRequestsService {
       where: {
         userId,
       },
+      include: {
+        employer: {
+          select: { userId: true },
+        },
+      },
     });
 
     if (!employee) {
@@ -179,6 +184,15 @@ export class SalaryRequestsService {
       newValue: this.salaryRequestAuditValue(salaryRequest),
     });
 
+    // Notify employer so they know a request is waiting for their approval
+    if (employee.employer?.userId) {
+      await this.notificationsService.createSystemNotification(
+        employee.employer.userId,
+        'New Salary Advance Request',
+        `${employee.name} has submitted a salary advance request of ₹${Number(salaryRequest.amount).toLocaleString('en-IN')}. Please review and approve.`,
+      );
+    }
+
     try {
       await this.emailService.sendSalaryRequestSubmittedEmail({
         to: employee.email,
@@ -215,6 +229,9 @@ export class SalaryRequestsService {
       },
       include: {
         repayment: true,
+        disbursal: {
+          select: { disbursedAt: true },
+        },
       },
       orderBy: {
         createdAt: 'desc',
@@ -232,6 +249,7 @@ export class SalaryRequestsService {
           statusColor: this.getStatusColor(request.status),
           requestedAt: request.requestedAt,
           repaymentDate: request.repaymentDate,
+          disbursedAt: request.disbursal?.disbursedAt ?? null,
           interestAmount: Number(request.repayment.interestAmount),
           totalAmount: Number(request.repayment.totalAmount),
           interestDays: request.repayment.interestDays,
@@ -256,6 +274,7 @@ export class SalaryRequestsService {
         statusColor: this.getStatusColor(request.status),
         requestedAt: request.requestedAt,
         repaymentDate: request.repaymentDate,
+        disbursedAt: request.disbursal?.disbursedAt ?? null,
         interestAmount: projection.interestAmount,
         totalAmount: projection.totalAmount,
         interestDays: projection.interestDays,
@@ -480,6 +499,22 @@ export class SalaryRequestsService {
         'Your salary advance request has been approved.',
       );
     }
+
+    // Notify all admins so they can proceed with disbursal
+    const admins = await this.prisma.user.findMany({
+      where: { role: 'ADMIN', isActive: true },
+      select: { id: true },
+    });
+
+    await Promise.all(
+      admins.map((admin) =>
+        this.notificationsService.createSystemNotification(
+          admin.id,
+          'Salary Request Ready for Disbursal',
+          `A salary advance request from ${request.employee.name} has been approved by the employer and is ready for disbursal.`,
+        ),
+      ),
+    );
 
     try {
       await this.emailService.sendSalaryRequestApprovedEmail({
@@ -825,6 +860,9 @@ export class SalaryRequestsService {
       case 'DISBURSED':
         return 'Disbursed';
 
+      case 'REPAYMENT_SCHEDULED':
+        return 'Payment Scheduled';
+
       case 'REPAID':
         return 'Repaid';
 
@@ -849,6 +887,9 @@ export class SalaryRequestsService {
 
       case 'DISBURSED':
         return 'primary';
+
+      case 'REPAYMENT_SCHEDULED':
+        return 'info';
 
       case 'REPAID':
         return 'success';
