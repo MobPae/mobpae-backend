@@ -1,10 +1,8 @@
 import {
-  Body,
   Controller,
   Get,
   Param,
   Post,
-  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -12,7 +10,6 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { PayrollService } from './payroll.service';
-import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -38,21 +35,6 @@ export class PayrollController {
   }
 
   /**
-
- * Employer Process Payroll
-
- */
-
-  @Post('employer/process')
-  @Roles('EMPLOYER')
-  @ApiOperation({
-    summary: 'Process employer payroll recoveries',
-  })
-  processEmployerPayroll(@Req() req: any) {
-    return this.payrollService.processRecoveryForEmployer(req.user.userId);
-  }
-
-  /**
    * Employer Recoveries
    */
   @Get('employer/recoveries')
@@ -65,24 +47,7 @@ export class PayrollController {
   }
 
   /**
-   * Employer Payroll Settings
-   */
-  @Put('employer/settings')
-  @Roles('EMPLOYER')
-  @ApiOperation({
-    summary: 'Update payroll settings',
-  })
-  updateSettings(
-    @Req() req: any,
-
-    @Body()
-    dto: UpdatePayrollSettingsDto,
-  ) {
-    return this.payrollService.updateSettings(req.user.userId, dto);
-  }
-
-  /**
-   * Admin Payroll Processing
+   * Admin Recovery Settlement Generation
    *
    * Business Flow:
    * 1. Find all due repayments for employer.
@@ -93,7 +58,7 @@ export class PayrollController {
   @Post('process-recovery/:employerId')
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Process payroll recovery and generate settlement',
+    summary: 'Generate recovery settlement for an employer',
   })
   processRecovery(
     @Param('employerId')

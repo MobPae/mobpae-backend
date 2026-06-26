@@ -267,7 +267,50 @@ export class EmailService {
     payrollMonth: string;
     outstandingAmount: number;
     settlementId: string;
+    recoveries?: Array<{
+      employeeName: string;
+      employeeCode?: string | null;
+      salaryRequestId: string;
+      principalAmount: number;
+      interestAmount: number;
+      totalAmount: number;
+      dueDate: Date;
+    }>;
   }) {
+    const recoveryRows = data.recoveries?.length
+      ? data.recoveries
+          .map(
+            (recovery) => `
+              <tr>
+                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb;">
+                  <strong>${this.escapeHtml(recovery.employeeName)}</strong><br />
+                  <span style="color: #6b7280; font-size: 12px;">${this.escapeHtml(
+                    recovery.employeeCode ?? '-',
+                  )}</span>
+                </td>
+                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #6b7280;">${this.escapeHtml(
+                  recovery.salaryRequestId,
+                )}</td>
+                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${this.formatCurrency(
+                  recovery.principalAmount,
+                )}</td>
+                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${this.formatCurrency(
+                  recovery.interestAmount,
+                )}</td>
+                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: right;"><strong>${this.formatCurrency(
+                  recovery.totalAmount,
+                )}</strong></td>
+                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb;">${this.formatDate(
+                  recovery.dueDate,
+                )}</td>
+              </tr>`,
+          )
+          .join('')
+      : `
+              <tr>
+                <td colspan="6" style="padding: 12px 8px; color: #6b7280;">No employee-level recoveries linked to this settlement.</td>
+              </tr>`;
+
     return this.sendTemplateEmail(
       data.to,
       'MobPae Settlement Report',
@@ -278,6 +321,7 @@ export class EmailService {
         payrollMonth: data.payrollMonth,
         outstandingAmount: this.formatCurrency(data.outstandingAmount),
         settlementId: data.settlementId,
+        recoveryRows,
       },
     );
   }
@@ -513,5 +557,14 @@ export class EmailService {
 
   private formatCurrency(amount: number): string {
     return `₹${amount.toLocaleString('en-IN')}`;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
   }
 }

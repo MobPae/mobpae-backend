@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
 import { SettingsPolicyService } from '../settings/settings-policy.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
@@ -119,28 +118,6 @@ export class PayrollService {
     });
   }
 
-  async updateSettings(userId: string, dto: UpdatePayrollSettingsDto) {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (!employer) {
-      throw new BadRequestException('Employer not found');
-    }
-
-    return this.prisma.employer.update({
-      where: {
-        id: employer.id,
-      },
-      data: {
-        payrollDate: dto.payrollDate,
-        payrollCutoffDate: dto.payrollCutoffDate,
-      },
-    });
-  }
-
   async processRecovery(employerId: string, actorUserId?: string) {
     const employer = await this.prisma.employer.findUnique({
       where: {
@@ -182,6 +159,7 @@ export class PayrollService {
     const repayments = await this.prisma.repayment.findMany({
       where: {
         status: 'SCHEDULED',
+        settlementId: null,
         dueDate: {
           lte: today,
         },
@@ -239,30 +217,7 @@ export class PayrollService {
     settlementDueDate.setDate(settlementDueDate.getDate() + graceDays);
 
     const settlement = await this.prisma.$transaction(async (tx) => {
-      await tx.repayment.updateMany({
-        where: {
-          id: {
-            in: repayments.map((r) => r.id),
-          },
-        },
-        data: {
-          status: 'PAID',
-          paidDate: new Date(),
-        },
-      });
-
-      await tx.salaryRequest.updateMany({
-        where: {
-          id: {
-            in: repayments.map((r) => r.salaryRequestId),
-          },
-        },
-        data: {
-          status: 'REPAID',
-        },
-      });
-
-      return tx.employerSettlement.create({
+      const settlement = await tx.employerSettlement.create({
         data: {
           employerId,
           payrollMonth,
@@ -275,6 +230,20 @@ export class PayrollService {
           status: 'PENDING',
         },
       });
+
+      await tx.repayment.updateMany({
+        where: {
+          id: {
+            in: repayments.map((r) => r.id),
+          },
+          settlementId: null,
+        },
+        data: {
+          settlementId: settlement.id,
+        },
+      });
+
+      return settlement;
     });
 
     await this.auditLogsService.log({
@@ -321,17 +290,4 @@ export class PayrollService {
     };
   }
 
-  async processRecoveryForEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (!employer) {
-      throw new NotFoundException('Employer not found');
-    }
-
-    return this.processRecovery(employer.id, userId);
-  }
 }

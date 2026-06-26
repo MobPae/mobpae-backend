@@ -155,21 +155,24 @@ model Disbursal {
 }
 
 model Repayment {
-  id              String          @id @default(uuid())
-  salaryRequestId String          @unique
+  id              String              @id @default(uuid())
+  salaryRequestId String              @unique
+  settlementId    String?
   dueDate         DateTime
   paidDate        DateTime?
-  status          RepaymentStatus @default(SCHEDULED)
+  status          RepaymentStatus     @default(SCHEDULED)
   remarks         String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  interestAmount  Decimal         @default(0) @db.Decimal(12, 2)
-  interestDays    Int             @default(0)
-  interestRate    Decimal         @default(36) @db.Decimal(5, 2)
-  principalAmount Decimal         @default(0) @db.Decimal(12, 2)
-  totalAmount     Decimal         @default(0) @db.Decimal(12, 2)
-  salaryRequest   SalaryRequest   @relation(fields: [salaryRequestId], references: [id])
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  interestAmount  Decimal             @default(0) @db.Decimal(12, 2)
+  interestDays    Int                 @default(0)
+  interestRate    Decimal             @default(36) @db.Decimal(5, 2)
+  principalAmount Decimal             @default(0) @db.Decimal(12, 2)
+  totalAmount     Decimal             @default(0) @db.Decimal(12, 2)
+  salaryRequest   SalaryRequest       @relation(fields: [salaryRequestId], references: [id])
+  settlement      EmployerSettlement? @relation(fields: [settlementId], references: [id])
 
+  @@index([settlementId])
   @@index([status])
   @@index([dueDate])
   @@index([status, dueDate])
@@ -344,6 +347,7 @@ model EmployerSettlement {
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
   employer          Employer                 @relation(fields: [employerId], references: [id])
+  repayments        Repayment[]
 
   @@unique([employerId, payrollMonth])
   @@index([employerId])
@@ -447,14 +451,14 @@ enum NotificationType {
 }
 
 model AppInformation {
-  id        String          @id @default(uuid())
+  id        String      @id @default(uuid())
   type      AppInfoType
   title     String
-  content   String          @db.Text
+  content   String      @db.Text
   version   String?
-  isActive  Boolean         @default(true)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
   @@unique([type])
   @@index([type, isActive])

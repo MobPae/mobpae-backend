@@ -725,9 +725,6 @@ describe('critical MVP workflow unit coverage', () => {
       repayment: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      salaryRequest: {
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
       employerSettlement: {
         create: jest.fn().mockResolvedValue({
           id: 'settlement-1',
@@ -756,9 +753,12 @@ describe('critical MVP workflow unit coverage', () => {
 
     await service.processRecovery('employer-1', 'admin-1');
 
-    expect(tx.repayment.updateMany).toHaveBeenCalled();
-    expect(tx.salaryRequest.updateMany).toHaveBeenCalled();
     expect(tx.employerSettlement.create).toHaveBeenCalled();
+    expect(tx.repayment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ settlementId: 'settlement-1' }),
+      }),
+    );
     expect(audit.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'PAYROLL_RECOVERY_PROCESSED' }),
     );
@@ -776,6 +776,22 @@ describe('critical MVP workflow unit coverage', () => {
       status: 'PENDING',
       paidDate: null,
       referenceNumber: null,
+      repayments: [
+        {
+          id: 'repayment-1',
+          salaryRequestId: 'request-1',
+          principalAmount: 5000,
+          interestAmount: 50,
+          totalAmount: 5050,
+          dueDate: now,
+          salaryRequest: {
+            employee: {
+              name: 'Arjun',
+              employeeCode: 'EMP001',
+            },
+          },
+        },
+      ],
       employer: {
         companyName: 'Northstar',
         email: 'hr@northstar.com',
@@ -793,13 +809,38 @@ describe('critical MVP workflow unit coverage', () => {
             outstandingAmount: 0,
             referenceNumber: 'UTR123',
           }),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([]),
+      },
+      repayment: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      salaryRequest: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       employer: {
         findUnique: jest.fn().mockResolvedValue({ id: 'employer-1' }),
         update: jest.fn().mockResolvedValue({}),
       },
+      $transaction: jest.fn((callback) =>
+        callback({
+          employerSettlement: {
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            findUnique: jest.fn().mockResolvedValue({
+              ...settlement,
+              status: 'PAID',
+              paidDate: now,
+              outstandingAmount: 0,
+              referenceNumber: 'UTR123',
+            }),
+          },
+          repayment: {
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+          salaryRequest: {
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+        }),
+      ),
     };
     const email = mockEmail();
     const audit = mockAudit();

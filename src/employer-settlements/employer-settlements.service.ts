@@ -119,6 +119,18 @@ export class EmployerSettlementsService {
       },
       include: {
         employer: true,
+        repayments: {
+          include: {
+            salaryRequest: {
+              include: {
+                employee: true,
+              },
+            },
+          },
+          orderBy: {
+            dueDate: 'asc',
+          },
+        },
       },
     });
 
@@ -165,6 +177,9 @@ export class EmployerSettlementsService {
       where: {
         id,
       },
+      include: {
+        repayments: true,
+      },
     });
 
     if (!settlement) {
@@ -175,24 +190,67 @@ export class EmployerSettlementsService {
       return settlement;
     }
 
-    const transition = await this.prisma.employerSettlement.updateMany({
-      where: {
-        id,
-        status: {
-          not: 'PAID',
-        },
-      },
-      data: {
-        status: 'PAID',
-        paidDate: new Date(),
-        outstandingAmount: 0,
-        referenceNumber,
-      },
-    });
+    const paidDate = new Date();
+    const repaymentIds = settlement.repayments.map((repayment) => repayment.id);
+    const salaryRequestIds = settlement.repayments.map(
+      (repayment) => repayment.salaryRequestId,
+    );
 
-    const updatedSettlement = await this.prisma.employerSettlement.findUnique({
-      where: { id },
-    });
+    const { transition, updatedSettlement } = await this.prisma.$transaction(
+      async (tx) => {
+        const transition = await tx.employerSettlement.updateMany({
+          where: {
+            id,
+            status: {
+              not: 'PAID',
+            },
+          },
+          data: {
+            status: 'PAID',
+            paidDate,
+            outstandingAmount: 0,
+            referenceNumber,
+          },
+        });
+
+        if (transition.count > 0 && repaymentIds.length > 0) {
+          await tx.repayment.updateMany({
+            where: {
+              id: {
+                in: repaymentIds,
+              },
+              status: {
+                not: 'PAID',
+              },
+            },
+            data: {
+              status: 'PAID',
+              paidDate,
+            },
+          });
+
+          await tx.salaryRequest.updateMany({
+            where: {
+              id: {
+                in: salaryRequestIds,
+              },
+            },
+            data: {
+              status: 'REPAID',
+            },
+          });
+        }
+
+        const updatedSettlement = await tx.employerSettlement.findUnique({
+          where: { id },
+        });
+
+        return {
+          transition,
+          updatedSettlement,
+        };
+      },
+    );
 
     if (!updatedSettlement) {
       throw new NotFoundException('Settlement not found');
@@ -220,6 +278,8 @@ export class EmployerSettlementsService {
         outstandingAmount: Number(updatedSettlement.outstandingAmount),
         paidDate: updatedSettlement.paidDate?.toISOString() ?? null,
         referenceNumber: updatedSettlement.referenceNumber,
+        repaymentIds,
+        salaryRequestIds,
       },
     });
 
@@ -379,6 +439,18 @@ export class EmployerSettlementsService {
       },
       include: {
         employer: true,
+        repayments: {
+          include: {
+            salaryRequest: {
+              include: {
+                employee: true,
+              },
+            },
+          },
+          orderBy: {
+            dueDate: 'asc',
+          },
+        },
       },
     });
 
@@ -402,6 +474,15 @@ export class EmployerSettlementsService {
         payrollMonth: settlement.payrollMonth,
         outstandingAmount: Number(settlement.outstandingAmount),
         settlementId: settlement.id,
+        recoveries: settlement.repayments.map((repayment) => ({
+          employeeName: repayment.salaryRequest.employee.name,
+          employeeCode: repayment.salaryRequest.employee.employeeCode,
+          salaryRequestId: repayment.salaryRequestId,
+          principalAmount: Number(repayment.principalAmount),
+          interestAmount: Number(repayment.interestAmount),
+          totalAmount: Number(repayment.totalAmount),
+          dueDate: repayment.dueDate,
+        })),
       });
     } catch (error) {
       console.error('Failed to send settlement report email', error);
