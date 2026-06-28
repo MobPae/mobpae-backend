@@ -73,8 +73,11 @@ export class KycDocumentsController {
 
   @Get()
   @Roles('ADMIN')
-  findAll(@Query('status') status?: 'PENDING' | 'VERIFIED' | 'REJECTED') {
-    return this.kycDocumentsService.findAll(status);
+  findAll(
+    @Query('status') status?: 'PENDING' | 'VERIFIED' | 'REJECTED',
+    @Query('employeeId') employeeId?: string,
+  ) {
+    return this.kycDocumentsService.findAll({ status, employeeId });
   }
 
   @Post(':id/verify')

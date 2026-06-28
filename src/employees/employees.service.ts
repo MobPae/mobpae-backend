@@ -22,6 +22,7 @@ import {
   paginate,
 } from '../common/utils/pagination.util';
 import { EmployeeListQueryDto } from './dto/employee-list-query.dto';
+import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 
 @Injectable()
 export class EmployeesService {
@@ -81,8 +82,9 @@ export class EmployeesService {
       hashedPassword,
     );
 
-    console.log('TEMP EMPLOYEE LOGIN PASSWORD', {
+    this.logTemporaryEmployeePassword({
       employeeId: employee.id,
+      employeeCode: employee.employeeCode,
       email: dto.email,
       password: temporaryPassword,
     });
@@ -401,17 +403,15 @@ export class EmployeesService {
       (doc) => doc.documentType === 'SALARY_SLIP',
     );
 
-    const selfie = employee.selfieStatus === 'VERIFIED';
-
     return {
       pan,
       aadhar,
       salarySlip,
-      selfie,
+      selfie: employee.selfieStatus === 'VERIFIED',
       selfieStatus: employee.selfieStatus,
       selfieUrl: employee.selfieUrl,
       selfieVerifiedAt: employee.selfieVerifiedAt,
-      kycCompleted: pan && aadhar && salarySlip && selfie,
+      kycCompleted: pan && aadhar && salarySlip,
     };
   }
 
@@ -551,8 +551,9 @@ export class EmployeesService {
           password: temporaryPassword,
         });
 
-        console.log('TEMP EMPLOYEE LOGIN PASSWORD', {
+        this.logTemporaryEmployeePassword({
           employeeId: createdEmployee.id,
+          employeeCode: createdEmployee.employeeCode,
           email: employee.email,
           password: temporaryPassword,
         });
@@ -671,11 +672,21 @@ export class EmployeesService {
     /**
      * KYC Status
      */
+    const requiredKycVerified = REQUIRED_KYC_DOCUMENTS.every((type) =>
+      employee.kycDocuments.some(
+        (document) =>
+          document.documentType === type && document.status === 'VERIFIED',
+      ),
+    );
     const kycStatus =
-      employee.kycDocuments.length > 0 || employee.selfieUrl
-        ? employee.selfieStatus === 'VERIFIED'
-          ? 'SUBMITTED'
-          : employee.selfieStatus
+      employee.kycDocuments.length > 0
+        ? requiredKycVerified
+          ? 'VERIFIED'
+          : employee.kycDocuments.some(
+                (document) => document.status === 'REJECTED',
+              )
+            ? 'REJECTED'
+            : 'PENDING'
         : 'NOT_SUBMITTED';
 
     /**
@@ -719,7 +730,7 @@ export class EmployeesService {
       /**
        * Membership
        */
-      membershipActive: !!employee.membership,
+      membershipActive: employee.membership?.status === 'ACTIVE',
 
       /**
        * KYC & Bank
@@ -758,12 +769,13 @@ export class EmployeesService {
           document.documentType === type && document.status === 'VERIFIED',
       ),
     );
-    const selfieVerified = employee.selfieStatus === 'VERIFIED';
     const kycStatus =
-      requiredVerified && selfieVerified
+      requiredVerified
         ? 'VERIFIED'
-        : employee.kycDocuments.length > 0 || employee.selfieUrl
-          ? employee.selfieStatus === 'REJECTED'
+        : employee.kycDocuments.length > 0
+          ? employee.kycDocuments.some(
+                (document) => document.status === 'REJECTED',
+              )
             ? 'REJECTED'
             : 'PENDING'
           : 'NOT_SUBMITTED';
@@ -1132,6 +1144,20 @@ export class EmployeesService {
 
   private generateTemporaryPassword() {
     return `MobPae-${randomBytes(8).toString('hex')}!1`;
+  }
+
+  private logTemporaryEmployeePassword(data: {
+    employeeId: string;
+    employeeCode: string;
+    email: string;
+    password: string;
+  }) {
+    console.log('\n================ EMPLOYEE LOGIN CREDENTIALS ================');
+    console.log(`Employee ID   : ${data.employeeId}`);
+    console.log(`Employee Code : ${data.employeeCode}`);
+    console.log(`Email         : ${data.email}`);
+    console.log(`Password      : ${data.password}`);
+    console.log('============================================================\n');
   }
 
   private async sendEmployeeCreatedEmail(

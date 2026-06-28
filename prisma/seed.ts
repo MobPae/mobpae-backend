@@ -86,6 +86,13 @@ async function seedSettings() {
     ['allowRequestWithOutstandingBalance', 'false'],
     ['MEMBERSHIP_AMOUNT', '449'],
     ['MEMBERSHIP_VALIDITY_DAYS', '365'],
+    ['MEMBERSHIP_PAYMENT_UPI_ID', 'jyotirmoy.upd@okicici'],
+    ['MEMBERSHIP_PAYMENT_QR_URL', 'uploads/payment/googlepay-membership-qr.png'],
+    ['MEMBERSHIP_PAYMENT_BENEFICIARY', 'Jyotirmoy Upadhaya'],
+    [
+      'MEMBERSHIP_PAYMENT_INSTRUCTIONS',
+      'Pay the membership fee using UPI and upload the screenshot for verification.',
+    ],
     ['EMPLOYER_GRACE_DAYS', '3'],
     ['EMPLOYER_LATE_FEE_PERCENTAGE', '30'],
   ];
@@ -1103,7 +1110,7 @@ For questions about these Terms, contact us at support@mobpae.com.`,
 Your employer will send you an invitation to join MobPae. Download the app and log in with the credentials provided.
 
 **Step 2 — Complete KYC**
-Upload your Aadhaar, PAN card, and a recent salary slip. Take a selfie for identity verification. Our team reviews documents within 24 hours.
+Upload your Aadhaar, PAN card, and a recent salary slip. Our team reviews documents within 24 hours.
 
 **Step 3 — Add Bank Account**
 Link your bank account where you want the advance to be credited.
@@ -1137,7 +1144,7 @@ A: MobPae charges a simple annual interest rate on the advance amount, calculate
 A: The advance (principal + interest) is automatically deducted from your salary on the next payroll date. You do not need to transfer money separately.
 
 **Q: What documents do I need?**
-A: Aadhaar card, PAN card, latest salary slip, and a live selfie for identity verification.
+A: Aadhaar card, PAN card, and latest salary slip.
 
 **Q: How long does verification take?**
 A: KYC verification is typically completed within 24 hours of document submission.

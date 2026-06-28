@@ -347,7 +347,7 @@ describe('Backend stabilization fixes', () => {
         }),
         update: jest.fn().mockResolvedValue({
           id: 'membership-1',
-          status: 'REJECTED',
+          status: 'PENDING',
           remarks: 'Payment failed',
         }),
       },

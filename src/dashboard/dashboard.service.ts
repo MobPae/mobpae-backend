@@ -330,7 +330,7 @@ export class DashboardService {
         kycDocuments.some(
           (doc) => doc.documentType === type && doc.status === 'VERIFIED',
         ),
-      ) && employee.selfieStatus === 'VERIFIED';
+      );
 
     return {
       employeeName: employee?.name,

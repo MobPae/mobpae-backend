@@ -112,18 +112,11 @@ export class KycDocumentsService {
   }
 
   async findByEmployee(employeeId: string) {
-    return this.prisma.kycDocument.findMany({
-      where: {
-        employeeId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    return this.findAll({ employeeId });
   }
 
   async findPending() {
-    return this.findAll('PENDING');
+    return this.findAll({ status: 'PENDING' });
   }
 
   async findPendingByEmployer() {
@@ -234,21 +227,16 @@ export class KycDocumentsService {
       const requiredDocuments = REQUIRED_KYC_DOCUMENTS.map(
         (type) => documents[type],
       );
-      const selfieSubmitted = Boolean(employee.selfieUrl);
-      const selfiePending = employee.selfieStatus === 'PENDING';
-      const selfieVerified = employee.selfieStatus === 'VERIFIED';
-      const selfieRejected = employee.selfieStatus === 'REJECTED';
-      const submittedCount =
-        requiredDocuments.filter(Boolean).length + (selfieSubmitted ? 1 : 0);
+      const submittedCount = requiredDocuments.filter(Boolean).length;
       const pendingCount =
         requiredDocuments.filter((document) => document?.status === 'PENDING')
-          .length + (selfieSubmitted && selfiePending ? 1 : 0);
+          .length;
       const verifiedCount =
         requiredDocuments.filter((document) => document?.status === 'VERIFIED')
-          .length + (selfieVerified ? 1 : 0);
+          .length;
       const rejectedCount =
         requiredDocuments.filter((document) => document?.status === 'REJECTED')
-          .length + (selfieRejected ? 1 : 0);
+          .length;
 
       return {
         employeeId: employee.id,
@@ -268,25 +256,21 @@ export class KycDocumentsService {
         pendingCount,
         verifiedCount,
         rejectedCount,
-        requiredCount: REQUIRED_KYC_DOCUMENTS.length + 1,
-        documents: {
-          ...documents,
-          SELFIE: employee.selfieUrl
-            ? {
-                status: employee.selfieStatus,
-                filePath: employee.selfieUrl,
-                verifiedAt: employee.selfieVerifiedAt,
-                updatedAt: employee.updatedAt,
-              }
-            : null,
-        },
+        requiredCount: REQUIRED_KYC_DOCUMENTS.length,
+        documents,
       };
     });
   }
 
-  async findAll(status?: 'PENDING' | 'VERIFIED' | 'REJECTED') {
+  async findAll(filters: {
+    status?: 'PENDING' | 'VERIFIED' | 'REJECTED';
+    employeeId?: string;
+  } = {}) {
     return this.prisma.kycDocument.findMany({
-      where: status ? { status } : undefined,
+      where: {
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
+      },
       include: {
         employee: {
           include: {
@@ -473,7 +457,7 @@ export class KycDocumentsService {
       return 'NOT_SUBMITTED';
     }
 
-    if (counts.verifiedCount === REQUIRED_KYC_DOCUMENTS.length + 1) {
+    if (counts.verifiedCount === REQUIRED_KYC_DOCUMENTS.length) {
       return 'VERIFIED';
     }
 

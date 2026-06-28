@@ -49,9 +49,7 @@ export class SalaryLimitsService {
       (doc) => doc.documentType === 'SALARY_SLIP',
     );
 
-    if (
-      !(pan && aadhar && salarySlip && employee.selfieStatus === 'VERIFIED')
-    ) {
+    if (!(pan && aadhar && salarySlip)) {
       throw new BadRequestException('Employee KYC is not completed');
     }
 

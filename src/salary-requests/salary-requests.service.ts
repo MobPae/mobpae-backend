@@ -98,7 +98,7 @@ export class SalaryRequestsService {
       const kycCompleted =
         REQUIRED_KYC_DOCUMENTS.every((type) =>
           verifiedDocs.some((doc) => doc.documentType === type),
-        ) && employee.selfieStatus === 'VERIFIED';
+        );
 
       if (!kycCompleted) {
         throw new BadRequestException('Employee KYC is not completed');
@@ -706,13 +706,21 @@ export class SalaryRequestsService {
      */
     const annualInterestRate = Number(settings.interestChargePercentage);
 
+    const requestDate = new Date();
+    const payrollCutoffDate = employee.employer.payrollCutoffDate;
+    const payrollDate = employee.employer.payrollDate;
+
     const repayment = PayrollUtil.calculateRepayment(
       amount,
-      new Date(),
-      employee.employer.payrollCutoffDate,
-      employee.employer.payrollDate,
+      requestDate,
+      payrollCutoffDate,
+      payrollDate,
       annualInterestRate,
     );
+    const isNextCycleRecovery = requestDate.getDate() >= payrollCutoffDate;
+    const cycleMessage = isNextCycleRecovery
+      ? 'Payroll cutoff has passed. This advance will be recovered in the next salary cycle.'
+      : 'This advance will be recovered in the current salary cycle.';
 
     /**
      * Employee App Preview Response
@@ -743,6 +751,11 @@ export class SalaryRequestsService {
        */
       totalRecovery: repayment.totalAmount,
       recoveryDate: repayment.dueDate,
+      payrollDate,
+      payrollCutoffDate,
+      isNextCycleRecovery,
+      cycleMessage,
+      nextEligibleAfter: repayment.dueDate,
 
       /**
        * Additional Information

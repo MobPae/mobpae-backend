@@ -240,19 +240,6 @@ export class MembershipService {
     endDate.setDate(endDate.getDate() + validityDays);
 
     const membership = await this.prisma.$transaction(async (tx) => {
-      if (couponCode) {
-        await tx.membershipCoupon.update({
-          where: {
-            code: couponCode,
-          },
-          data: {
-            usedCount: {
-              increment: 1,
-            },
-          },
-        });
-      }
-
       return tx.membership.upsert({
         where: {
           employeeId: employee.id,
@@ -267,10 +254,10 @@ export class MembershipService {
           startDate,
           endDate,
 
-          status: 'ACTIVE',
+          status: 'PENDING',
 
-          verifiedAt: new Date(),
-          verifiedBy: 'SYSTEM',
+          verifiedAt: null,
+          verifiedBy: null,
 
           paymentReference: dto.paymentReference ?? null,
 
@@ -292,10 +279,10 @@ export class MembershipService {
           startDate,
           endDate,
 
-          status: 'ACTIVE',
+          status: 'PENDING',
 
-          verifiedAt: new Date(),
-          verifiedBy: 'SYSTEM',
+          verifiedAt: null,
+          verifiedBy: null,
 
           paymentReference: dto.paymentReference ?? null,
 
@@ -306,7 +293,7 @@ export class MembershipService {
 
     return {
       success: true,
-      message: 'Membership activated successfully',
+      message: 'Membership payment submitted for verification',
       membership,
     };
   }
@@ -420,7 +407,7 @@ export class MembershipService {
         id: membershipId,
       },
       data: {
-        status: 'REJECTED',
+        status: 'PENDING',
         remarks,
       },
     });
@@ -444,7 +431,8 @@ export class MembershipService {
       await this.notificationsService.createSystemNotification(
         membership.employee.userId,
         'Membership Not Approved',
-        remarks || 'Your membership request was not approved.',
+        remarks ||
+          'Your membership payment proof needs an update. Please upload it again.',
       ).catch((err) => console.error('Membership rejected notification error', err));
     }
 
@@ -660,6 +648,10 @@ export class MembershipService {
             'MEMBERSHIP_SUBTITLE',
             'FREE_PLAN_TITLE',
             'FREE_PLAN_SUBTITLE',
+            'MEMBERSHIP_PAYMENT_UPI_ID',
+            'MEMBERSHIP_PAYMENT_QR_URL',
+            'MEMBERSHIP_PAYMENT_BENEFICIARY',
+            'MEMBERSHIP_PAYMENT_INSTRUCTIONS',
           ],
         },
       },
@@ -691,6 +683,16 @@ export class MembershipService {
       membershipBenefits: getValue('MEMBERSHIP_BENEFITS')
         ? JSON.parse(getValue('MEMBERSHIP_BENEFITS')!)
         : [],
+
+      payment: {
+        upiId: getValue('MEMBERSHIP_PAYMENT_UPI_ID') ?? '',
+        qrUrl: getValue('MEMBERSHIP_PAYMENT_QR_URL') ?? '',
+        beneficiaryName:
+          getValue('MEMBERSHIP_PAYMENT_BENEFICIARY') ?? 'MobPae',
+        instructions:
+          getValue('MEMBERSHIP_PAYMENT_INSTRUCTIONS') ??
+          'Pay using UPI and upload the payment screenshot for admin verification.',
+      },
     };
   }
 
