@@ -163,10 +163,7 @@ export class EmployeesService {
           ? error.meta.target
           : [];
 
-        if (
-          target.includes('employerId') &&
-          target.includes('employeeCode')
-        ) {
+        if (target.includes('employerId') && target.includes('employeeCode')) {
           throw new ConflictException(
             'Employee code already exists for this employer',
           );
@@ -769,16 +766,15 @@ export class EmployeesService {
           document.documentType === type && document.status === 'VERIFIED',
       ),
     );
-    const kycStatus =
-      requiredVerified
-        ? 'VERIFIED'
-        : employee.kycDocuments.length > 0
-          ? employee.kycDocuments.some(
-                (document) => document.status === 'REJECTED',
-              )
-            ? 'REJECTED'
-            : 'PENDING'
-          : 'NOT_SUBMITTED';
+    const kycStatus = requiredVerified
+      ? 'VERIFIED'
+      : employee.kycDocuments.length > 0
+        ? employee.kycDocuments.some(
+            (document) => document.status === 'REJECTED',
+          )
+          ? 'REJECTED'
+          : 'PENDING'
+        : 'NOT_SUBMITTED';
 
     return {
       id: employee.id,
@@ -1043,8 +1039,11 @@ export class EmployeesService {
       },
       include: {
         employer: true,
-        kycDocuments: { select: { status: true }, orderBy: { createdAt: 'desc' } },
-        bankAccount:  { select: { verified: true } },
+        kycDocuments: {
+          select: { status: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        bankAccount: { select: { verified: true } },
       },
       orderBy: {
         createdAt: 'desc',
@@ -1053,22 +1052,26 @@ export class EmployeesService {
 
     return employees.map((emp) => {
       // Derive kycStatus from documents
-      const hasVerified  = emp.kycDocuments.some(d => d.status === 'VERIFIED');
-      const hasPending   = emp.kycDocuments.some(d => d.status === 'PENDING');
-      const hasRejected  = emp.kycDocuments.some(d => d.status === 'REJECTED');
-      const kycStatus = emp.kycDocuments.length === 0
-        ? 'NOT_SUBMITTED'
-        : hasVerified ? 'VERIFIED'
-        : hasPending  ? 'PENDING'
-        : hasRejected ? 'REJECTED'
-        : 'PENDING';
+      const hasVerified = emp.kycDocuments.some((d) => d.status === 'VERIFIED');
+      const hasPending = emp.kycDocuments.some((d) => d.status === 'PENDING');
+      const hasRejected = emp.kycDocuments.some((d) => d.status === 'REJECTED');
+      const kycStatus =
+        emp.kycDocuments.length === 0
+          ? 'NOT_SUBMITTED'
+          : hasVerified
+            ? 'VERIFIED'
+            : hasPending
+              ? 'PENDING'
+              : hasRejected
+                ? 'REJECTED'
+                : 'PENDING';
 
       // Derive bankAccountStatus
       const bankAccountStatus = !emp.bankAccount
         ? 'NOT_ADDED'
         : emp.bankAccount.verified
-        ? 'VERIFIED'
-        : 'PENDING';
+          ? 'VERIFIED'
+          : 'PENDING';
 
       const { kycDocuments, bankAccount, ...rest } = emp;
       return { ...rest, kycStatus, bankAccountStatus };
@@ -1107,6 +1110,92 @@ export class EmployeesService {
         'Only JPG, PNG and WebP images are allowed',
       );
     }
+  }
+
+  async getPeerActivity(userId: string) {
+    // Resolve current employee → employerId
+    const me = await this.prisma.employee.findUnique({
+      where: { userId },
+      select: { id: true, employerId: true },
+    });
+
+    if (!me) throw new NotFoundException('Employee not found');
+
+    const { employerId, id: myId } = me;
+
+    // Total employees in this company (excluding self)
+    const totalEmployees = await this.prisma.employee.count({
+      where: { employerId, id: { not: myId } },
+    });
+
+    // Employees who have had at least one advance disbursed/repaid
+    const activeUsers = await this.prisma.employee.count({
+      where: {
+        employerId,
+        id: { not: myId },
+        salaryRequests: {
+          some: {
+            status: {
+              in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'],
+            },
+          },
+        },
+      },
+    });
+
+    // Recent activity from peers — last 5 disbursed/repaid requests
+    const recentRequests = await this.prisma.salaryRequest.findMany({
+      where: {
+        employerId,
+        employeeId: { not: myId },
+        status: { in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+      select: {
+        status: true,
+        updatedAt: true,
+        employee: {
+          select: { name: true },
+        },
+      },
+    });
+
+    const actionLabel: Record<string, string> = {
+      DISBURSED: 'received their first advance',
+      REPAYMENT_SCHEDULED: 'is on their repayment plan',
+      REPAID: 'completed their repayment',
+    };
+
+    const recentActivity = recentRequests.map((r) => {
+      const parts = (r.employee.name ?? '').trim().split(/\s+/);
+      const firstName = parts[0] ?? 'A colleague';
+      const lastInitial =
+        parts.length > 1 ? `${parts[parts.length - 1][0]}.` : '';
+      const displayName = lastInitial
+        ? `${firstName} ${lastInitial}`
+        : firstName;
+
+      const daysAgo = Math.floor(
+        (Date.now() - new Date(r.updatedAt).getTime()) / 86_400_000,
+      );
+
+      return {
+        displayName,
+        action: actionLabel[r.status] ?? 'used MobPae',
+        daysAgo,
+      };
+    });
+
+    return {
+      totalEmployees,
+      activeUsers,
+      percentageActive:
+        totalEmployees > 0
+          ? Math.round((activeUsers / totalEmployees) * 100)
+          : 0,
+      recentActivity,
+    };
   }
 
   private async writeAuditLog(data: {
@@ -1152,12 +1241,16 @@ export class EmployeesService {
     email: string;
     password: string;
   }) {
-    console.log('\n================ EMPLOYEE LOGIN CREDENTIALS ================');
+    console.log(
+      '\n================ EMPLOYEE LOGIN CREDENTIALS ================',
+    );
     console.log(`Employee ID   : ${data.employeeId}`);
     console.log(`Employee Code : ${data.employeeCode}`);
     console.log(`Email         : ${data.email}`);
     console.log(`Password      : ${data.password}`);
-    console.log('============================================================\n');
+    console.log(
+      '============================================================\n',
+    );
   }
 
   private async sendEmployeeCreatedEmail(

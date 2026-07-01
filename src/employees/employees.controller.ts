@@ -76,6 +76,16 @@ export class EmployeesController {
     return this.employeesService.getProfile(req.user.userId);
   }
 
+  @Get('me/peer-activity')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary:
+      'Anonymised peer activity from the same employer — social proof for the employee dashboard',
+  })
+  getPeerActivity(@Req() req: any) {
+    return this.employeesService.getPeerActivity(req.user.userId);
+  }
+
   @Post('profile-photo')
   @Roles('EMPLOYEE')
   @ApiOperation({
