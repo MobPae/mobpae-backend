@@ -387,6 +387,53 @@ export class MembershipService {
       console.error('Failed to send membership approved email', err);
     }
 
+    // Auto-advance any AWAITING_MEMBERSHIP_PAYMENT salary requests to READY_FOR_DISBURSAL
+    const waitingRequests = await this.prisma.salaryRequest.findMany({
+      where: {
+        employeeId: membership.employeeId,
+        status: 'AWAITING_MEMBERSHIP_PAYMENT',
+      },
+      include: { employee: true },
+    });
+
+    if (waitingRequests.length > 0) {
+      await this.prisma.salaryRequest.updateMany({
+        where: {
+          employeeId: membership.employeeId,
+          status: 'AWAITING_MEMBERSHIP_PAYMENT',
+        },
+        data: { status: 'READY_FOR_DISBURSAL' },
+      });
+
+      // Notify employee that their advance request is now ready for disbursal
+      if (updatedMembership.employee?.userId) {
+        await this.notificationsService.createSystemNotification(
+          updatedMembership.employee.userId,
+          'Advance Request Ready for Disbursal',
+          'Your membership is now active. Your salary advance request has been moved to Ready for Disbursal.',
+        ).catch((err) => console.error('Advance ready notification error', err));
+      }
+
+      // Notify all admins to disburse
+      const admins = await this.prisma.user.findMany({
+        where: { role: 'ADMIN', isActive: true },
+        select: { id: true },
+      });
+
+      const employee = waitingRequests[0]?.employee;
+      if (employee) {
+        await Promise.all(
+          admins.map((admin) =>
+            this.notificationsService.createSystemNotification(
+              admin.id,
+              'Salary Request Ready for Disbursal',
+              `${employee.name}'s membership has been activated. Their salary advance request is now ready for disbursal.`,
+            ).catch((err) => console.error('Admin disbursal notification error', err)),
+          ),
+        );
+      }
+    }
+
     return updatedMembership;
   }
 

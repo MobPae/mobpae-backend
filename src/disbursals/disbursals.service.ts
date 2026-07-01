@@ -59,8 +59,23 @@ export class DisbursalsService {
       );
     }
 
-    if (salaryRequest.status !== 'EMPLOYER_APPROVED') {
-      throw new BadRequestException('Salary request is not approved');
+    if (salaryRequest.status !== 'READY_FOR_DISBURSAL') {
+      throw new BadRequestException(
+        'Salary request is not ready for disbursal. Employer approval and active membership are required.',
+      );
+    }
+
+    // Guard: employee must have an active membership before disbursal is created
+    const membership = await this.prisma.membership.findUnique({
+      where: { employeeId: salaryRequest.employeeId },
+    });
+    const membershipActive =
+      membership?.status === 'ACTIVE' &&
+      membership.endDate > new Date();
+    if (!membershipActive) {
+      throw new BadRequestException(
+        'Employee does not have an active membership. Disbursal cannot proceed.',
+      );
     }
 
     const disbursal = await this.prisma.disbursal.upsert({
@@ -74,15 +89,13 @@ export class DisbursalsService {
       },
     });
 
-    await this.prisma.salaryRequest.update({
-      where: {
-        id: salaryRequest.id,
-      },
-      data: {
-        status: 'READY_FOR_DISBURSAL',
-        approvedAmount: salaryRequest.approvedAmount ?? salaryRequest.amount,
-      },
-    });
+    // Status is already READY_FOR_DISBURSAL; only sync approvedAmount if missing
+    if (!salaryRequest.approvedAmount) {
+      await this.prisma.salaryRequest.update({
+        where: { id: salaryRequest.id },
+        data: { approvedAmount: salaryRequest.amount },
+      });
+    }
 
     await this.writeAuditLog({
       userId: actorUserId,

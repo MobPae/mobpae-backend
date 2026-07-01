@@ -95,10 +95,9 @@ export class SalaryRequestsService {
         },
       });
 
-      const kycCompleted =
-        REQUIRED_KYC_DOCUMENTS.every((type) =>
-          verifiedDocs.some((doc) => doc.documentType === type),
-        );
+      const kycCompleted = REQUIRED_KYC_DOCUMENTS.every((type) =>
+        verifiedDocs.some((doc) => doc.documentType === type),
+      );
 
       if (!kycCompleted) {
         throw new BadRequestException('Employee KYC is not completed');
@@ -121,12 +120,6 @@ export class SalaryRequestsService {
       }
     }
 
-    const membershipActive = await this.membershipService.isActive(employee.id);
-
-    if (!membershipActive) {
-      throw new BadRequestException('Employee membership is not active');
-    }
-
     if (!settings.allowMultipleRequestsPerCycle) {
       const activeRequest = await this.prisma.salaryRequest.findFirst({
         where: {
@@ -135,6 +128,7 @@ export class SalaryRequestsService {
             in: [
               'SUBMITTED',
               'EMPLOYER_APPROVED',
+              'AWAITING_MEMBERSHIP_PAYMENT',
               'READY_FOR_DISBURSAL',
               'DISBURSED',
               'REPAYMENT_SCHEDULED',
@@ -417,22 +411,17 @@ export class SalaryRequestsService {
    * Employer approval of salary advance request.
    *
    * Business Flow:
-   * 1. Validate request exists.
+   * 1. Validate request exists and belongs to employer.
    * 2. Validate request is in SUBMITTED status.
-   * 3. Update status to EMPLOYER_APPROVED.
-   * 4. Notify employee.
-   *
-   * Result:
-   * Request becomes eligible for disbursal.
+   * 3. Check if employee has an active membership.
+   *    - Active membership  → transition directly to READY_FOR_DISBURSAL, notify admins.
+   *    - No membership      → transition to AWAITING_MEMBERSHIP_PAYMENT, prompt employee to pay.
+   * 4. Audit log + notifications.
    */
   async approve(id: string, userId: string) {
     const request = await this.prisma.salaryRequest.findUnique({
-      where: {
-        id,
-      },
-      include: {
-        employee: true,
-      },
+      where: { id },
+      include: { employee: true },
     });
 
     if (!request) {
@@ -440,9 +429,7 @@ export class SalaryRequestsService {
     }
 
     const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
+      where: { userId },
     });
 
     if (!employer) {
@@ -453,7 +440,12 @@ export class SalaryRequestsService {
       throw new BadRequestException('Unauthorized request access');
     }
 
-    if (request.status === 'EMPLOYER_APPROVED') {
+    // Idempotency: already past approval stage
+    if (
+      request.status === 'EMPLOYER_APPROVED' ||
+      request.status === 'AWAITING_MEMBERSHIP_PAYMENT' ||
+      request.status === 'READY_FOR_DISBURSAL'
+    ) {
       return request;
     }
 
@@ -461,14 +453,17 @@ export class SalaryRequestsService {
       throw new BadRequestException('Only submitted requests can be approved');
     }
 
+    // Determine target status based on membership before writing to DB
+    const membershipActive = await this.membershipService.isActive(
+      request.employee.id,
+    );
+    const targetStatus = membershipActive
+      ? 'READY_FOR_DISBURSAL'
+      : 'AWAITING_MEMBERSHIP_PAYMENT';
+
     const transition = await this.prisma.salaryRequest.updateMany({
-      where: {
-        id,
-        status: 'SUBMITTED',
-      },
-      data: {
-        status: 'EMPLOYER_APPROVED',
-      },
+      where: { id, status: 'SUBMITTED' },
+      data: { status: targetStatus },
     });
 
     const updatedRequest = await this.prisma.salaryRequest.findUnique({
@@ -480,10 +475,12 @@ export class SalaryRequestsService {
     }
 
     if (transition.count === 0) {
-      if (updatedRequest.status === 'EMPLOYER_APPROVED') {
+      if (
+        updatedRequest.status === 'AWAITING_MEMBERSHIP_PAYMENT' ||
+        updatedRequest.status === 'READY_FOR_DISBURSAL'
+      ) {
         return updatedRequest;
       }
-
       throw new BadRequestException('Only submitted requests can be approved');
     }
 
@@ -496,39 +493,68 @@ export class SalaryRequestsService {
       newValue: this.salaryRequestAuditValue(updatedRequest),
     });
 
-    if (request.employee.userId) {
-      await this.notificationsService.createSystemNotification(
-        request.employee.userId,
-        'Salary Request Approved',
-        'Your salary advance request has been approved.',
-      );
-    }
+    if (membershipActive) {
+      // Membership active → READY_FOR_DISBURSAL
+      if (request.employee.userId) {
+        await this.notificationsService.createSystemNotification(
+          request.employee.userId,
+          'Salary Request Approved',
+          'Your salary advance request has been approved and is ready for disbursal.',
+        );
+      }
 
-    // Notify all admins so they can proceed with disbursal
-    const admins = await this.prisma.user.findMany({
-      where: { role: 'ADMIN', isActive: true },
-      select: { id: true },
-    });
-
-    await Promise.all(
-      admins.map((admin) =>
-        this.notificationsService.createSystemNotification(
-          admin.id,
-          'Salary Request Ready for Disbursal',
-          `A salary advance request from ${request.employee.name} has been approved by the employer and is ready for disbursal.`,
-        ),
-      ),
-    );
-
-    try {
-      await this.emailService.sendSalaryRequestApprovedEmail({
-        to: request.employee.email,
-        employeeName: request.employee.name,
-        amount: Number(updatedRequest.approvedAmount ?? updatedRequest.amount),
-        approvedDate: new Date(),
+      const admins = await this.prisma.user.findMany({
+        where: { role: 'ADMIN', isActive: true },
+        select: { id: true },
       });
-    } catch (error) {
-      console.error('Failed to send salary request approved email', error);
+
+      await Promise.all(
+        admins.map((admin) =>
+          this.notificationsService.createSystemNotification(
+            admin.id,
+            'Salary Request Ready for Disbursal',
+            `A salary advance request from ${request.employee.name} has been approved by the employer and is ready for disbursal.`,
+          ),
+        ),
+      );
+
+      try {
+        await this.emailService.sendSalaryRequestApprovedEmail({
+          to: request.employee.email,
+          employeeName: request.employee.name,
+          amount: Number(
+            updatedRequest.approvedAmount ?? updatedRequest.amount,
+          ),
+          approvedDate: new Date(),
+        });
+      } catch (error) {
+        console.error('Failed to send salary request approved email', error);
+      }
+    } else {
+      // No membership → AWAITING_MEMBERSHIP_PAYMENT
+      if (request.employee.userId) {
+        await this.notificationsService.createSystemNotification(
+          request.employee.userId,
+          'Action Required: Complete Membership Payment',
+          'Your salary advance request has been approved by your employer. Please complete your MobPae membership payment to proceed with disbursal.',
+        );
+      }
+
+      try {
+        await this.emailService.sendAwaitingMembershipPaymentEmail({
+          to: request.employee.email,
+          employeeName: request.employee.name,
+          amount: Number(
+            updatedRequest.approvedAmount ?? updatedRequest.amount,
+          ),
+          approvedDate: new Date(),
+        });
+      } catch (error) {
+        console.error(
+          'Failed to send awaiting membership payment email',
+          error,
+        );
+      }
     }
 
     return updatedRequest;
@@ -871,6 +897,9 @@ export class SalaryRequestsService {
       case 'EMPLOYER_APPROVED':
         return 'Approved';
 
+      case 'AWAITING_MEMBERSHIP_PAYMENT':
+        return 'Awaiting Membership Payment';
+
       case 'READY_FOR_DISBURSAL':
         return 'Ready for Disbursal';
 
@@ -898,6 +927,9 @@ export class SalaryRequestsService {
 
       case 'EMPLOYER_APPROVED':
         return 'success';
+
+      case 'AWAITING_MEMBERSHIP_PAYMENT':
+        return 'warning';
 
       case 'READY_FOR_DISBURSAL':
         return 'info';

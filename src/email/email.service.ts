@@ -235,6 +235,27 @@ export class EmailService {
     );
   }
 
+  async sendAwaitingMembershipPaymentEmail(data: {
+    to: string;
+    employeeName: string;
+    amount: number;
+    approvedDate: Date;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      'Action Required: Complete Your MobPae Membership',
+      'salary-request-approved',
+      {
+        title: 'Action Required: Membership Payment',
+        employeeName: data.employeeName,
+        amount: this.formatCurrency(data.amount),
+        approvedDate: this.formatDate(data.approvedDate),
+        message:
+          'Your salary advance request has been approved by your employer. To proceed with disbursal, please complete your MobPae membership payment through the app.',
+      },
+    );
+  }
+
   async sendDisbursalSuccessfulEmail(data: {
     to: string;
     employeeName: string;
