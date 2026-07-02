@@ -180,11 +180,15 @@ export class SalaryRequestsService {
 
     // Notify employer so they know a request is waiting for their approval
     if (employee.employer?.userId) {
-      await this.notificationsService.createSystemNotification(
-        employee.employer.userId,
-        'New Salary Advance Request',
-        `${employee.name} has submitted a salary advance request of ₹${Number(salaryRequest.amount).toLocaleString('en-IN')}. Please review and approve.`,
-      );
+      try {
+        await this.notificationsService.createSystemNotification(
+          employee.employer.userId,
+          'New Salary Advance Request',
+          `${employee.name} has submitted a salary advance request of ₹${Number(salaryRequest.amount).toLocaleString('en-IN')}. Please review and approve.`,
+        );
+      } catch (err) {
+        console.error('Failed to send employer notification on salary request create', err);
+      }
     }
 
     try {

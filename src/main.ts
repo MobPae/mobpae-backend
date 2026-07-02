@@ -17,6 +17,7 @@ async function bootstrap() {
       'http://192.168.1.8:5175/',
       'http://localhost:5175',
       'http://localhost:5176',
+      'http://192.168.1.3:5175/',
     ].join(',')
   )
     .split(',')
