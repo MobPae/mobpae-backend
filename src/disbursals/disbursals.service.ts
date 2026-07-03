@@ -292,6 +292,17 @@ export class DisbursalsService {
           },
         });
 
+        await tx.salaryRequestHistory.create({
+          data: {
+            salaryRequestId: disbursal.salaryRequestId,
+            previousStatus: salaryRequest.status,
+            newStatus: 'REPAYMENT_SCHEDULED',
+            changedBy: actorUserId,
+            actorRole: 'ADMIN',
+            remarks: 'Disbursal completed and repayment scheduled',
+          },
+        });
+
         return {
           disbursal,
           repayment,

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -7,7 +8,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestMembershipDto } from './dto/request-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
-import { SettingsPolicyService } from '../settings/settings-policy.service';
+import { CreateMembershipPlanConfigDto } from './dto/create-membership-plan-config.dto';
+import { UpdateMembershipPlanConfigDto } from './dto/update-membership-plan-config.dto';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -20,129 +22,166 @@ import {
 import { MembershipListQueryDto } from './dto/membership-list-query.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Injectable()
 export class MembershipService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly settingsPolicy: SettingsPolicyService,
     private readonly emailService: EmailService,
     private readonly notificationsService: NotificationsService,
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  async getMyMembership(userId: string) {
-    const employee = await this.prisma.employee.findFirst({
-      where: {
-        userId,
-      },
-    });
+  // ─── Plan config (admin) ─────────────────────────────────────────────────
 
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
+  async listPlanConfigs() {
+    return this.prisma.membershipPlanConfig.findMany({
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  async createPlanConfig(dto: CreateMembershipPlanConfigDto) {
+    const existing = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey: dto.planKey },
+    });
+    if (existing) {
+      throw new ConflictException(`A plan with key '${dto.planKey}' already exists`);
     }
 
-    const { amount: membershipFee, validityDays: membershipValidityDays } =
-      await this.settingsPolicy.getMembershipPolicy();
-
-    const membership = await this.prisma.membership.findUnique({
-      where: {
-        employeeId: employee.id,
+    return this.prisma.membershipPlanConfig.create({
+      data: {
+        planKey: dto.planKey,
+        planName: dto.planName,
+        amount: dto.amount,
+        validityDays: dto.validityDays,
+        billingLabel: dto.billingLabel,
+        perMonthLabel: dto.perMonthLabel ?? null,
+        isPreferred: dto.isPreferred ?? false,
+        isActive: true,
+        sortOrder: dto.sortOrder ?? 0,
       },
     });
+  }
+
+  async updatePlanConfig(planKey: string, dto: UpdateMembershipPlanConfigDto) {
+    const plan = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey },
+    });
+    if (!plan) throw new NotFoundException(`Plan '${planKey}' not found`);
+
+    return this.prisma.membershipPlanConfig.update({
+      where: { planKey },
+      data: {
+        ...(dto.planName !== undefined && { planName: dto.planName }),
+        ...(dto.amount !== undefined && { amount: dto.amount }),
+        ...(dto.validityDays !== undefined && { validityDays: dto.validityDays }),
+        ...(dto.billingLabel !== undefined && { billingLabel: dto.billingLabel }),
+        ...(dto.perMonthLabel !== undefined && { perMonthLabel: dto.perMonthLabel }),
+        ...(dto.isPreferred !== undefined && { isPreferred: dto.isPreferred }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.sortOrder !== undefined && { sortOrder: dto.sortOrder }),
+      },
+    });
+  }
+
+  async togglePlanConfig(planKey: string) {
+    const plan = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey },
+    });
+    if (!plan) throw new NotFoundException(`Plan '${planKey}' not found`);
+
+    return this.prisma.membershipPlanConfig.update({
+      where: { planKey },
+      data: { isActive: !plan.isActive },
+    });
+  }
+
+  // ─── Employee: membership ─────────────────────────────────────────────────
+
+  async getMyMembership(userId: string) {
+    const employee = await this.prisma.employee.findFirst({ where: { userId } });
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    const [membership, plans] = await Promise.all([
+      this.prisma.membership.findUnique({ where: { employeeId: employee.id } }),
+      this.getActivePlansConfig(),
+    ]);
 
     if (!membership) {
       return {
         active: false,
-
-        membershipFee,
-        membershipValidityDays,
-
-        amountPaid: 0,
+        planType: null,
         planName: null,
-
+        amountPaid: 0,
         memberSince: null,
         validTill: null,
-
         daysRemaining: 0,
-
+        plans,
         membership: null,
       };
     }
 
     const today = new Date();
-
     const daysRemaining = Math.max(
       0,
       Math.ceil(
-        (membership.endDate.getTime() - today.getTime()) /
-          (1000 * 60 * 60 * 24),
+        (membership.endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
       ),
     );
 
     return {
       active: membership.status === 'ACTIVE',
-
-      membershipFee,
-      membershipValidityDays,
-
-      amountPaid: Number(membership.amount),
-
+      planType: membership.planType,
       planName: membership.planName,
-
+      amountPaid: Number(membership.amount),
       memberSince: membership.startDate,
       validTill: membership.endDate,
-
       daysRemaining,
-
+      plans,
       membership,
     };
   }
 
+  /**
+   * Internal: fast-activate a membership (e.g. from AWAITING_MEMBERSHIP_PAYMENT flow).
+   * Uses the plan already stored on the membership record, defaulting to MONTHLY.
+   */
   async activate(employeeId: string) {
     const employee = await this.prisma.employee.findUnique({
-      where: {
-        id: employeeId,
-      },
+      where: { id: employeeId },
     });
-
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
-    }
-
-    const { amount: membershipAmount, validityDays } =
-      await this.settingsPolicy.getMembershipPolicy();
-
-    const startDate = new Date();
-
-    const endDate = new Date();
-
-    endDate.setDate(endDate.getDate() + validityDays);
+    if (!employee) throw new NotFoundException('Employee not found');
 
     const existingMembership = await this.prisma.membership.findUnique({
-      where: {
-        employeeId,
-      },
+      where: { employeeId },
     });
-
-    if (existingMembership && existingMembership.status === 'ACTIVE') {
+    if (existingMembership?.status === 'ACTIVE') {
       throw new BadRequestException('Membership already active');
     }
 
+    const planKey = existingMembership?.planType ?? 'MONTHLY';
+    const plan = await this.getPlanOrDefault(planKey);
+
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + plan.validityDays);
+
     return this.prisma.membership.upsert({
-      where: {
-        employeeId,
-      },
+      where: { employeeId },
       update: {
-        planName: 'Annual Membership',
-        amount: membershipAmount,
+        planType: plan.planKey,
+        planName: plan.planName,
+        amount: plan.amount,
         startDate,
         endDate,
         status: 'ACTIVE',
       },
       create: {
         employeeId,
-        planName: 'Annual Membership',
-        amount: membershipAmount,
+        planType: plan.planKey,
+        planName: plan.planName,
+        amount: plan.amount,
         startDate,
         endDate,
         status: 'ACTIVE',
@@ -152,25 +191,16 @@ export class MembershipService {
 
   async isActive(employeeId: string) {
     const membership = await this.prisma.membership.findUnique({
-      where: {
-        employeeId,
-      },
+      where: { employeeId },
     });
 
-    if (!membership) {
-      return false;
-    }
+    if (!membership) return false;
 
     if (membership.status === 'ACTIVE' && membership.endDate < new Date()) {
       await this.prisma.membership.update({
-        where: {
-          id: membership.id,
-        },
-        data: {
-          status: 'EXPIRED',
-        },
+        where: { id: membership.id },
+        data: { status: 'EXPIRED' },
       });
-
       return false;
     }
 
@@ -178,114 +208,79 @@ export class MembershipService {
   }
 
   async requestMembership(userId: string, dto: RequestMembershipDto) {
-    const employee = await this.prisma.employee.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
-    }
+    const employee = await this.prisma.employee.findUnique({ where: { userId } });
+    if (!employee) throw new NotFoundException('Employee not found');
 
     const existingMembership = await this.prisma.membership.findUnique({
-      where: {
-        employeeId: employee.id,
-      },
+      where: { employeeId: employee.id },
     });
-
     if (existingMembership?.status === 'ACTIVE') {
       throw new BadRequestException('Membership already active');
     }
 
-    const { amount: membershipAmount, validityDays } =
-      await this.settingsPolicy.getMembershipPolicy();
+    // Validate plan exists and is currently active
+    const plan = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey: dto.planType },
+    });
+    if (!plan) throw new BadRequestException(`Plan '${dto.planType}' does not exist`);
+    if (!plan.isActive) throw new BadRequestException(`Plan '${dto.planType}' is not available`);
 
+    // Coupon handling — discount is applied flat to the selected plan amount
     let discountAmount = 0;
     let couponCode: string | null = null;
 
     if (dto.couponCode?.trim()) {
       const coupon = await this.prisma.membershipCoupon.findUnique({
-        where: {
-          code: dto.couponCode.trim().toUpperCase(),
-        },
+        where: { code: dto.couponCode.trim().toUpperCase() },
       });
 
-      if (!coupon) {
-        throw new BadRequestException('Invalid coupon code');
-      }
-
-      if (!coupon.isActive) {
-        throw new BadRequestException('Coupon is inactive');
-      }
-
-      if (coupon.validTill && coupon.validTill < new Date()) {
+      if (!coupon) throw new BadRequestException('Invalid coupon code');
+      if (!coupon.isActive) throw new BadRequestException('Coupon is inactive');
+      if (coupon.validTill && coupon.validTill < new Date())
         throw new BadRequestException('Coupon expired');
-      }
-
-      if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
+      if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit)
         throw new BadRequestException('Coupon usage limit reached');
-      }
 
       discountAmount = Number(coupon.discountAmount);
       couponCode = coupon.code;
     }
 
-    const payableAmount = Math.max(0, membershipAmount - discountAmount);
+    const payableAmount = Math.max(0, Number(plan.amount) - discountAmount);
 
+    // Dates are set now; admin approval resets them to the actual activation date
     const startDate = new Date();
-
     const endDate = new Date();
-
-    endDate.setDate(endDate.getDate() + validityDays);
+    endDate.setDate(endDate.getDate() + plan.validityDays);
 
     const membership = await this.prisma.$transaction(async (tx) => {
       return tx.membership.upsert({
-        where: {
-          employeeId: employee.id,
-        },
+        where: { employeeId: employee.id },
         update: {
-          planName: 'Annual Membership',
+          planType: plan.planKey,
+          planName: plan.planName,
           amount: payableAmount,
-
           couponCode,
           discountAmount,
-
           startDate,
           endDate,
-
           status: 'PENDING',
-
           verifiedAt: null,
           verifiedBy: null,
-
           paymentReference: dto.paymentReference ?? null,
-
           paymentScreenshot: dto.paymentScreenshot ?? null,
-
           remarks: null,
         },
-
         create: {
           employeeId: employee.id,
-
-          planName: 'Annual Membership',
-
+          planType: plan.planKey,
+          planName: plan.planName,
           amount: payableAmount,
-
           couponCode,
           discountAmount,
-
           startDate,
           endDate,
-
           status: 'PENDING',
-
-          verifiedAt: null,
-          verifiedBy: null,
-
           paymentReference: dto.paymentReference ?? null,
-
           paymentScreenshot: dto.paymentScreenshot ?? null,
         },
       });
@@ -299,61 +294,39 @@ export class MembershipService {
   }
 
   async findPending(query: MembershipListQueryDto = {}) {
-    return this.findAll({
-      ...query,
-      status: 'PENDING',
-    });
+    return this.findAll({ ...query, status: 'PENDING' });
   }
 
   async approve(membershipId: string, adminUserId: string) {
     const membership = await this.prisma.membership.findUnique({
-      where: {
-        id: membershipId,
-      },
+      where: { id: membershipId },
     });
 
-    if (!membership) {
-      throw new NotFoundException('Membership not found');
-    }
-
-    if (membership.status === 'ACTIVE') {
+    if (!membership) throw new NotFoundException('Membership not found');
+    if (membership.status === 'ACTIVE')
       throw new BadRequestException('Membership already approved');
-    }
 
-    const { validityDays } = await this.settingsPolicy.getMembershipPolicy();
-
+    // Validity comes from the DB plan — always up-to-date regardless of when the plan was defined
+    const plan = await this.getPlanOrDefault(membership.planType);
     const startDate = new Date();
-
     const endDate = new Date();
-
-    endDate.setDate(endDate.getDate() + validityDays);
+    endDate.setDate(endDate.getDate() + plan.validityDays);
 
     const updatedMembership = await this.prisma.$transaction(async (tx) => {
       if (membership.couponCode) {
         const coupon = await tx.membershipCoupon.findUnique({
-          where: {
-            code: membership.couponCode,
-          },
+          where: { code: membership.couponCode },
         });
-
         if (coupon) {
           await tx.membershipCoupon.update({
-            where: {
-              id: coupon.id,
-            },
-            data: {
-              usedCount: {
-                increment: 1,
-              },
-            },
+            where: { id: coupon.id },
+            data: { usedCount: { increment: 1 } },
           });
         }
       }
 
       return tx.membership.update({
-        where: {
-          id: membershipId,
-        },
+        where: { id: membershipId },
         data: {
           status: 'ACTIVE',
           startDate,
@@ -366,13 +339,15 @@ export class MembershipService {
       });
     });
 
-    // Post-transaction: send notification + email
+    // Post-transaction: notifications + email
     if (updatedMembership.employee?.userId) {
-      await this.notificationsService.createSystemNotification(
-        updatedMembership.employee.userId,
-        'Membership Approved',
-        'Your MobPae membership is now active.',
-      ).catch((err) => console.error('Membership approved notification error', err));
+      await this.notificationsService
+        .createSystemNotification(
+          updatedMembership.employee.userId,
+          'Membership Approved',
+          `Your MobPae ${plan.planName} membership is now active.`,
+        )
+        .catch((err) => console.error('Membership approved notification error', err));
     }
 
     try {
@@ -387,7 +362,7 @@ export class MembershipService {
       console.error('Failed to send membership approved email', err);
     }
 
-    // Auto-advance any AWAITING_MEMBERSHIP_PAYMENT salary requests to READY_FOR_DISBURSAL
+    // Auto-advance any AWAITING_MEMBERSHIP_PAYMENT salary requests
     const waitingRequests = await this.prisma.salaryRequest.findMany({
       where: {
         employeeId: membership.employeeId,
@@ -405,30 +380,45 @@ export class MembershipService {
         data: { status: 'READY_FOR_DISBURSAL' },
       });
 
-      // Notify employee that their advance request is now ready for disbursal
+      await this.prisma.salaryRequestHistory.createMany({
+        data: waitingRequests.map((request) => ({
+          salaryRequestId: request.id,
+          previousStatus: request.status,
+          newStatus: 'READY_FOR_DISBURSAL',
+          changedBy: adminUserId,
+          actorRole: 'ADMIN',
+          remarks: 'Membership approved; request ready for disbursal',
+        })),
+      });
+
       if (updatedMembership.employee?.userId) {
-        await this.notificationsService.createSystemNotification(
-          updatedMembership.employee.userId,
-          'Advance Request Ready for Disbursal',
-          'Your membership is now active. Your salary advance request has been moved to Ready for Disbursal.',
-        ).catch((err) => console.error('Advance ready notification error', err));
+        await this.notificationsService
+          .createSystemNotification(
+            updatedMembership.employee.userId,
+            'Advance Request Ready for Disbursal',
+            'Your membership is now active. Your salary advance request has been moved to Ready for Disbursal.',
+          )
+          .catch((err) => console.error('Advance ready notification error', err));
       }
 
-      // Notify all admins to disburse
       const admins = await this.prisma.user.findMany({
         where: { role: 'ADMIN', isActive: true },
         select: { id: true },
       });
 
-      const employee = waitingRequests[0]?.employee;
-      if (employee) {
+      const emp = waitingRequests[0]?.employee;
+      if (emp) {
         await Promise.all(
           admins.map((admin) =>
-            this.notificationsService.createSystemNotification(
-              admin.id,
-              'Salary Request Ready for Disbursal',
-              `${employee.name}'s membership has been activated. Their salary advance request is now ready for disbursal.`,
-            ).catch((err) => console.error('Admin disbursal notification error', err)),
+            this.notificationsService
+              .createSystemNotification(
+                admin.id,
+                'Salary Request Ready for Disbursal',
+                `${emp.name}'s membership has been activated. Their salary advance request is now ready for disbursal.`,
+              )
+              .catch((err) =>
+                console.error('Admin disbursal notification error', err),
+              ),
           ),
         );
       }
@@ -439,24 +429,15 @@ export class MembershipService {
 
   async reject(membershipId: string, remarks: string, actorUserId: string) {
     const membership = await this.prisma.membership.findUnique({
-      where: {
-        id: membershipId,
-      },
+      where: { id: membershipId },
       include: { employee: true },
     });
 
-    if (!membership) {
-      throw new NotFoundException('Membership not found');
-    }
+    if (!membership) throw new NotFoundException('Membership not found');
 
     const updated = await this.prisma.membership.update({
-      where: {
-        id: membershipId,
-      },
-      data: {
-        status: 'PENDING',
-        remarks,
-      },
+      where: { id: membershipId },
+      data: { status: 'PENDING', remarks },
     });
 
     await this.auditLogsService.log({
@@ -464,23 +445,19 @@ export class MembershipService {
       action: 'MEMBERSHIP_REJECTED',
       entityType: 'MEMBERSHIP',
       entityId: membershipId,
-      oldValue: {
-        status: membership.status,
-        remarks: membership.remarks,
-      },
-      newValue: {
-        status: updated.status,
-        remarks: updated.remarks,
-      },
+      oldValue: { status: membership.status, remarks: membership.remarks },
+      newValue: { status: updated.status, remarks: updated.remarks },
     });
 
     if (membership.employee?.userId) {
-      await this.notificationsService.createSystemNotification(
-        membership.employee.userId,
-        'Membership Not Approved',
-        remarks ||
-          'Your membership payment proof needs an update. Please upload it again.',
-      ).catch((err) => console.error('Membership rejected notification error', err));
+      await this.notificationsService
+        .createSystemNotification(
+          membership.employee.userId,
+          'Membership Not Approved',
+          remarks ||
+            'Your membership payment proof needs an update. Please upload it again.',
+        )
+        .catch((err) => console.error('Membership rejected notification error', err));
     }
 
     try {
@@ -496,10 +473,8 @@ export class MembershipService {
     return updated;
   }
 
-  /**
-   * Admin
-   * Create membership coupon
-   */
+  // ─── Coupon management ───────────────────────────────────────────────────
+
   async createCoupon(dto: CreateMembershipCouponDto) {
     return this.prisma.membershipCoupon.create({
       data: {
@@ -511,33 +486,41 @@ export class MembershipService {
     });
   }
 
-  /**
-   * Admin
-   * View all coupons
-   */
   async findAllCoupons() {
-    return this.prisma.membershipCoupon.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    return this.prisma.membershipCoupon.findMany({ orderBy: { createdAt: 'desc' } });
   }
+
+  /**
+   * Validate a coupon — returns the flat discount amount.
+   * The client applies this to whichever plan the user selected.
+   */
+  async validateCoupon(couponCode: string) {
+    const coupon = await this.prisma.membershipCoupon.findUnique({
+      where: { code: couponCode.trim().toUpperCase() },
+    });
+
+    if (!coupon) throw new BadRequestException('Invalid coupon code');
+    if (!coupon.isActive) throw new BadRequestException('Coupon is inactive');
+    if (coupon.validTill && coupon.validTill < new Date())
+      throw new BadRequestException('Coupon expired');
+    if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit)
+      throw new BadRequestException('Coupon usage limit reached');
+
+    return {
+      valid: true,
+      couponCode: coupon.code,
+      discountAmount: Number(coupon.discountAmount),
+    };
+  }
+
+  // ─── Admin list / detail ─────────────────────────────────────────────────
 
   async findOne(id: string) {
     const membership = await this.prisma.membership.findUnique({
-      where: {
-        id,
-      },
-
-      include: {
-        employee: true,
-      },
+      where: { id },
+      include: { employee: true },
     });
-
-    if (!membership) {
-      throw new NotFoundException('Membership not found');
-    }
-
+    if (!membership) throw new NotFoundException('Membership not found');
     return membership;
   }
 
@@ -551,21 +534,11 @@ export class MembershipService {
               { planName: containsSearch(query) },
               { paymentReference: containsSearch(query) },
               { couponCode: containsSearch(query) },
+              { employee: { name: containsSearch(query) } },
+              { employee: { email: containsSearch(query) } },
               {
                 employee: {
-                  name: containsSearch(query),
-                },
-              },
-              {
-                employee: {
-                  email: containsSearch(query),
-                },
-              },
-              {
-                employee: {
-                  employer: {
-                    companyName: containsSearch(query),
-                  },
+                  employer: { companyName: containsSearch(query) },
                 },
               },
             ],
@@ -576,13 +549,7 @@ export class MembershipService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.membership.findMany({
         where,
-        include: {
-          employee: {
-            include: {
-              employer: true,
-            },
-          },
-        },
+        include: { employee: { include: { employer: true } } },
         orderBy: getOrderBy(
           query,
           ['planName', 'amount', 'startDate', 'endDate', 'status', 'createdAt'],
@@ -591,61 +558,39 @@ export class MembershipService {
         skip,
         take,
       }),
-      this.prisma.membership.count({
-        where,
-      }),
+      this.prisma.membership.count({ where }),
     ]);
 
     return paginate(data, total, page, limit);
   }
 
+  // ─── Summaries ───────────────────────────────────────────────────────────
+
   async getSummary() {
     const memberships = await this.prisma.membership.findMany();
-
     const active = memberships.filter((m) => m.status === 'ACTIVE').length;
-
     const pending = memberships.filter((m) => m.status === 'PENDING').length;
-
     const rejected = memberships.filter((m) => m.status === 'REJECTED').length;
-
     const expired = memberships.filter(
       (m) => m.status === 'ACTIVE' && m.endDate < new Date(),
     ).length;
-
     const membershipRevenue = memberships.reduce(
       (sum, m) => sum + Number(m.amount),
       0,
     );
-
-    return {
-      totalMembers: memberships.length,
-      active,
-      pending,
-      rejected,
-      expired,
-      membershipRevenue,
-    };
+    return { totalMembers: memberships.length, active, pending, rejected, expired, membershipRevenue };
   }
 
   async getEmployerSummary() {
     const memberships = await this.prisma.membership.findMany({
-      include: {
-        employee: {
-          include: {
-            employer: true,
-          },
-        },
-      },
+      include: { employee: { include: { employer: true } } },
     });
 
-    const employerMap = new Map();
+    const employerMap = new Map<string, any>();
 
     for (const membership of memberships) {
       const employer = membership.employee?.employer;
-
-      if (!employer) {
-        continue;
-      }
+      if (!employer) continue;
 
       if (!employerMap.has(employer.id)) {
         employerMap.set(employer.id, {
@@ -658,14 +603,8 @@ export class MembershipService {
       }
 
       const summary = employerMap.get(employer.id);
-
       summary.totalMembers++;
-
-      if (membership.status === 'ACTIVE') {
-        summary.activeMembers++;
-      }
-
-      // Revenue should count all paid memberships
+      if (membership.status === 'ACTIVE') summary.activeMembers++;
       summary.membershipRevenue += Number(membership.amount);
     }
 
@@ -674,132 +613,16 @@ export class MembershipService {
     );
   }
 
-  /**
-   * Membership Configuration
-   *
-   * Powers:
-   * - Membership Landing Page
-   * - Free vs Premium Comparison
-   */
-  async getConfig() {
-    const { amount: membershipFee, validityDays: membershipValidityDays } =
-      await this.settingsPolicy.getMembershipPolicy();
-
-    const settings = await this.prisma.setting.findMany({
-      where: {
-        key: {
-          in: [
-            'FREE_BENEFITS',
-            'MEMBERSHIP_BENEFITS',
-            'MEMBERSHIP_TITLE',
-            'MEMBERSHIP_SUBTITLE',
-            'FREE_PLAN_TITLE',
-            'FREE_PLAN_SUBTITLE',
-            'MEMBERSHIP_PAYMENT_UPI_ID',
-            'MEMBERSHIP_PAYMENT_QR_URL',
-            'MEMBERSHIP_PAYMENT_BENEFICIARY',
-            'MEMBERSHIP_PAYMENT_INSTRUCTIONS',
-          ],
-        },
-      },
-    });
-
-    const getValue = (key: string) =>
-      settings.find((s) => s.key === key)?.value;
-
-    return {
-      membershipFee,
-
-      membershipValidityDays,
-
-      freePlanTitle: getValue('FREE_PLAN_TITLE') ?? 'MobPae Free',
-
-      freePlanSubtitle:
-        getValue('FREE_PLAN_SUBTITLE') ?? 'Get started with salary advances',
-
-      membershipTitle: getValue('MEMBERSHIP_TITLE') ?? 'MobPae Premium',
-
-      membershipSubtitle:
-        getValue('MEMBERSHIP_SUBTITLE') ??
-        'Unlock higher limits and priority processing',
-
-      freeBenefits: getValue('FREE_BENEFITS')
-        ? JSON.parse(getValue('FREE_BENEFITS')!)
-        : [],
-
-      membershipBenefits: getValue('MEMBERSHIP_BENEFITS')
-        ? JSON.parse(getValue('MEMBERSHIP_BENEFITS')!)
-        : [],
-
-      payment: {
-        upiId: getValue('MEMBERSHIP_PAYMENT_UPI_ID') ?? '',
-        qrUrl: getValue('MEMBERSHIP_PAYMENT_QR_URL') ?? '',
-        beneficiaryName:
-          getValue('MEMBERSHIP_PAYMENT_BENEFICIARY') ?? 'MobPae',
-        instructions:
-          getValue('MEMBERSHIP_PAYMENT_INSTRUCTIONS') ??
-          'Pay using UPI and upload the payment screenshot for admin verification.',
-      },
-    };
-  }
-
-  /**
-   * Employee
-   * Validate membership coupon
-   */
-  async validateCoupon(couponCode: string) {
-    const { amount: membershipAmount } =
-      await this.settingsPolicy.getMembershipPolicy();
-
-    const coupon = await this.prisma.membershipCoupon.findUnique({
-      where: {
-        code: couponCode.trim().toUpperCase(),
-      },
-    });
-
-    if (!coupon) {
-      throw new BadRequestException('Invalid coupon code');
-    }
-
-    if (!coupon.isActive) {
-      throw new BadRequestException('Coupon is inactive');
-    }
-
-    if (coupon.validTill && coupon.validTill < new Date()) {
-      throw new BadRequestException('Coupon expired');
-    }
-
-    if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
-      throw new BadRequestException('Coupon usage limit reached');
-    }
-
-    const discountAmount = Number(coupon.discountAmount);
-
-    const payableAmount = Math.max(0, membershipAmount - discountAmount);
-
-    return {
-      valid: true,
-      couponCode: coupon.code,
-      membershipAmount,
-      discountAmount,
-      payableAmount,
-      savings: discountAmount,
-    };
-  }
-
-  // Adding to MembershipService (dedicated RevenueService later)
   async getRevenueSummary() {
     const memberships = await this.prisma.membership.findMany();
-
     const repayments = await this.prisma.repayment.findMany();
 
     const membershipRevenue = memberships.reduce(
-      (sum, membership) => sum + Number(membership.amount),
+      (sum, m) => sum + Number(m.amount),
       0,
     );
-
     const interestRevenue = repayments.reduce(
-      (sum, repayment) => sum + Number(repayment.interestAmount),
+      (sum, r) => sum + Number(r.interestAmount),
       0,
     );
 
@@ -808,5 +631,128 @@ export class MembershipService {
       interestRevenue,
       totalRevenue: membershipRevenue + interestRevenue,
     };
+  }
+
+  // ─── Config (served to the employee app) ────────────────────────────────
+
+  async getConfig() {
+    const [plans, settings] = await Promise.all([
+      this.getActivePlansConfig(),
+      this.prisma.setting.findMany({
+        where: {
+          key: {
+            in: [
+              'MEMBERSHIP_BENEFITS',
+              'MEMBERSHIP_PAYMENT_UPI_ID',
+              'MEMBERSHIP_PAYMENT_QR_URL',
+              'MEMBERSHIP_PAYMENT_BENEFICIARY',
+              'MEMBERSHIP_PAYMENT_INSTRUCTIONS',
+            ],
+          },
+        },
+      }),
+    ]);
+
+    const getValue = (key: string) => settings.find((s) => s.key === key)?.value;
+
+    const membershipBenefitsRaw = getValue('MEMBERSHIP_BENEFITS');
+
+    return {
+      plans,
+      membershipBenefits: membershipBenefitsRaw
+        ? (JSON.parse(membershipBenefitsRaw) as string[])
+        : [
+            'Advances up to 50% of salary, instantly',
+            'Zero processing fees on every advance',
+            'Auto-recovery on payday — no EMIs',
+            'Priority chat support',
+          ],
+      payment: {
+        upiId: getValue('MEMBERSHIP_PAYMENT_UPI_ID') ?? '',
+        qrUrl: getValue('MEMBERSHIP_PAYMENT_QR_URL') ?? '',
+        beneficiaryName: getValue('MEMBERSHIP_PAYMENT_BENEFICIARY') ?? 'MobPae',
+        instructions:
+          getValue('MEMBERSHIP_PAYMENT_INSTRUCTIONS') ??
+          'Pay using UPI and upload the payment screenshot for admin verification.',
+      },
+    };
+  }
+
+  // ─── Private helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Returns all active plans sorted by sortOrder ascending.
+   * Shapes the data to match the frontend contract.
+   */
+  private async getActivePlansConfig() {
+    const plans = await this.prisma.membershipPlanConfig.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    return plans.map((p) => ({
+      planType: p.planKey,
+      planName: p.planName,
+      amount: Number(p.amount),
+      validityDays: p.validityDays,
+      billingLabel: p.billingLabel,
+      perMonthLabel: p.perMonthLabel ?? null,
+      preferred: p.isPreferred,
+      savingsVsMonthly: this.calcSavingsVsMonthly(plans, p),
+      savingsPercent: this.calcSavingsPercent(plans, p),
+    }));
+  }
+
+  /**
+   * Calculates how much you save vs. buying the Monthly plan repeatedly.
+   * Returns null for the Monthly plan itself or if no monthly plan exists.
+   */
+  private calcSavingsVsMonthly(
+    allPlans: { planKey: string; amount: any; validityDays: number }[],
+    plan: { planKey: string; amount: any; validityDays: number },
+  ): number | null {
+    const monthly = allPlans.find((p) => p.planKey === 'MONTHLY');
+    if (!monthly || plan.planKey === 'MONTHLY') return null;
+
+    const monthlyAmount = Number(monthly.amount);
+    const monthsEquivalent = Math.round(plan.validityDays / 30);
+    const savings = monthlyAmount * monthsEquivalent - Number(plan.amount);
+    return savings > 0 ? savings : null;
+  }
+
+  private calcSavingsPercent(
+    allPlans: { planKey: string; amount: any; validityDays: number }[],
+    plan: { planKey: string; amount: any; validityDays: number },
+  ): number | null {
+    const monthly = allPlans.find((p) => p.planKey === 'MONTHLY');
+    if (!monthly || plan.planKey === 'MONTHLY') return null;
+
+    const monthlyAmount = Number(monthly.amount);
+    const monthsEquivalent = Math.round(plan.validityDays / 30);
+    const fullPrice = monthlyAmount * monthsEquivalent;
+    if (fullPrice === 0) return null;
+
+    const percent = Math.round(((fullPrice - Number(plan.amount)) / fullPrice) * 100);
+    return percent > 0 ? percent : null;
+  }
+
+  /**
+   * Fetches a plan by key. Falls back to MONTHLY if the key is no longer active
+   * (guards against edge-cases where a plan is deactivated after a membership was created).
+   */
+  private async getPlanOrDefault(planKey: string) {
+    const plan = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey },
+    });
+    if (plan) return plan;
+
+    const fallback = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey: 'MONTHLY' },
+    });
+    if (fallback) return fallback;
+
+    throw new NotFoundException(
+      `Plan '${planKey}' not found and no fallback MONTHLY plan exists`,
+    );
   }
 }

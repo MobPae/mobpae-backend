@@ -401,6 +401,9 @@ describe('critical MVP workflow unit coverage', () => {
           },
         }),
       },
+      user: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'admin-1' }]),
+      },
     };
     const email = mockEmail();
     const audit = mockAudit();
@@ -537,6 +540,9 @@ describe('critical MVP workflow unit coverage', () => {
           }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      salaryRequestHistory: {
+        create: jest.fn().mockResolvedValue({ id: 'history-1' }),
+      },
       repayment: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
@@ -544,6 +550,9 @@ describe('critical MVP workflow unit coverage', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'employer-1',
         }),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'admin-1' }]),
       },
     };
     const audit = mockAudit();
@@ -674,6 +683,9 @@ describe('critical MVP workflow unit coverage', () => {
       },
       salaryRequest: {
         update: jest.fn().mockResolvedValue({}),
+      },
+      salaryRequestHistory: {
+        create: jest.fn().mockResolvedValue({ id: 'history-1' }),
       },
     };
     const prisma = {
@@ -837,7 +849,13 @@ describe('critical MVP workflow unit coverage', () => {
             updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           },
           salaryRequest: {
+            findMany: jest.fn().mockResolvedValue([
+              { id: 'request-1', status: 'REPAYMENT_SCHEDULED' },
+            ]),
             updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+          salaryRequestHistory: {
+            createMany: jest.fn().mockResolvedValue({ count: 1 }),
           },
         }),
       ),

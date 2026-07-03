@@ -144,6 +144,7 @@ describe('Backend stabilization fixes', () => {
             in: [
               'SUBMITTED',
               'EMPLOYER_APPROVED',
+              'AWAITING_MEMBERSHIP_PAYMENT',
               'READY_FOR_DISBURSAL',
               'DISBURSED',
               'REPAYMENT_SCHEDULED',

@@ -1,6 +1,15 @@
-import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class RequestMembershipDto {
+  /**
+   * The plan key as stored in membership_plan_configs.plan_key.
+   * Validated at runtime against active plans in the database.
+   */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  planType: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)

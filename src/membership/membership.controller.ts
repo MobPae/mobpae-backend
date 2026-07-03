@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -22,6 +23,8 @@ import { RejectMembershipDto } from './dto/reject-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
 import { ValidateMembershipCouponDto } from './dto/validate-membership-coupon.dto';
 import { MembershipListQueryDto } from './dto/membership-list-query.dto';
+import { CreateMembershipPlanConfigDto } from './dto/create-membership-plan-config.dto';
+import { UpdateMembershipPlanConfigDto } from './dto/update-membership-plan-config.dto';
 
 @ApiTags('Membership')
 @ApiBearerAuth()
@@ -86,6 +89,57 @@ export class MembershipController {
   getConfig() {
     return this.membershipService.getConfig();
   }
+
+  // ─── Admin: Plan config management ───────────────────────────────────────
+
+  /**
+   * Admin
+   * List all membership plan configs (active + inactive)
+   */
+  @Get('plans')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'List all membership plan configurations' })
+  listPlanConfigs() {
+    return this.membershipService.listPlanConfigs();
+  }
+
+  /**
+   * Admin
+   * Create a new membership plan
+   */
+  @Post('plans')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Create a new membership plan' })
+  createPlanConfig(@Body() dto: CreateMembershipPlanConfigDto) {
+    return this.membershipService.createPlanConfig(dto);
+  }
+
+  /**
+   * Admin
+   * Update an existing membership plan (price, name, validity, labels, etc.)
+   */
+  @Patch('plans/:planKey')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Update a membership plan' })
+  updatePlanConfig(
+    @Param('planKey') planKey: string,
+    @Body() dto: UpdateMembershipPlanConfigDto,
+  ) {
+    return this.membershipService.updatePlanConfig(planKey, dto);
+  }
+
+  /**
+   * Admin
+   * Toggle a plan active / inactive (soft-disable without deleting)
+   */
+  @Patch('plans/:planKey/toggle')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Toggle a membership plan active/inactive' })
+  togglePlanConfig(@Param('planKey') planKey: string) {
+    return this.membershipService.togglePlanConfig(planKey);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   /**
    * Admin

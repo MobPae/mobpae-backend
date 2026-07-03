@@ -600,9 +600,7 @@ export class EmployeesService {
         salaryLimit: true,
         membership: true,
         bankAccount: true,
-        kycDocuments: {
-          take: 1,
-        },
+        kycDocuments: true,
       },
     });
 
@@ -647,6 +645,7 @@ export class EmployeesService {
           in: [
             'SUBMITTED',
             'EMPLOYER_APPROVED',
+            'AWAITING_MEMBERSHIP_PAYMENT',
             'READY_FOR_DISBURSAL',
             'DISBURSED',
             'REPAYMENT_SCHEDULED',
@@ -689,7 +688,11 @@ export class EmployeesService {
     /**
      * Bank Account Status
      */
-    const bankAccountStatus = employee.bankAccount ? 'ADDED' : 'NOT_ADDED';
+    const bankAccountStatus = employee.bankAccount
+      ? employee.bankAccount.verified
+        ? 'VERIFIED'
+        : 'PENDING'
+      : 'NOT_ADDED';
 
     return {
       /**
@@ -723,6 +726,7 @@ export class EmployeesService {
        * Payroll Info
        */
       payrollDate: employee.employer.payrollDate,
+      payrollCutoffDate: employee.employer.payrollCutoffDate,
 
       /**
        * Membership
@@ -740,6 +744,126 @@ export class EmployeesService {
        */
       appActivated: employee.appActivated,
       employmentStatus: employee.employmentStatus,
+    };
+  }
+
+  async getAppState(userId: string) {
+    const profile = await this.findByUserId(userId);
+    const currentRequest = await this.prisma.salaryRequest.findFirst({
+      where: {
+        employeeId: profile.id,
+        status: {
+          in: [
+            'SUBMITTED',
+            'EMPLOYER_APPROVED',
+            'AWAITING_MEMBERSHIP_PAYMENT',
+            'READY_FOR_DISBURSAL',
+            'DISBURSED',
+            'REPAYMENT_SCHEDULED',
+          ],
+        },
+      },
+      include: {
+        repayment: true,
+        disbursal: true,
+        history: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    const notificationCount =
+      await this.notificationsService.countUnread(userId);
+
+    const setup = [
+      {
+        key: 'KYC',
+        label: 'KYC Documents',
+        status: profile.kycStatus,
+        completed: profile.kycStatus === 'VERIFIED',
+      },
+      {
+        key: 'BANK_ACCOUNT',
+        label: 'Bank Account',
+        status: profile.bankAccountStatus,
+        completed: profile.bankAccountStatus === 'VERIFIED',
+      },
+      {
+        key: 'MEMBERSHIP',
+        label: 'Membership',
+        status: profile.membershipActive ? 'ACTIVE' : 'NOT_ACTIVE',
+        completed: profile.membershipActive,
+      },
+    ];
+    const completedSetup = setup.filter((item) => item.completed).length;
+
+    return {
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        email: profile.email,
+        phone: profile.phone,
+        employeeCode: profile.employeeCode,
+        profilePhotoUrl: profile.profilePhotoUrl,
+        appActivated: profile.appActivated,
+        employmentStatus: profile.employmentStatus,
+      },
+      employer: {
+        id: profile.employerId,
+        name: profile.employerName,
+      },
+      payroll: {
+        payrollDate: profile.payrollDate,
+        payrollCutoffDate: profile.payrollCutoffDate,
+      },
+      setup,
+      profileCompletion: {
+        completed: completedSetup,
+        total: setup.length,
+        percentage: Math.round((completedSetup / setup.length) * 100),
+      },
+      salaryAdvance: {
+        salaryInHand: profile.salaryInHand,
+        approvedLimit: profile.approvedLimit,
+        usedLimit: profile.activeRequestAmount,
+        availableAdvance: profile.availableAdvance,
+      },
+      currentRequest: currentRequest
+        ? {
+            id: currentRequest.id,
+            amount: Number(currentRequest.amount),
+            approvedAmount:
+              currentRequest.approvedAmount === null ||
+              currentRequest.approvedAmount === undefined
+                ? null
+                : Number(currentRequest.approvedAmount),
+            status: currentRequest.status,
+            requestedAt: currentRequest.requestedAt,
+            repaymentDate:
+              currentRequest.repayment?.dueDate ??
+              currentRequest.repaymentDate ??
+              null,
+            totalPayable:
+              currentRequest.repayment?.totalAmount === undefined ||
+              currentRequest.repayment?.totalAmount === null
+                ? null
+                : Number(currentRequest.repayment.totalAmount),
+            allowedActions: {
+              cancel: currentRequest.status === 'SUBMITTED',
+            },
+          }
+        : null,
+      nextAction: this.resolveEmployeeNextAction({
+        kycStatus: profile.kycStatus,
+        bankAccountStatus: profile.bankAccountStatus,
+        currentRequestStatus: currentRequest?.status ?? null,
+        availableAdvance: profile.availableAdvance,
+      }),
+      notifications: notificationCount,
     };
   }
 
@@ -1110,6 +1234,58 @@ export class EmployeesService {
         'Only JPG, PNG and WebP images are allowed',
       );
     }
+  }
+
+  private resolveEmployeeNextAction({
+    kycStatus,
+    bankAccountStatus,
+    currentRequestStatus,
+    availableAdvance,
+  }: {
+    kycStatus: string;
+    bankAccountStatus: string;
+    currentRequestStatus: string | null;
+    availableAdvance: number;
+  }) {
+    if (currentRequestStatus === 'AWAITING_MEMBERSHIP_PAYMENT') {
+      return {
+        code: 'PAY_MEMBERSHIP',
+        label: 'Activate membership',
+      };
+    }
+
+    if (currentRequestStatus) {
+      return {
+        code: 'TRACK_REQUEST',
+        label: 'Track request',
+      };
+    }
+
+    if (kycStatus !== 'VERIFIED') {
+      return {
+        code: 'COMPLETE_KYC',
+        label: 'Complete KYC',
+      };
+    }
+
+    if (bankAccountStatus !== 'VERIFIED') {
+      return {
+        code: 'ADD_BANK_ACCOUNT',
+        label: 'Add bank account',
+      };
+    }
+
+    if (availableAdvance <= 0) {
+      return {
+        code: 'VIEW_REPAYMENT',
+        label: 'View repayment',
+      };
+    }
+
+    return {
+      code: 'REQUEST_ADVANCE',
+      label: 'Request advance',
+    };
   }
 
   async getPeerActivity(userId: string) {

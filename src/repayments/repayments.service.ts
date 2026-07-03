@@ -162,12 +162,32 @@ export class RepaymentsService {
           return { repayment, transitioned: false };
         }
 
+        const salaryRequest = await tx.salaryRequest.findUnique({
+          where: {
+            id: repayment.salaryRequestId,
+          },
+          select: {
+            status: true,
+          },
+        });
+
         await tx.salaryRequest.update({
           where: {
             id: repayment.salaryRequestId,
           },
           data: {
             status: 'REPAID',
+          },
+        });
+
+        await tx.salaryRequestHistory.create({
+          data: {
+            salaryRequestId: repayment.salaryRequestId,
+            previousStatus: salaryRequest?.status ?? null,
+            newStatus: 'REPAID',
+            changedBy: null,
+            actorRole: 'SYSTEM',
+            remarks: 'Repayment marked as paid',
           },
         });
 

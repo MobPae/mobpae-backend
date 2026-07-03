@@ -23,6 +23,7 @@ import { RejectSalaryRequestDto } from './dto/reject-salary-request.dto';
 import { PreviewSalaryRequestDto } from './dto/preview-salary-request.dto';
 import { SalaryRequestListQueryDto } from './dto/salary-request-list-query.dto';
 import { BulkSalaryRequestActionDto } from './dto/bulk-salary-request-action.dto';
+import { CancelSalaryRequestDto } from './dto/cancel-salary-request.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -61,6 +62,15 @@ export class SalaryRequestsController {
   })
   preview(@Req() req: any, @Body() dto: PreviewSalaryRequestDto) {
     return this.salaryRequestsService.preview(req.user.userId, dto.amount);
+  }
+
+  @Get('eligibility')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Get salary advance eligibility and next action for employee app',
+  })
+  getEligibility(@Req() req: any) {
+    return this.salaryRequestsService.getEligibility(req.user.userId);
   }
 
   /**
@@ -172,6 +182,28 @@ export class SalaryRequestsController {
     req: any,
   ) {
     return this.salaryRequestsService.findOne(id, req.user);
+  }
+
+  @Post(':id/cancel')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Cancel own submitted salary request',
+  })
+  cancel(
+    @Param('id')
+    id: string,
+
+    @Body()
+    dto: CancelSalaryRequestDto,
+
+    @Req()
+    req: any,
+  ) {
+    return this.salaryRequestsService.cancel(
+      id,
+      req.user.userId,
+      dto.remarks,
+    );
   }
 
   /**

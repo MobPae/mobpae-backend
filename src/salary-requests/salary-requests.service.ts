@@ -22,11 +22,32 @@ import {
   paginate,
 } from '../common/utils/pagination.util';
 import { SalaryRequestListQueryDto } from './dto/salary-request-list-query.dto';
-import type { SalaryRequest } from '@prisma/client';
+import type { SalaryRequest, SalaryRequestStatus } from '@prisma/client';
 import {
   BulkSalaryRequestAction,
   BulkSalaryRequestActionDto,
 } from './dto/bulk-salary-request-action.dto';
+
+const ACTIVE_SALARY_REQUEST_STATUSES: SalaryRequestStatus[] = [
+  'SUBMITTED',
+  'EMPLOYER_APPROVED',
+  'AWAITING_MEMBERSHIP_PAYMENT',
+  'READY_FOR_DISBURSAL',
+  'DISBURSED',
+  'REPAYMENT_SCHEDULED',
+];
+
+const REQUEST_TIMELINE_STEPS: Array<{
+  status: SalaryRequestStatus;
+  label: string;
+}> = [
+  { status: 'SUBMITTED', label: 'Request submitted' },
+  { status: 'EMPLOYER_APPROVED', label: 'Employer approved' },
+  { status: 'AWAITING_MEMBERSHIP_PAYMENT', label: 'Membership checked' },
+  { status: 'READY_FOR_DISBURSAL', label: 'Ready for disbursal' },
+  { status: 'REPAYMENT_SCHEDULED', label: 'Payment scheduled' },
+  { status: 'REPAID', label: 'Recovered' },
+];
 
 @Injectable()
 export class SalaryRequestsService {
@@ -125,14 +146,7 @@ export class SalaryRequestsService {
         where: {
           employeeId: employee.id,
           status: {
-            in: [
-              'SUBMITTED',
-              'EMPLOYER_APPROVED',
-              'AWAITING_MEMBERSHIP_PAYMENT',
-              'READY_FOR_DISBURSAL',
-              'DISBURSED',
-              'REPAYMENT_SCHEDULED',
-            ],
+            in: ACTIVE_SALARY_REQUEST_STATUSES,
           },
         },
       });
@@ -169,6 +183,15 @@ export class SalaryRequestsService {
       },
     });
 
+    await this.recordSalaryRequestHistory({
+      salaryRequestId: salaryRequest.id,
+      previousStatus: null,
+      newStatus: salaryRequest.status,
+      changedBy: userId,
+      actorRole: 'EMPLOYEE',
+      remarks: 'Salary advance request submitted',
+    });
+
     await this.writeAuditLog({
       userId,
       action: 'SALARY_REQUEST_CREATED',
@@ -187,7 +210,10 @@ export class SalaryRequestsService {
           `${employee.name} has submitted a salary advance request of ₹${Number(salaryRequest.amount).toLocaleString('en-IN')}. Please review and approve.`,
         );
       } catch (err) {
-        console.error('Failed to send employer notification on salary request create', err);
+        console.error(
+          'Failed to send employer notification on salary request create',
+          err,
+        );
       }
     }
 
@@ -228,7 +254,12 @@ export class SalaryRequestsService {
       include: {
         repayment: true,
         disbursal: {
-          select: { disbursedAt: true },
+          select: { id: true, status: true, disbursedAt: true },
+        },
+        history: {
+          orderBy: {
+            createdAt: 'asc',
+          },
         },
       },
       orderBy: {
@@ -237,6 +268,12 @@ export class SalaryRequestsService {
     });
 
     return requests.map((request) => {
+      const requestState = this.presentSalaryRequest(
+        request,
+        employee.employer,
+        settings.interestChargePercentage,
+      );
+
       if (request.repayment) {
         return {
           id: request.id,
@@ -245,6 +282,11 @@ export class SalaryRequestsService {
           status: request.status,
           statusLabel: this.getStatusLabel(request.status),
           statusColor: this.getStatusColor(request.status),
+          progress: requestState.progress,
+          nextAction: requestState.nextAction,
+          nextActionLabel: requestState.nextActionLabel,
+          allowedActions: requestState.allowedActions,
+          timeline: requestState.timeline,
           requestedAt: request.requestedAt,
           repaymentDate: request.repaymentDate,
           disbursedAt: request.disbursal?.disbursedAt ?? null,
@@ -272,6 +314,11 @@ export class SalaryRequestsService {
         status: request.status,
         statusLabel: this.getStatusLabel(request.status),
         statusColor: this.getStatusColor(request.status),
+        progress: requestState.progress,
+        nextAction: requestState.nextAction,
+        nextActionLabel: requestState.nextActionLabel,
+        allowedActions: requestState.allowedActions,
+        timeline: requestState.timeline,
         requestedAt: request.requestedAt,
         repaymentDate: request.repaymentDate,
         disbursedAt: request.disbursal?.disbursedAt ?? null,
@@ -411,6 +458,226 @@ export class SalaryRequestsService {
     };
   }
 
+  async getEligibility(userId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId },
+      include: {
+        employer: true,
+        bankAccount: true,
+        membership: true,
+        kycDocuments: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    const settings = await this.settingsService.getAdvanceSettings();
+    const approvedLimit = this.settingsService.calculateAvailableAdvance(
+      Number(employee.salaryInHand),
+      settings,
+    );
+
+    const activeRequests = await this.prisma.salaryRequest.findMany({
+      where: {
+        employeeId: employee.id,
+        status: {
+          in: ACTIVE_SALARY_REQUEST_STATUSES,
+        },
+      },
+      include: {
+        repayment: true,
+        disbursal: true,
+        history: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const activeRequestAmount = activeRequests.reduce(
+      (total, request) =>
+        total + Number(request.approvedAmount ?? request.amount),
+      0,
+    );
+    const availableAdvance = Math.max(0, approvedLimit - activeRequestAmount);
+
+    const outstandingRepayment = await this.prisma.repayment.findFirst({
+      where: {
+        salaryRequest: {
+          employeeId: employee.id,
+        },
+        status: {
+          in: ['SCHEDULED', 'OVERDUE'],
+        },
+      },
+      select: { id: true, status: true, dueDate: true, totalAmount: true },
+    });
+
+    const kycStatus = this.resolveKycStatus(employee.kycDocuments);
+    const bankStatus = this.resolveBankStatus(employee.bankAccount);
+    const membershipStatus = employee.membership?.status ?? 'NOT_ACTIVE';
+    const activeRequest = activeRequests[0] ?? null;
+
+    const reasons: Array<{ code: string; message: string }> = [];
+
+    if (employee.employmentStatus !== 'ACTIVE' || !employee.appActivated) {
+      reasons.push({
+        code: 'EMPLOYEE_INACTIVE',
+        message: 'Employee account is not active.',
+      });
+    }
+
+    if (settings.requireKyc && kycStatus !== 'VERIFIED') {
+      reasons.push({
+        code: 'KYC_REQUIRED',
+        message: 'KYC must be verified before requesting an advance.',
+      });
+    }
+
+    if (settings.requireBankVerification && bankStatus !== 'VERIFIED') {
+      reasons.push({
+        code: 'BANK_REQUIRED',
+        message: 'Bank account must be verified before requesting an advance.',
+      });
+    }
+
+    if (!settings.allowMultipleRequestsPerCycle && activeRequest) {
+      reasons.push({
+        code: 'ACTIVE_REQUEST_EXISTS',
+        message: 'An advance request is already in progress.',
+      });
+    }
+
+    if (!settings.allowRequestWithOutstandingBalance && outstandingRepayment) {
+      reasons.push({
+        code: 'OUTSTANDING_REPAYMENT',
+        message: 'An outstanding repayment must be cleared first.',
+      });
+    }
+
+    if (availableAdvance <= 0) {
+      reasons.push({
+        code: 'NO_AVAILABLE_LIMIT',
+        message: 'No advance limit is currently available.',
+      });
+    }
+
+    const eligible = reasons.length === 0;
+    const nextAction = this.resolveEligibilityNextAction({
+      eligible,
+      kycStatus,
+      bankStatus,
+      membershipStatus,
+      activeRequestStatus: activeRequest?.status ?? null,
+    });
+
+    return {
+      eligible,
+      reasons,
+      nextAction,
+      nextActionLabel: this.getNextActionLabel(nextAction),
+      setup: this.buildSetupChecklist({
+        kycStatus,
+        bankStatus,
+        membershipStatus,
+      }),
+      limits: {
+        salaryInHand: Number(employee.salaryInHand),
+        approvedLimit,
+        usedLimit: activeRequestAmount,
+        availableAdvance,
+      },
+      payroll: {
+        payrollDate: employee.employer.payrollDate,
+        payrollCutoffDate: employee.employer.payrollCutoffDate,
+      },
+      membershipRequiredAfterEmployerApproval:
+        employee.membership?.status !== 'ACTIVE',
+      outstandingRepayment: outstandingRepayment
+        ? {
+            id: outstandingRepayment.id,
+            status: outstandingRepayment.status,
+            dueDate: outstandingRepayment.dueDate,
+            totalAmount: Number(outstandingRepayment.totalAmount),
+          }
+        : null,
+      activeRequest: activeRequest
+        ? this.presentSalaryRequest(
+            activeRequest,
+            employee.employer,
+            settings.interestChargePercentage,
+          )
+        : null,
+    };
+  }
+
+  async cancel(id: string, userId: string, remarks?: string) {
+    const request = await this.prisma.salaryRequest.findUnique({
+      where: { id },
+      include: {
+        employee: {
+          include: {
+            employer: true,
+          },
+        },
+      },
+    });
+
+    if (!request) {
+      throw new NotFoundException('Salary request not found');
+    }
+
+    if (request.employee.userId !== userId) {
+      throw new ForbiddenException('You can only cancel your own request');
+    }
+
+    if (request.status === 'CANCELLED') {
+      return request;
+    }
+
+    if (request.status !== 'SUBMITTED') {
+      throw new BadRequestException('Only submitted requests can be cancelled');
+    }
+
+    const updatedRequest = await this.prisma.salaryRequest.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED',
+        remarks: remarks ?? 'Cancelled by employee',
+      },
+    });
+
+    await this.recordSalaryRequestHistory({
+      salaryRequestId: updatedRequest.id,
+      previousStatus: request.status,
+      newStatus: updatedRequest.status,
+      changedBy: userId,
+      actorRole: 'EMPLOYEE',
+      remarks: remarks ?? 'Cancelled by employee',
+    });
+
+    await this.writeAuditLog({
+      userId,
+      action: 'SALARY_REQUEST_CANCELLED',
+      entityType: 'SALARY_REQUEST',
+      entityId: updatedRequest.id,
+      oldValue: this.salaryRequestAuditValue(request),
+      newValue: this.salaryRequestAuditValue(updatedRequest),
+    });
+
+    if (request.employee.employer.userId) {
+      await this.notificationsService.createSystemNotification(
+        request.employee.employer.userId,
+        'Salary Request Cancelled',
+        `${request.employee.name} cancelled their salary advance request.`,
+      );
+    }
+
+    return updatedRequest;
+  }
+
   /**
    * Employer approval of salary advance request.
    *
@@ -461,13 +728,18 @@ export class SalaryRequestsService {
     const membershipActive = await this.membershipService.isActive(
       request.employee.id,
     );
-    const targetStatus = membershipActive
+    const targetStatus: SalaryRequestStatus = membershipActive
       ? 'READY_FOR_DISBURSAL'
       : 'AWAITING_MEMBERSHIP_PAYMENT';
 
     const transition = await this.prisma.salaryRequest.updateMany({
       where: { id, status: 'SUBMITTED' },
-      data: { status: targetStatus },
+      data: {
+        status: targetStatus,
+        approvedAmount: request.amount,
+        approvedBy: userId,
+        approvedAt: new Date(),
+      },
     });
 
     const updatedRequest = await this.prisma.salaryRequest.findUnique({
@@ -495,6 +767,17 @@ export class SalaryRequestsService {
       entityId: updatedRequest.id,
       oldValue: this.salaryRequestAuditValue(request),
       newValue: this.salaryRequestAuditValue(updatedRequest),
+    });
+
+    await this.recordSalaryRequestHistory({
+      salaryRequestId: updatedRequest.id,
+      previousStatus: request.status,
+      newStatus: updatedRequest.status,
+      changedBy: userId,
+      actorRole: 'EMPLOYER',
+      remarks: membershipActive
+        ? 'Employer approved request; membership active'
+        : 'Employer approved request; membership payment required',
     });
 
     if (membershipActive) {
@@ -661,6 +944,15 @@ export class SalaryRequestsService {
       entityId: updatedRequest.id,
       oldValue: this.salaryRequestAuditValue(request),
       newValue: this.salaryRequestAuditValue(updatedRequest),
+    });
+
+    await this.recordSalaryRequestHistory({
+      salaryRequestId: updatedRequest.id,
+      previousStatus: request.status,
+      newStatus: updatedRequest.status,
+      changedBy: userId,
+      actorRole: 'EMPLOYER',
+      remarks: remarks || 'Rejected by employer',
     });
 
     if (request.employee.userId) {
@@ -833,6 +1125,11 @@ export class SalaryRequestsService {
         },
         repayment: true,
         disbursal: true,
+        history: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
       },
     });
 
@@ -852,6 +1149,11 @@ export class SalaryRequestsService {
       }
     }
 
+    const requestState = this.presentSalaryRequest(
+      salaryRequest,
+      salaryRequest.employee.employer,
+    );
+
     return {
       id: salaryRequest.id,
 
@@ -859,6 +1161,13 @@ export class SalaryRequestsService {
       approvedAmount: salaryRequest.approvedAmount,
 
       status: salaryRequest.status,
+      statusLabel: requestState.statusLabel,
+      statusColor: requestState.statusColor,
+      progress: requestState.progress,
+      nextAction: requestState.nextAction,
+      nextActionLabel: requestState.nextActionLabel,
+      allowedActions: requestState.allowedActions,
+      timeline: requestState.timeline,
 
       requestedAt: salaryRequest.requestedAt,
 
@@ -876,6 +1185,8 @@ export class SalaryRequestsService {
       repayment: salaryRequest.repayment,
 
       disbursal: salaryRequest.disbursal,
+
+      history: salaryRequest.history,
     };
   }
 
@@ -891,6 +1202,396 @@ export class SalaryRequestsService {
     }
 
     return this.findByEmployee(employee.id);
+  }
+
+  async expirePendingRequests(expiryDays = 3) {
+    const expiresBefore = new Date();
+    expiresBefore.setDate(expiresBefore.getDate() - expiryDays);
+
+    const requests = await this.prisma.salaryRequest.findMany({
+      where: {
+        status: 'SUBMITTED',
+        requestedAt: {
+          lt: expiresBefore,
+        },
+      },
+      include: {
+        employee: true,
+      },
+    });
+
+    if (requests.length === 0) {
+      return { processed: 0 };
+    }
+
+    await this.prisma.salaryRequest.updateMany({
+      where: {
+        id: {
+          in: requests.map((request) => request.id),
+        },
+        status: 'SUBMITTED',
+      },
+      data: {
+        status: 'EXPIRED',
+        remarks: `Expired after ${expiryDays} days without employer approval`,
+      },
+    });
+
+    await Promise.all(
+      requests.map(async (request) => {
+        await this.recordSalaryRequestHistory({
+          salaryRequestId: request.id,
+          previousStatus: request.status,
+          newStatus: 'EXPIRED',
+          changedBy: null,
+          actorRole: 'SYSTEM',
+          remarks: `Auto-expired after ${expiryDays} days without employer approval`,
+        });
+
+        await this.writeAuditLog({
+          userId: request.employee.userId,
+          action: 'SALARY_REQUEST_EXPIRED',
+          entityType: 'SALARY_REQUEST',
+          entityId: request.id,
+          oldValue: this.salaryRequestAuditValue(request),
+          newValue: {
+            ...this.salaryRequestAuditValue(request),
+            status: 'EXPIRED',
+          },
+        });
+
+        if (request.employee.userId) {
+          await this.notificationsService.createSystemNotification(
+            request.employee.userId,
+            'Salary Request Expired',
+            'Your salary advance request expired because it was not approved in time. You can submit a fresh request.',
+          );
+        }
+      }),
+    );
+
+    return { processed: requests.length };
+  }
+
+  private presentSalaryRequest(
+    request: any,
+    employer?: { payrollDate: number; payrollCutoffDate: number } | null,
+    annualInterestRate = 0,
+  ) {
+    const projection =
+      !request.repayment && employer
+        ? PayrollUtil.calculateRepayment(
+            Number(request.approvedAmount ?? request.amount),
+            request.requestedAt,
+            employer.payrollCutoffDate,
+            employer.payrollDate,
+            annualInterestRate,
+          )
+        : null;
+    const totalSteps = REQUEST_TIMELINE_STEPS.length;
+    const completedSteps = REQUEST_TIMELINE_STEPS.filter((step) =>
+      this.isTimelineStepComplete(request, step.status),
+    ).length;
+    const nextAction = this.getRequestNextAction(request.status);
+
+    return {
+      id: request.id,
+      amount: Number(request.amount),
+      approvedAmount:
+        request.approvedAmount === null || request.approvedAmount === undefined
+          ? null
+          : Number(request.approvedAmount),
+      status: request.status,
+      statusLabel: this.getStatusLabel(request.status),
+      statusColor: this.getStatusColor(request.status),
+      requestedAt: request.requestedAt,
+      approvedAt: request.approvedAt ?? null,
+      repaymentDate:
+        request.repayment?.dueDate ??
+        request.repaymentDate ??
+        projection?.dueDate ??
+        null,
+      remarks: request.remarks ?? null,
+      progress: Math.round((completedSteps / totalSteps) * 100),
+      nextAction,
+      nextActionLabel: this.getNextActionLabel(nextAction),
+      allowedActions: {
+        cancel: request.status === 'SUBMITTED',
+      },
+      timeline: REQUEST_TIMELINE_STEPS.map((step) => ({
+        status: step.status,
+        label: step.label,
+        completed: this.isTimelineStepComplete(request, step.status),
+        completedAt: this.getTimelineStepDate(request, step.status),
+      })),
+      repayment: request.repayment
+        ? {
+            id: request.repayment.id,
+            principalAmount: Number(request.repayment.principalAmount),
+            interestAmount: Number(request.repayment.interestAmount),
+            totalAmount: Number(request.repayment.totalAmount),
+            interestRate: Number(request.repayment.interestRate),
+            interestDays: request.repayment.interestDays,
+            dueDate: request.repayment.dueDate,
+            status: request.repayment.status,
+          }
+        : projection
+          ? {
+              id: null,
+              principalAmount: projection.principalAmount,
+              interestAmount: projection.interestAmount,
+              totalAmount: projection.totalAmount,
+              interestRate: annualInterestRate,
+              interestDays: projection.interestDays,
+              dueDate: projection.dueDate,
+              status: 'PROJECTED',
+            }
+          : null,
+      disbursal: request.disbursal
+        ? {
+            id: request.disbursal.id ?? null,
+            status: request.disbursal.status ?? null,
+            disbursedAt: request.disbursal.disbursedAt ?? null,
+          }
+        : null,
+    };
+  }
+
+  private isTimelineStepComplete(request: any, status: SalaryRequestStatus) {
+    if (status === 'SUBMITTED') {
+      return Boolean(request.requestedAt);
+    }
+
+    if (status === 'REPAYMENT_SCHEDULED') {
+      return (
+        request.status === 'REPAYMENT_SCHEDULED' ||
+        request.status === 'REPAID' ||
+        Boolean(request.repayment)
+      );
+    }
+
+    if (status === 'REPAID') {
+      return (
+        request.status === 'REPAID' || request.repayment?.status === 'PAID'
+      );
+    }
+
+    return (
+      request.status === status ||
+      request.history?.some((entry: { newStatus: SalaryRequestStatus }) => {
+        if (status === 'EMPLOYER_APPROVED') {
+          return [
+            'EMPLOYER_APPROVED',
+            'AWAITING_MEMBERSHIP_PAYMENT',
+            'READY_FOR_DISBURSAL',
+            'DISBURSED',
+            'REPAYMENT_SCHEDULED',
+            'REPAID',
+          ].includes(entry.newStatus);
+        }
+
+        if (status === 'AWAITING_MEMBERSHIP_PAYMENT') {
+          return [
+            'AWAITING_MEMBERSHIP_PAYMENT',
+            'READY_FOR_DISBURSAL',
+            'DISBURSED',
+            'REPAYMENT_SCHEDULED',
+            'REPAID',
+          ].includes(entry.newStatus);
+        }
+
+        if (status === 'READY_FOR_DISBURSAL') {
+          return [
+            'READY_FOR_DISBURSAL',
+            'DISBURSED',
+            'REPAYMENT_SCHEDULED',
+            'REPAID',
+          ].includes(entry.newStatus);
+        }
+
+        return entry.newStatus === status;
+      })
+    );
+  }
+
+  private getTimelineStepDate(request: any, status: SalaryRequestStatus) {
+    if (status === 'SUBMITTED') {
+      return request.requestedAt ?? null;
+    }
+
+    if (status === 'REPAYMENT_SCHEDULED') {
+      return request.repayment?.createdAt ?? null;
+    }
+
+    if (status === 'REPAID') {
+      return request.repayment?.paidDate ?? null;
+    }
+
+    return (
+      request.history?.find(
+        (entry: { newStatus: SalaryRequestStatus }) =>
+          entry.newStatus === status,
+      )?.createdAt ?? null
+    );
+  }
+
+  private resolveKycStatus(
+    documents: Array<{ documentType: string; status: string }>,
+  ) {
+    const requiredKycVerified = REQUIRED_KYC_DOCUMENTS.every((type) =>
+      documents.some(
+        (document) =>
+          document.documentType === type && document.status === 'VERIFIED',
+      ),
+    );
+
+    if (requiredKycVerified) {
+      return 'VERIFIED';
+    }
+
+    if (documents.some((document) => document.status === 'REJECTED')) {
+      return 'REJECTED';
+    }
+
+    if (documents.length > 0) {
+      return 'PENDING';
+    }
+
+    return 'NOT_SUBMITTED';
+  }
+
+  private resolveBankStatus(bankAccount: { verified: boolean } | null) {
+    if (!bankAccount) {
+      return 'NOT_ADDED';
+    }
+
+    return bankAccount.verified ? 'VERIFIED' : 'PENDING';
+  }
+
+  private buildSetupChecklist({
+    kycStatus,
+    bankStatus,
+    membershipStatus,
+  }: {
+    kycStatus: string;
+    bankStatus: string;
+    membershipStatus: string;
+  }) {
+    return [
+      {
+        key: 'KYC',
+        label: 'KYC Documents',
+        status: kycStatus,
+        completed: kycStatus === 'VERIFIED',
+      },
+      {
+        key: 'BANK_ACCOUNT',
+        label: 'Bank Account',
+        status: bankStatus,
+        completed: bankStatus === 'VERIFIED',
+      },
+      {
+        key: 'MEMBERSHIP',
+        label: 'Membership',
+        status: membershipStatus,
+        completed: membershipStatus === 'ACTIVE',
+      },
+    ];
+  }
+
+  private resolveEligibilityNextAction({
+    eligible,
+    kycStatus,
+    bankStatus,
+    membershipStatus,
+    activeRequestStatus,
+  }: {
+    eligible: boolean;
+    kycStatus: string;
+    bankStatus: string;
+    membershipStatus: string;
+    activeRequestStatus: SalaryRequestStatus | null;
+  }) {
+    if (activeRequestStatus) {
+      return this.getRequestNextAction(activeRequestStatus);
+    }
+
+    if (kycStatus !== 'VERIFIED') {
+      return 'COMPLETE_KYC';
+    }
+
+    if (bankStatus !== 'VERIFIED') {
+      return 'ADD_BANK_ACCOUNT';
+    }
+
+    if (!eligible) {
+      return 'VIEW_STATUS';
+    }
+
+    if (membershipStatus !== 'ACTIVE') {
+      return 'REQUEST_ADVANCE_MEMBERSHIP_LATER';
+    }
+
+    return 'REQUEST_ADVANCE';
+  }
+
+  private getRequestNextAction(status: SalaryRequestStatus) {
+    switch (status) {
+      case 'SUBMITTED':
+        return 'WAIT_EMPLOYER_APPROVAL';
+      case 'AWAITING_MEMBERSHIP_PAYMENT':
+        return 'PAY_MEMBERSHIP';
+      case 'READY_FOR_DISBURSAL':
+        return 'WAIT_ADMIN_DISBURSAL';
+      case 'DISBURSED':
+      case 'REPAYMENT_SCHEDULED':
+        return 'VIEW_REPAYMENT';
+      case 'REPAID':
+        return 'VIEW_HISTORY';
+      case 'EMPLOYER_REJECTED':
+      case 'CANCELLED':
+      case 'EXPIRED':
+        return 'REQUEST_ADVANCE';
+      default:
+        return 'VIEW_STATUS';
+    }
+  }
+
+  private getNextActionLabel(action: string) {
+    const labels: Record<string, string> = {
+      COMPLETE_KYC: 'Complete KYC',
+      ADD_BANK_ACCOUNT: 'Add bank account',
+      REQUEST_ADVANCE: 'Request advance',
+      REQUEST_ADVANCE_MEMBERSHIP_LATER: 'Request advance',
+      WAIT_EMPLOYER_APPROVAL: 'Waiting for employer approval',
+      PAY_MEMBERSHIP: 'Activate membership',
+      WAIT_ADMIN_DISBURSAL: 'Waiting for admin disbursal',
+      VIEW_REPAYMENT: 'View repayment schedule',
+      VIEW_HISTORY: 'View history',
+      VIEW_STATUS: 'View status',
+    };
+
+    return labels[action] ?? action;
+  }
+
+  private async recordSalaryRequestHistory(data: {
+    salaryRequestId: string;
+    previousStatus: SalaryRequestStatus | null;
+    newStatus: SalaryRequestStatus;
+    changedBy: string | null;
+    actorRole: string;
+    remarks?: string | null;
+  }) {
+    await this.prisma.salaryRequestHistory.create({
+      data: {
+        salaryRequestId: data.salaryRequestId,
+        previousStatus: data.previousStatus,
+        newStatus: data.newStatus,
+        changedBy: data.changedBy,
+        actorRole: data.actorRole,
+        remarks: data.remarks,
+      },
+    });
   }
 
   private getStatusLabel(status: string) {
@@ -918,6 +1619,12 @@ export class SalaryRequestsService {
 
       case 'EMPLOYER_REJECTED':
         return 'Rejected';
+
+      case 'CANCELLED':
+        return 'Cancelled';
+
+      case 'EXPIRED':
+        return 'Expired';
 
       default:
         return status;
@@ -950,6 +1657,12 @@ export class SalaryRequestsService {
       case 'EMPLOYER_REJECTED':
         return 'danger';
 
+      case 'CANCELLED':
+        return 'muted';
+
+      case 'EXPIRED':
+        return 'warning';
+
       default:
         return 'default';
     }
@@ -981,7 +1694,7 @@ export class SalaryRequestsService {
   }
 
   private async writeAuditLog(data: {
-    userId: string;
+    userId: string | null;
     action: string;
     entityType: string;
     entityId: string;
@@ -989,7 +1702,7 @@ export class SalaryRequestsService {
     newValue: Record<string, unknown> | null;
   }) {
     const auditData: {
-      userId: string;
+      userId?: string | null;
       action: string;
       entityType: string;
       entityId: string;

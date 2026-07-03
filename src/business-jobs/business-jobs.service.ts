@@ -5,6 +5,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { EmployerSettlementsService } from '../employer-settlements/employer-settlements.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SalaryRequestsService } from '../salary-requests/salary-requests.service';
 
 @Injectable()
 export class BusinessJobsService {
@@ -13,7 +14,13 @@ export class BusinessJobsService {
     private readonly auditLogsService: AuditLogsService,
     private readonly notificationsService: NotificationsService,
     private readonly employerSettlementsService: EmployerSettlementsService,
+    private readonly salaryRequestsService: SalaryRequestsService,
   ) {}
+
+  @Cron('30 1 * * *')
+  async expireStaleSalaryRequests() {
+    return this.salaryRequestsService.expirePendingRequests(3);
+  }
 
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async expireMemberships() {

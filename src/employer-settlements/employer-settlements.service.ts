@@ -214,6 +214,18 @@ export class EmployerSettlementsService {
         });
 
         if (transition.count > 0 && repaymentIds.length > 0) {
+          const salaryRequests = await tx.salaryRequest.findMany({
+            where: {
+              id: {
+                in: salaryRequestIds,
+              },
+            },
+            select: {
+              id: true,
+              status: true,
+            },
+          });
+
           await tx.repayment.updateMany({
             where: {
               id: {
@@ -238,6 +250,17 @@ export class EmployerSettlementsService {
             data: {
               status: 'REPAID',
             },
+          });
+
+          await tx.salaryRequestHistory.createMany({
+            data: salaryRequests.map((request) => ({
+              salaryRequestId: request.id,
+              previousStatus: request.status,
+              newStatus: 'REPAID',
+              changedBy: actorUserId ?? null,
+              actorRole: 'ADMIN',
+              remarks: 'Employer settlement marked as paid',
+            })),
           });
         }
 

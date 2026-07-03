@@ -67,6 +67,15 @@ export class EmployeesController {
     return this.employeesService.findByUserId(req.user.userId);
   }
 
+  @Get('me/app-state')
+  @Roles('EMPLOYEE')
+  @ApiOperation({
+    summary: 'Get employee mobile app state, setup status, and next action',
+  })
+  getMyAppState(@Req() req: any) {
+    return this.employeesService.getAppState(req.user.userId);
+  }
+
   @Get('me/profile')
   @Roles('EMPLOYEE')
   @ApiOperation({

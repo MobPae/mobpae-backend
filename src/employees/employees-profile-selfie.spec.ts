@@ -210,7 +210,7 @@ describe('EmployeesService profile photo and selfie verification', () => {
     );
   });
 
-  it('requires verified selfie for KYC completion', async () => {
+  it('does not block KYC completion on pending selfie', async () => {
     const { prisma, service } = createService();
     prisma.employee.findUnique.mockResolvedValue({
       selfieStatus: 'PENDING',
@@ -229,7 +229,7 @@ describe('EmployeesService profile photo and selfie verification', () => {
       salarySlip: true,
       selfie: false,
       selfieStatus: 'PENDING',
-      kycCompleted: false,
+      kycCompleted: true,
     });
   });
 });

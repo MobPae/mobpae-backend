@@ -21,5 +21,6 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
   ],
   controllers: [SalaryRequestsController],
   providers: [SalaryRequestsService],
+  exports: [SalaryRequestsService],
 })
 export class SalaryRequestsModule {}
