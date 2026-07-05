@@ -12,6 +12,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { FilesService } from '../files/files.service';
+import { UploadType } from '../files/upload-type.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
 import {
@@ -933,14 +934,18 @@ export class EmployeesService {
       throw new NotFoundException('Employee not found');
     }
 
-    const upload = await this.filesService.saveUploadedFile(file, { userId });
+    const upload = await this.filesService.saveUploadedFile(
+      file,
+      userId,
+      UploadType.PROFILE_PHOTO,
+    );
 
     return this.prisma.employee.update({
       where: {
         id: employee.id,
       },
       data: {
-        profilePhotoUrl: upload.filePath,
+        profilePhotoUrl: upload.key,
       },
     });
   }
@@ -958,13 +963,17 @@ export class EmployeesService {
       throw new NotFoundException('Employee not found');
     }
 
-    const upload = await this.filesService.saveUploadedFile(file, { userId });
+    const upload = await this.filesService.saveUploadedFile(
+      file,
+      userId,
+      UploadType.SELFIE,
+    );
     const updatedEmployee = await this.prisma.employee.update({
       where: {
         id: employee.id,
       },
       data: {
-        selfieUrl: upload.filePath,
+        selfieUrl: upload.key,
         selfieStatus: 'PENDING',
         selfieVerifiedAt: null,
         selfieVerifiedBy: null,

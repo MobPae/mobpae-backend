@@ -25,7 +25,9 @@ function createService(prismaOverrides: Record<string, any> = {}) {
   };
   const filesService = {
     saveUploadedFile: jest.fn().mockResolvedValue({
-      filePath: 'uploads/employee/image.png',
+      key: 'employees/employee-user/profile/1720000000-abc123.png',
+      mimeType: 'image/png',
+      size: 5,
     }),
   };
   const notificationsService = {
@@ -54,33 +56,32 @@ describe('EmployeesService profile photo and selfie verification', () => {
       id: 'employee-1',
       profilePhotoUrl: null,
     });
+    const key = 'employees/employee-user/profile/1720000000-abc123.png';
     prisma.employee.update.mockResolvedValue({
       id: 'employee-1',
-      profilePhotoUrl: 'uploads/employee/image.png',
+      profilePhotoUrl: key,
     });
 
     await expect(
       service.uploadProfilePhoto('employee-user', imageFile),
     ).resolves.toMatchObject({
-      profilePhotoUrl: 'uploads/employee/image.png',
+      profilePhotoUrl: key,
     });
 
-    expect(filesService.saveUploadedFile).toHaveBeenCalledWith(imageFile, {
-      userId: 'employee-user',
-    });
+    expect(filesService.saveUploadedFile).toHaveBeenCalledWith(
+      imageFile,
+      'employee-user',
+      'profile_photo',
+    );
     expect(prisma.employee.update).toHaveBeenCalledWith({
-      where: {
-        id: 'employee-1',
-      },
-      data: {
-        profilePhotoUrl: 'uploads/employee/image.png',
-      },
+      where: { id: 'employee-1' },
+      data: { profilePhotoUrl: key },
     });
     expect(auditLogsService.log).not.toHaveBeenCalled();
   });
 
   it('uploads selfie, resets verification, notifies admin, and audits submission', async () => {
-    const { prisma, notificationsService, auditLogsService, service } =
+    const { prisma, notificationsService, auditLogsService, service, filesService } =
       createService();
     prisma.employee.findUnique.mockResolvedValue({
       id: 'employee-1',
@@ -91,9 +92,16 @@ describe('EmployeesService profile photo and selfie verification', () => {
       selfieVerifiedAt: new Date('2026-06-01T00:00:00.000Z'),
       selfieVerifiedBy: 'admin-old',
     });
+    const selfieKey = 'employees/employee-user/selfie/1720000000-abc123.png';
+    // Override so this call returns a selfie-path key, not the default profile key
+    filesService.saveUploadedFile.mockResolvedValueOnce({
+      key: selfieKey,
+      mimeType: 'image/png',
+      size: 5,
+    });
     prisma.employee.update.mockResolvedValue({
       id: 'employee-1',
-      selfieUrl: 'uploads/employee/image.png',
+      selfieUrl: selfieKey,
       selfieStatus: 'PENDING',
       selfieVerifiedAt: null,
       selfieVerifiedBy: null,
@@ -103,16 +111,14 @@ describe('EmployeesService profile photo and selfie verification', () => {
     await expect(
       service.uploadSelfie('employee-user', imageFile),
     ).resolves.toMatchObject({
-      selfieUrl: 'uploads/employee/image.png',
+      selfieUrl: selfieKey,
       selfieStatus: 'PENDING',
     });
 
     expect(prisma.employee.update).toHaveBeenCalledWith({
-      where: {
-        id: 'employee-1',
-      },
+      where: { id: 'employee-1' },
       data: {
-        selfieUrl: 'uploads/employee/image.png',
+        selfieUrl: selfieKey,
         selfieStatus: 'PENDING',
         selfieVerifiedAt: null,
         selfieVerifiedBy: null,

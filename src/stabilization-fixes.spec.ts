@@ -362,7 +362,6 @@ describe('Backend stabilization fixes', () => {
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
     const service = new MembershipService(
       prisma as any,
-      {} as any,
       email as any,
       notifications as any,
       audit as any,

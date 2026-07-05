@@ -44,6 +44,7 @@ describe('BusinessJobsService', () => {
         auditLogsService as any,
         notificationsService as any,
         employerSettlementsService as any,
+        {} as any, // salaryRequestsService
       ),
     };
   }

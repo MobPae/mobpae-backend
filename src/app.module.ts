@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
 import { PrismaModule } from './prisma/prisma.module';
+import { StorageModule } from './storage/storage.module';
 
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -66,6 +67,11 @@ import { AppInformationModule } from './app-information/app-information.module';
           .truthy('true')
           .falsy('false')
           .default(false),
+        // Cloudflare R2 — required; bucket is private, no public URL needed
+        R2_ACCOUNT_ID: Joi.string().required(),
+        R2_ACCESS_KEY_ID: Joi.string().required(),
+        R2_SECRET_ACCESS_KEY: Joi.string().required(),
+        R2_BUCKET_NAME: Joi.string().required(),
       }),
     }),
 
@@ -80,6 +86,7 @@ import { AppInformationModule } from './app-information/app-information.module';
     }),
 
     PrismaModule,
+    StorageModule,
 
     AuthModule,
     UsersModule,
