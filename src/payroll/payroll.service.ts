@@ -30,7 +30,7 @@ export class PayrollService {
     const employeesDue = await this.prisma.repayment.count({
       where: {
         status: 'SCHEDULED',
-        salaryRequest: {
+        loanApplication: {
           employee: {
             employerId: employer.id,
           },
@@ -41,7 +41,7 @@ export class PayrollService {
     const pendingRecoveries = await this.prisma.repayment.count({
       where: {
         status: 'SCHEDULED',
-        salaryRequest: {
+        loanApplication: {
           employee: {
             employerId: employer.id,
           },
@@ -52,7 +52,7 @@ export class PayrollService {
     const completedRecoveries = await this.prisma.repayment.count({
       where: {
         status: 'PAID',
-        salaryRequest: {
+        loanApplication: {
           employee: {
             employerId: employer.id,
           },
@@ -63,7 +63,7 @@ export class PayrollService {
     const repayments = await this.prisma.repayment.findMany({
       where: {
         status: 'SCHEDULED',
-        salaryRequest: {
+        loanApplication: {
           employee: {
             employerId: employer.id,
           },
@@ -99,14 +99,14 @@ export class PayrollService {
 
     return this.prisma.repayment.findMany({
       where: {
-        salaryRequest: {
+        loanApplication: {
           employee: {
             employerId: employer.id,
           },
         },
       },
       include: {
-        salaryRequest: {
+        loanApplication: {
           include: {
             employee: true,
           },
@@ -163,7 +163,7 @@ export class PayrollService {
         dueDate: {
           lte: today,
         },
-        salaryRequest: {
+        loanApplication: {
           employee: {
             employerId,
           },
@@ -255,8 +255,8 @@ export class PayrollService {
         employerId,
         payrollMonth,
         repaymentIds: repayments.map((repayment) => repayment.id),
-        salaryRequestIds: repayments.map(
-          (repayment) => repayment.salaryRequestId,
+        loanApplicationIds: repayments.map(
+          (repayment) => repayment.loanApplicationId,
         ),
         processedRepayments: repayments.length,
       },

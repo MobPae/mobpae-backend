@@ -1,8 +1,11 @@
+/**
+ * @deprecated This module has been renamed to LoanLimits.
+ * SalaryLimitsService is a thin wrapper that delegates to prisma.loanLimit.
+ * It will be replaced by a dedicated loan-limits module in Phase A cleanup.
+ */
 import { BadRequestException, Injectable } from '@nestjs/common';
-
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-
 import { CreateSalaryLimitDto } from './dto/create-salary-limit.dto';
 
 @Injectable()
@@ -13,22 +16,15 @@ export class SalaryLimitsService {
   ) {}
 
   /**
-   * Creates a salary limit for an employee.
-   * Validation Flow:
-   * 1. Employee must have completed KYC:
-   *    - PAN verified
-   *    - AADHAR verified
-   *    - Salary Slip verified
-   * 2. Employee must not already have a salary limit assigned.
-   * 3. Employee must have a bank account registered.
-   * 4. Employee bank account must be verified by Admin.
-   * Only after all validations pass, a salary limit record is created for the employee.
+   * Creates a loan limit for an employee (renamed from salary limit).
+   * Validation:
+   * 1. Employee must have PAN, AADHAR, SALARY_SLIP all VERIFIED.
+   * 2. No existing loan limit.
+   * 3. Employee must have a verified bank account.
    */
   async create(dto: CreateSalaryLimitDto) {
     const employee = await this.prisma.employee.findUnique({
-      where: {
-        id: dto.employeeId,
-      },
+      where: { id: dto.employeeId },
     });
 
     if (!employee) {
@@ -36,15 +32,11 @@ export class SalaryLimitsService {
     }
 
     const verifiedDocs = await this.prisma.kycDocument.findMany({
-      where: {
-        employeeId: dto.employeeId,
-        status: 'VERIFIED',
-      },
+      where: { employeeId: dto.employeeId, status: 'VERIFIED' },
     });
 
     const pan = verifiedDocs.some((doc) => doc.documentType === 'PAN');
     const aadhar = verifiedDocs.some((doc) => doc.documentType === 'AADHAR');
-
     const salarySlip = verifiedDocs.some(
       (doc) => doc.documentType === 'SALARY_SLIP',
     );
@@ -53,20 +45,16 @@ export class SalaryLimitsService {
       throw new BadRequestException('Employee KYC is not completed');
     }
 
-    const existingLimit = await this.prisma.salaryLimit.findUnique({
-      where: {
-        employeeId: dto.employeeId,
-      },
+    const existingLimit = await this.prisma.loanLimit.findUnique({
+      where: { employeeId: dto.employeeId },
     });
 
     if (existingLimit) {
-      throw new BadRequestException('Salary limit already assigned');
+      throw new BadRequestException('Loan limit already assigned');
     }
 
     const bankAccount = await this.prisma.employeeBankAccount.findUnique({
-      where: {
-        employeeId: dto.employeeId,
-      },
+      where: { employeeId: dto.employeeId },
     });
 
     if (!bankAccount) {
@@ -77,34 +65,27 @@ export class SalaryLimitsService {
       throw new BadRequestException('Employee bank account is not verified');
     }
 
-    const salaryLimit = await this.prisma.salaryLimit.create({
+    const loanLimit = await this.prisma.loanLimit.create({
       data: {
         employeeId: dto.employeeId,
-        approvedLimit: dto.approvedLimit,
+        maximumEligibleAmount: dto.approvedLimit,
         maxRequestsPerCycle: dto.maxRequestsPerCycle,
         cooldownDays: dto.cooldownDays,
       },
     });
 
-    if (employee?.userId) {
+    if (employee.userId) {
       await this.notificationsService.createSystemNotification(
         employee.userId,
-        'Salary Limit Assigned',
+        'Loan Limit Assigned',
         `Your salary advance limit of ₹${dto.approvedLimit} has been approved.`,
       );
     }
 
-    return salaryLimit;
+    return loanLimit;
   }
 
-  /**
-   * Retrieves salary limit details for an employee.
-   */
   async findByEmployee(employeeId: string) {
-    return this.prisma.salaryLimit.findUnique({
-      where: {
-        employeeId,
-      },
-    });
+    return this.prisma.loanLimit.findUnique({ where: { employeeId } });
   }
 }

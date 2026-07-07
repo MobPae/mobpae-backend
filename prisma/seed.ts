@@ -1,3 +1,24 @@
+/**
+ * MobPae Seed — v3.1 Lending Platform
+ *
+ * Idempotent: safe to run multiple times.
+ * Run: npx prisma db seed
+ *
+ * What this seeds:
+ * 1. Admin user
+ * 2. Global platform Settings (OTP TTL, app version, maintenance)
+ * 3. AppInformation (about, terms, FAQ, etc.)
+ * 4. LoanProduct — Salary Advance (SA)
+ * 5. LoanProductConfig v1 for SA
+ * 6. MembershipPlanConfig rows (linked to SA product)
+ * 7. PostgreSQL sequence: loan_application_seq
+ * 8. Demo employer + 10 employees + KYC + bank accounts
+ * 9. EmployerProductConfig for demo employer
+ * 10. LoanLimits, Memberships (with planKey)
+ * 11. Demo LoanApplications + Disbursals + Repayments
+ * 12. Demo EmployerSettlements + Notifications
+ */
+
 import {
   DisbursalStatus,
   EmployeeStatus,
@@ -6,30 +27,15 @@ import {
   EmployerStatus,
   KycDocumentType,
   KycStatus,
+  LoanApplicationStatus,
   MembershipStatus,
   NotificationType,
   Prisma,
   PrismaClient,
   RepaymentStatus,
   Role,
-  SalaryRequestStatus,
   SelfieStatus,
 } from '@prisma/client';
-
-/**
- * Local enum mirrors AppInfoType in schema.prisma.
- * Replace with `import { AppInfoType } from '@prisma/client'` after `npx prisma generate`.
- */
-const AppInfoType = {
-  ABOUT: 'ABOUT',
-  PRIVACY_POLICY: 'PRIVACY_POLICY',
-  TERMS_CONDITIONS: 'TERMS_CONDITIONS',
-  HOW_IT_WORKS: 'HOW_IT_WORKS',
-  FAQ: 'FAQ',
-  CONTACT: 'CONTACT',
-  WHATS_NEW: 'WHATS_NEW',
-} as const;
-type AppInfoType = (typeof AppInfoType)[keyof typeof AppInfoType];
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -54,9 +60,7 @@ function isoMonth(offset = 0) {
 
 async function upsertUser(email: string, role: Role, password: string) {
   return prisma.user.upsert({
-    where: {
-      email,
-    },
+    where: { email },
     update: {
       role,
       isActive: true,
@@ -73,57 +77,171 @@ async function upsertUser(email: string, role: Role, password: string) {
   });
 }
 
+// ── 2. Global Settings ──────────────────────────────────────────────────────
 async function seedSettings() {
-  const settings = [
-    ['advancePercentage', '10'],
-    ['interestChargePercentage', '36'],
-    ['processingFeePercentage', '0'],
-    ['minimumSalary', '10000'],
-    ['maximumAdvance', '10000'],
-    ['requireKyc', 'true'],
-    ['requireBankVerification', 'true'],
-    ['allowMultipleRequestsPerCycle', 'false'],
-    ['allowRequestWithOutstandingBalance', 'false'],
-    ['MEMBERSHIP_AMOUNT', '449'],
-    ['MEMBERSHIP_VALIDITY_DAYS', '365'],
-    ['MEMBERSHIP_PAYMENT_UPI_ID', 'jyotirmoy.upd@okicici'],
-    ['MEMBERSHIP_PAYMENT_QR_URL', 'uploads/payment/googlepay-membership-qr.png'],
-    ['MEMBERSHIP_PAYMENT_BENEFICIARY', 'Jyotirmoy Upadhaya'],
-    [
-      'MEMBERSHIP_PAYMENT_INSTRUCTIONS',
-      'Pay the membership fee using UPI and upload the screenshot for verification.',
-    ],
-    ['EMPLOYER_GRACE_DAYS', '3'],
-    ['EMPLOYER_LATE_FEE_PERCENTAGE', '30'],
+  // Only global / platform-level settings. No lending rules — those live in LoanProductConfig.
+  const settings: { key: string; value: string }[] = [
+    { key: 'otp.ttl_seconds', value: '300' },
+    { key: 'otp.max_attempts', value: '5' },
+    { key: 'app.version_android', value: '2.0.0' },
+    { key: 'app.version_ios', value: '2.0.0' },
+    { key: 'app.maintenance_mode', value: 'false' },
+    {
+      key: 'app.maintenance_message',
+      value: 'We are currently under maintenance. Please try again shortly.',
+    },
+    { key: 'notifications.disbursal_enabled', value: 'true' },
+    { key: 'notifications.repayment_reminder_enabled', value: 'true' },
+    { key: 'notifications.repayment_reminder_days_before', value: '3' },
+    { key: 'employer.grace_days', value: '3' },
+    { key: 'employer.late_fee_percentage', value: '30' },
+    { key: 'membership.payment_upi_id', value: 'jyotirmoy.upd@okicici' },
+    {
+      key: 'membership.payment_beneficiary',
+      value: 'MobPae Financial Services',
+    },
+    {
+      key: 'membership.payment_instructions',
+      value:
+        'Pay using UPI and upload the screenshot. Verification is completed within 24 hours.',
+    },
   ];
 
-  for (const [key, value] of settings) {
+  for (const setting of settings) {
     await prisma.setting.upsert({
-      where: {
-        key,
-      },
-      update: {
-        value,
-      },
-      create: {
-        key,
-        value,
-      },
+      where: { key: setting.key },
+      update: {},
+      create: setting,
     });
   }
+
+  console.log(`  ✓ ${settings.length} global settings`);
 }
 
-async function seedEmployer(adminUserId: string) {
-  const employerUser = await upsertUser(
-    EMPLOYER_EMAIL,
-    Role.EMPLOYER,
-    DEMO_PASSWORD,
+// ── 4 & 5. LoanProduct + LoanProductConfig ──────────────────────────────────
+async function seedLendingCatalog() {
+  const saProduct = await prisma.loanProduct.upsert({
+    where: { productType: 'SA' },
+    update: {},
+    create: {
+      productType: 'SA',
+      displayName: 'Salary Advance',
+      description:
+        'Access a portion of your earned salary before payday. Fast, transparent, employer-linked.',
+      isActive: true,
+      launchDate: new Date('2026-07-01'),
+    },
+  });
+  console.log(`  ✓ LoanProduct: ${saProduct.displayName}`);
+
+  const existingActiveConfig = await prisma.loanProductConfig.findFirst({
+    where: { productId: saProduct.id, isActive: true },
+  });
+
+  if (!existingActiveConfig) {
+    await prisma.loanProductConfig.create({
+      data: {
+        productId: saProduct.id,
+        versionNumber: 1,
+        versionName: 'MVP Launch v1',
+        isActive: true,
+        effectiveFrom: new Date('2026-07-01'),
+        eligibilityRules: {
+          maximumAdvancePercentage: 50,
+          minimumAdvanceAmount: 1000,
+          minimumSalaryInHand: 10000,
+          minimumTenureMonths: 3,
+          requiresKyc: true,
+          requiresMembership: true,
+          requiresBankAccount: true,
+          requiresActiveSelfie: true,
+          maxRequestsPerCycle: 1,
+          cooldownDays: 0,
+        },
+        pricingRules: {
+          annualInterestRate: 36,
+          interestFreePercentage: 0,
+          processingFeeRate: 0,
+          gstRate: 0,
+        },
+        operationalRules: {
+          requiresEmployerApproval: true,
+          requiresAdminApproval: true,
+          minDisbursalDays: 0,
+          maxDisbursalDays: 3,
+          defaultFundingSource: 'MOBPAE',
+        },
+        createdBy: 'SEED',
+      },
+    });
+    console.log('  ✓ LoanProductConfig: SA v1 (active)');
+  } else {
+    console.log('  – LoanProductConfig: SA active config already exists');
+  }
+
+  return saProduct;
+}
+
+// ── 6. MembershipPlanConfig ──────────────────────────────────────────────────
+async function seedMembershipPlans(productId: string) {
+  const plans = [
+    {
+      planKey: 'SA_MONTHLY',
+      planName: 'Monthly',
+      amount: 99,
+      validityDays: 30,
+      billingLabel: '₹99 / month',
+      perMonthLabel: null,
+      isPreferred: false,
+      sortOrder: 1,
+    },
+    {
+      planKey: 'SA_QUARTERLY',
+      planName: 'Quarterly',
+      amount: 249,
+      validityDays: 90,
+      billingLabel: '₹249 / 3 months',
+      perMonthLabel: '₹83 / month',
+      isPreferred: true,
+      sortOrder: 2,
+    },
+    {
+      planKey: 'SA_ANNUAL',
+      planName: 'Annual',
+      amount: 799,
+      validityDays: 365,
+      billingLabel: '₹799 / year',
+      perMonthLabel: '₹67 / month',
+      isPreferred: false,
+      sortOrder: 3,
+    },
+  ];
+
+  for (const plan of plans) {
+    await prisma.membershipPlanConfig.upsert({
+      where: { planKey: plan.planKey },
+      update: {},
+      create: { productId, ...plan },
+    });
+  }
+
+  console.log(`  ✓ ${plans.length} MembershipPlanConfig rows`);
+}
+
+// ── 7. PostgreSQL sequence ───────────────────────────────────────────────────
+async function seedSequence() {
+  await prisma.$executeRawUnsafe(
+    `CREATE SEQUENCE IF NOT EXISTS loan_application_seq START 1 INCREMENT 1`,
   );
+  console.log('  ✓ PostgreSQL sequence: loan_application_seq');
+}
+
+// ── 8. Demo employer ─────────────────────────────────────────────────────────
+async function seedEmployer(adminUserId: string) {
+  const employerUser = await upsertUser(EMPLOYER_EMAIL, Role.EMPLOYER, DEMO_PASSWORD);
 
   const employer = await prisma.employer.upsert({
-    where: {
-      companyCode: 'NORTHSTAR',
-    },
+    where: { companyCode: 'NORTHSTAR' },
     update: {
       companyName: 'Northstar Retail Pvt Ltd',
       contactPerson: 'Rohan Mehta',
@@ -150,16 +268,12 @@ async function seedEmployer(adminUserId: string) {
   });
 
   const existingEnquiry = await prisma.employerEnquiry.findFirst({
-    where: {
-      email: EMPLOYER_EMAIL,
-    },
+    where: { email: EMPLOYER_EMAIL },
   });
 
   if (existingEnquiry) {
     await prisma.employerEnquiry.update({
-      where: {
-        id: existingEnquiry.id,
-      },
+      where: { id: existingEnquiry.id },
       data: {
         status: 'ONBOARDED',
         employerId: employer.id,
@@ -185,13 +299,29 @@ async function seedEmployer(adminUserId: string) {
     action: 'EMPLOYER_ACTIVATED',
     entityType: 'EMPLOYER',
     entityId: employer.id,
-    oldValue: { status: EmployerStatus.PENDING },
     newValue: { status: EmployerStatus.ACTIVE },
   });
 
   return employer;
 }
 
+// ── 9. EmployerProductConfig ─────────────────────────────────────────────────
+async function seedEmployerProductConfig(employerId: string, productId: string) {
+  await prisma.employerProductConfig.upsert({
+    where: { employerId_productId: { employerId, productId } },
+    update: {},
+    create: {
+      employerId,
+      productId,
+      maximumAdvancePercentageOverride: null, // use global default (50%)
+      requiresEmployerApproval: true,
+      isEnabled: true,
+    },
+  });
+  console.log('  ✓ EmployerProductConfig for Northstar (SA)');
+}
+
+// ── 10. Employees ────────────────────────────────────────────────────────────
 type DemoEmployeeSeed = {
   code: string;
   name: string;
@@ -205,7 +335,7 @@ type DemoEmployeeSeed = {
   membershipStatus: MembershipStatus;
 };
 
-const employees: DemoEmployeeSeed[] = [
+const employeeSeeds: DemoEmployeeSeed[] = [
   {
     code: 'EMP001',
     name: 'Arjun Sharma',
@@ -230,11 +360,7 @@ const employees: DemoEmployeeSeed[] = [
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
     selfieStatus: SelfieStatus.PENDING,
-    kyc: {
-      PAN: KycStatus.VERIFIED,
-      AADHAR: KycStatus.PENDING,
-      SALARY_SLIP: KycStatus.PENDING,
-    },
+    kyc: { PAN: KycStatus.VERIFIED, AADHAR: KycStatus.PENDING },
     bankVerified: false,
     membershipStatus: MembershipStatus.PENDING,
   },
@@ -310,9 +436,7 @@ const employees: DemoEmployeeSeed[] = [
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: false,
     selfieStatus: SelfieStatus.PENDING,
-    kyc: {
-      PAN: KycStatus.PENDING,
-    },
+    kyc: { PAN: KycStatus.PENDING },
     bankVerified: false,
     membershipStatus: MembershipStatus.PENDING,
   },
@@ -362,88 +486,69 @@ const employees: DemoEmployeeSeed[] = [
   },
 ];
 
-async function seedEmployees(employerId: string, adminUserId: string) {
-  const seeded: { id: string; employeeCode: string }[] = [];
+async function seedEmployees(
+  employerId: string,
+  adminUserId: string,
+  saProductId: string,
+) {
+  const seeded: { id: string; employeeCode: string; salary: number }[] = [];
 
-  for (const [index, employeeSeed] of employees.entries()) {
-    const email = `${employeeSeed.code.toLowerCase()}@northstar.mobpae.com`;
+  for (const [index, seed] of employeeSeeds.entries()) {
+    const email = `${seed.code.toLowerCase()}@northstar.mobpae.com`;
     const user = await upsertUser(email, Role.EMPLOYEE, DEMO_PASSWORD);
     const verifiedAt =
-      employeeSeed.selfieStatus === SelfieStatus.VERIFIED ? addDays(-8) : null;
+      seed.selfieStatus === SelfieStatus.VERIFIED ? addDays(-8) : null;
+
+    const hasSelfie =
+      seed.selfieStatus !== SelfieStatus.PENDING ||
+      Object.keys(seed.kyc).length > 0;
 
     const employee = await prisma.employee.upsert({
       where: {
-        employerId_employeeCode: {
-          employerId,
-          employeeCode: employeeSeed.code,
-        },
+        employerId_employeeCode: { employerId, employeeCode: seed.code },
       },
       update: {
         userId: user.id,
-        name: employeeSeed.name,
+        name: seed.name,
         email,
-        phone: employeeSeed.phone,
-        salaryInHand: employeeSeed.salary,
-        appActivated: employeeSeed.appActivated,
-        employmentStatus: employeeSeed.employmentStatus,
-        profilePhotoUrl: `uploads/demo/${employeeSeed.code.toLowerCase()}-profile.png`,
-        selfieUrl:
-          employeeSeed.selfieStatus === SelfieStatus.PENDING &&
-          Object.keys(employeeSeed.kyc).length === 0
-            ? null
-            : `uploads/demo/${employeeSeed.code.toLowerCase()}-selfie.png`,
-        selfieStatus: employeeSeed.selfieStatus,
+        phone: seed.phone,
+        salaryInHand: seed.salary,
+        appActivated: seed.appActivated,
+        employmentStatus: seed.employmentStatus,
+        selfieStatus: seed.selfieStatus,
         selfieVerifiedAt: verifiedAt,
         selfieVerifiedBy: verifiedAt ? adminUserId : null,
         joiningDate: addDays(-120 + index * 4),
+        selfieUrl: hasSelfie
+          ? `uploads/demo/${seed.code.toLowerCase()}-selfie.png`
+          : null,
       },
       create: {
         userId: user.id,
         employerId,
-        employeeCode: employeeSeed.code,
-        name: employeeSeed.name,
+        employeeCode: seed.code,
+        name: seed.name,
         email,
-        phone: employeeSeed.phone,
-        salaryInHand: employeeSeed.salary,
-        appActivated: employeeSeed.appActivated,
-        employmentStatus: employeeSeed.employmentStatus,
-        profilePhotoUrl: `uploads/demo/${employeeSeed.code.toLowerCase()}-profile.png`,
-        selfieUrl:
-          employeeSeed.selfieStatus === SelfieStatus.PENDING &&
-          Object.keys(employeeSeed.kyc).length === 0
-            ? null
-            : `uploads/demo/${employeeSeed.code.toLowerCase()}-selfie.png`,
-        selfieStatus: employeeSeed.selfieStatus,
+        phone: seed.phone,
+        salaryInHand: seed.salary,
+        appActivated: seed.appActivated,
+        employmentStatus: seed.employmentStatus,
+        selfieStatus: seed.selfieStatus,
         selfieVerifiedAt: verifiedAt,
         selfieVerifiedBy: verifiedAt ? adminUserId : null,
         joiningDate: addDays(-120 + index * 4),
+        selfieUrl: hasSelfie
+          ? `uploads/demo/${seed.code.toLowerCase()}-selfie.png`
+          : null,
       },
     });
 
-    await seedEmployeeKyc(employee.id, employeeSeed.kyc, adminUserId);
-    await seedBankAccount(employee.id, employeeSeed);
-    await seedMembership(
-      employee.id,
-      employeeSeed.membershipStatus,
-      adminUserId,
-    );
-    await seedSalaryLimit(employee.id, employeeSeed.salary);
-    await upsertAuditLog(
-      `demo-audit-${employeeSeed.code.toLowerCase()}`,
-      adminUserId,
-      {
-        action: 'EMPLOYEE_CREATED',
-        entityType: 'EMPLOYEE',
-        entityId: employee.id,
-        newValue: {
-          employeeCode: employee.employeeCode,
-          name: employee.name,
-          email: employee.email,
-        },
-      },
-    );
+    await seedEmployeeKyc(employee.id, seed.kyc, adminUserId);
+    await seedBankAccount(employee.id, seed);
+    await seedMembership(employee.id, seed.membershipStatus, adminUserId, saProductId);
+    await seedLoanLimit(employee.id, seed.salary);
 
-    seeded.push(employee);
+    seeded.push({ id: employee.id, employeeCode: seed.code, salary: seed.salary });
   }
 
   return seeded;
@@ -454,40 +559,32 @@ async function seedEmployeeKyc(
   kyc: Partial<Record<KycDocumentType, KycStatus>>,
   adminUserId: string,
 ) {
-  for (const documentType of [
+  for (const docType of [
     KycDocumentType.PAN,
     KycDocumentType.AADHAR,
     KycDocumentType.SALARY_SLIP,
   ]) {
-    const status = kyc[documentType];
+    const status = kyc[docType];
 
     if (!status) {
       await prisma.kycDocument.deleteMany({
-        where: {
-          employeeId,
-          documentType,
-        },
+        where: { employeeId, documentType: docType },
       });
       continue;
     }
 
     await prisma.kycDocument.upsert({
-      where: {
-        employeeId_documentType: {
-          employeeId,
-          documentType,
-        },
-      },
+      where: { employeeId_documentType: { employeeId, documentType: docType } },
       update: {
-        filePath: `uploads/demo/${employeeId}-${documentType.toLowerCase()}.pdf`,
+        filePath: `uploads/demo/${employeeId}-${docType.toLowerCase()}.pdf`,
         status,
         verifiedBy: status === KycStatus.VERIFIED ? adminUserId : null,
         verifiedAt: status === KycStatus.VERIFIED ? addDays(-7) : null,
       },
       create: {
         employeeId,
-        documentType,
-        filePath: `uploads/demo/${employeeId}-${documentType.toLowerCase()}.pdf`,
+        documentType: docType,
+        filePath: `uploads/demo/${employeeId}-${docType.toLowerCase()}.pdf`,
         status,
         verifiedBy: status === KycStatus.VERIFIED ? adminUserId : null,
         verifiedAt: status === KycStatus.VERIFIED ? addDays(-7) : null,
@@ -496,30 +593,25 @@ async function seedEmployeeKyc(
   }
 }
 
-async function seedBankAccount(
-  employeeId: string,
-  employeeSeed: DemoEmployeeSeed,
-) {
+async function seedBankAccount(employeeId: string, seed: DemoEmployeeSeed) {
   await prisma.employeeBankAccount.upsert({
-    where: {
-      employeeId,
-    },
+    where: { employeeId },
     update: {
-      accountHolderName: employeeSeed.name,
-      accountNumber: `50123456${employeeSeed.code.slice(-3)}`,
+      accountHolderName: seed.name,
+      accountNumber: `50123456${seed.code.slice(-3)}`,
       ifscCode: 'HDFC0001234',
       bankName: 'HDFC Bank',
-      upiId: `${employeeSeed.code.toLowerCase()}@okhdfcbank`,
-      verified: employeeSeed.bankVerified,
+      upiId: `${seed.code.toLowerCase()}@okhdfcbank`,
+      verified: seed.bankVerified,
     },
     create: {
       employeeId,
-      accountHolderName: employeeSeed.name,
-      accountNumber: `50123456${employeeSeed.code.slice(-3)}`,
+      accountHolderName: seed.name,
+      accountNumber: `50123456${seed.code.slice(-3)}`,
       ifscCode: 'HDFC0001234',
       bankName: 'HDFC Bank',
-      upiId: `${employeeSeed.code.toLowerCase()}@okhdfcbank`,
-      verified: employeeSeed.bankVerified,
+      upiId: `${seed.code.toLowerCase()}@okhdfcbank`,
+      verified: seed.bankVerified,
     },
   });
 }
@@ -528,32 +620,31 @@ async function seedMembership(
   employeeId: string,
   status: MembershipStatus,
   adminUserId: string,
+  productId: string,
 ) {
-  const startDate =
-    status === MembershipStatus.EXPIRED ? addDays(-430) : addDays(-45);
-  const endDate =
-    status === MembershipStatus.EXPIRED ? addDays(-30) : addDays(320);
+  const isExpired = status === MembershipStatus.EXPIRED;
+  const startDate = isExpired ? addDays(-430) : addDays(-45);
+  const endDate = isExpired ? addDays(-30) : addDays(320);
+  const isActive = status === MembershipStatus.ACTIVE;
 
   await prisma.membership.upsert({
-    where: {
-      employeeId,
-    },
+    where: { employeeId },
     update: {
+      planKey: 'SA_ANNUAL',
+      planType: 'ANNUAL',
       planName: 'Annual Membership',
-      amount: status === MembershipStatus.ACTIVE ? 449 : 0,
+      amount: isActive ? 799 : 0,
       startDate,
       endDate,
       status,
-      verifiedBy: status === MembershipStatus.ACTIVE ? adminUserId : null,
-      verifiedAt: status === MembershipStatus.ACTIVE ? addDays(-45) : null,
-      paymentReference:
-        status === MembershipStatus.ACTIVE
-          ? `DEMO-MEM-${employeeId.slice(0, 8)}`
-          : null,
-      paymentScreenshot:
-        status === MembershipStatus.ACTIVE
-          ? `uploads/demo/membership-${employeeId.slice(0, 8)}.png`
-          : null,
+      verifiedBy: isActive ? adminUserId : null,
+      verifiedAt: isActive ? addDays(-45) : null,
+      paymentReference: isActive
+        ? `DEMO-MEM-${employeeId.slice(0, 8)}`
+        : null,
+      paymentScreenshot: isActive
+        ? `uploads/demo/membership-${employeeId.slice(0, 8)}.png`
+        : null,
       remarks:
         status === MembershipStatus.REJECTED
           ? 'Demo rejected membership request'
@@ -561,21 +652,21 @@ async function seedMembership(
     },
     create: {
       employeeId,
+      planKey: 'SA_ANNUAL',
+      planType: 'ANNUAL',
       planName: 'Annual Membership',
-      amount: status === MembershipStatus.ACTIVE ? 449 : 0,
+      amount: isActive ? 799 : 0,
       startDate,
       endDate,
       status,
-      verifiedBy: status === MembershipStatus.ACTIVE ? adminUserId : null,
-      verifiedAt: status === MembershipStatus.ACTIVE ? addDays(-45) : null,
-      paymentReference:
-        status === MembershipStatus.ACTIVE
-          ? `DEMO-MEM-${employeeId.slice(0, 8)}`
-          : null,
-      paymentScreenshot:
-        status === MembershipStatus.ACTIVE
-          ? `uploads/demo/membership-${employeeId.slice(0, 8)}.png`
-          : null,
+      verifiedBy: isActive ? adminUserId : null,
+      verifiedAt: isActive ? addDays(-45) : null,
+      paymentReference: isActive
+        ? `DEMO-MEM-${employeeId.slice(0, 8)}`
+        : null,
+      paymentScreenshot: isActive
+        ? `uploads/demo/membership-${employeeId.slice(0, 8)}.png`
+        : null,
       remarks:
         status === MembershipStatus.REJECTED
           ? 'Demo rejected membership request'
@@ -584,243 +675,251 @@ async function seedMembership(
   });
 }
 
-async function seedSalaryLimit(employeeId: string, salary: number) {
-  await prisma.salaryLimit.upsert({
-    where: {
-      employeeId,
-    },
+async function seedLoanLimit(employeeId: string, salary: number) {
+  await prisma.loanLimit.upsert({
+    where: { employeeId },
     update: {
-      approvedLimit: Math.min(salary * 0.1, 10000),
+      maximumEligibleAmount: Math.min(salary * 0.5, 25000),
       maxRequestsPerCycle: 1,
       cooldownDays: 0,
     },
     create: {
       employeeId,
-      approvedLimit: Math.min(salary * 0.1, 10000),
+      maximumEligibleAmount: Math.min(salary * 0.5, 25000),
       maxRequestsPerCycle: 1,
       cooldownDays: 0,
     },
   });
 }
 
-async function seedSalaryWorkflows(
+// ── 11. Demo LoanApplications ────────────────────────────────────────────────
+async function seedLoanApplicationWorkflows(
   employerId: string,
-  seededEmployees: { id: string; employeeCode: string }[],
+  seededEmployees: { id: string; employeeCode: string; salary: number }[],
   adminUserId: string,
   employerUserId: string,
+  productId: string,
+  configId: string,
 ) {
-  const workflow: {
-    id: string;
+  type WorkflowItem = {
+    applicationId: string;
+    applicationNumber: string;
     employeeCode: string;
-    amount: number;
-    status: SalaryRequestStatus;
-    requestedAt: Date;
-    approvedAt?: Date;
-  }[] = [
+    requestedAmount: number;
+    status: LoanApplicationStatus;
+    submittedAt: Date;
+    employerApprovedAt?: Date;
+    adminApprovedAt?: Date;
+  };
+
+  const workflow: WorkflowItem[] = [
     {
-      id: 'demo-salary-request-submitted',
+      applicationId: 'demo-loan-app-submitted',
+      applicationNumber: 'MP-SA-2026-00000001',
       employeeCode: 'EMP001',
-      amount: 5000,
-      status: SalaryRequestStatus.SUBMITTED,
-      requestedAt: addDays(-1),
+      requestedAmount: 5000,
+      status: LoanApplicationStatus.SUBMITTED,
+      submittedAt: addDays(-1),
     },
     {
-      id: 'demo-salary-request-approved',
+      applicationId: 'demo-loan-app-employer-approved',
+      applicationNumber: 'MP-SA-2026-00000002',
       employeeCode: 'EMP003',
-      amount: 4200,
-      status: SalaryRequestStatus.EMPLOYER_APPROVED,
-      requestedAt: addDays(-3),
-      approvedAt: addDays(-2),
+      requestedAmount: 4200,
+      status: LoanApplicationStatus.EMPLOYER_APPROVED,
+      submittedAt: addDays(-3),
+      employerApprovedAt: addDays(-2),
     },
     {
-      id: 'demo-salary-request-ready',
+      applicationId: 'demo-loan-app-ready',
+      applicationNumber: 'MP-SA-2026-00000003',
       employeeCode: 'EMP005',
-      amount: 5000,
-      status: SalaryRequestStatus.READY_FOR_DISBURSAL,
-      requestedAt: addDays(-5),
-      approvedAt: addDays(-4),
+      requestedAmount: 5000,
+      status: LoanApplicationStatus.READY_FOR_DISBURSAL,
+      submittedAt: addDays(-5),
+      employerApprovedAt: addDays(-4),
+      adminApprovedAt: addDays(-3),
     },
     {
-      id: 'demo-salary-request-disbursed',
+      applicationId: 'demo-loan-app-disbursed',
+      applicationNumber: 'MP-SA-2026-00000004',
       employeeCode: 'EMP006',
-      amount: 6500,
-      status: SalaryRequestStatus.DISBURSED,
-      requestedAt: addDays(-10),
-      approvedAt: addDays(-9),
+      requestedAmount: 6500,
+      status: LoanApplicationStatus.REPAYMENT_SCHEDULED,
+      submittedAt: addDays(-10),
+      employerApprovedAt: addDays(-9),
+      adminApprovedAt: addDays(-8),
     },
     {
-      id: 'demo-salary-request-repaid',
+      applicationId: 'demo-loan-app-repaid',
+      applicationNumber: 'MP-SA-2026-00000005',
       employeeCode: 'EMP008',
-      amount: 8000,
-      status: SalaryRequestStatus.REPAID,
-      requestedAt: addDays(-40),
-      approvedAt: addDays(-39),
+      requestedAmount: 8000,
+      status: LoanApplicationStatus.REPAID,
+      submittedAt: addDays(-40),
+      employerApprovedAt: addDays(-39),
+      adminApprovedAt: addDays(-38),
     },
   ];
 
   for (const item of workflow) {
-    const employee = seededEmployees.find(
-      (record) => record.employeeCode === item.employeeCode,
+    const emp = seededEmployees.find((e) => e.employeeCode === item.employeeCode);
+    if (!emp) continue;
+
+    // Snapshot values (realistic for demo)
+    const payrollCutoffDate = 22;
+    const payrollDate = 28;
+    const submittedDay = item.submittedAt.getDate();
+    // recovery = next payroll after cutoff
+    const recoveryDate =
+      submittedDay <= payrollCutoffDate
+        ? new Date(
+            item.submittedAt.getFullYear(),
+            item.submittedAt.getMonth(),
+            payrollDate,
+          )
+        : new Date(
+            item.submittedAt.getFullYear(),
+            item.submittedAt.getMonth() + 1,
+            payrollDate,
+          );
+    const interestDays = Math.max(
+      1,
+      Math.round((recoveryDate.getTime() - item.submittedAt.getTime()) / day),
     );
 
-    if (!employee) continue;
+    const isEmployerApproved =
+      item.status !== LoanApplicationStatus.SUBMITTED &&
+      item.status !== LoanApplicationStatus.EMPLOYER_REJECTED;
+    const isAdminApproved =
+      item.status === LoanApplicationStatus.READY_FOR_DISBURSAL ||
+      item.status === LoanApplicationStatus.DISBURSED ||
+      item.status === LoanApplicationStatus.REPAYMENT_SCHEDULED ||
+      item.status === LoanApplicationStatus.REPAID;
 
-    const salaryRequest = await prisma.salaryRequest.upsert({
-      where: {
-        id: item.id,
-      },
-      update: {
-        employeeId: employee.id,
-        employerId,
-        amount: item.amount,
-        approvedAmount:
-          item.status === SalaryRequestStatus.SUBMITTED ? null : item.amount,
-        approvedBy:
-          item.status === SalaryRequestStatus.SUBMITTED ? null : employerUserId,
-        approvedAt: item.approvedAt ?? null,
-        requestedAt: item.requestedAt,
-        repaymentDate:
-          item.status === SalaryRequestStatus.SUBMITTED ? null : addDays(14),
-        status: item.status,
-        reason: 'Demo salary advance',
-        remarks: null,
-      },
+    const loanApp = await prisma.loanApplication.upsert({
+      where: { id: item.applicationId },
+      update: { status: item.status },
       create: {
-        id: item.id,
-        employeeId: employee.id,
+        id: item.applicationId,
+        applicationNumber: item.applicationNumber,
+        employeeId: emp.id,
         employerId,
-        amount: item.amount,
-        approvedAmount:
-          item.status === SalaryRequestStatus.SUBMITTED ? null : item.amount,
-        approvedBy:
-          item.status === SalaryRequestStatus.SUBMITTED ? null : employerUserId,
-        approvedAt: item.approvedAt ?? null,
-        requestedAt: item.requestedAt,
-        repaymentDate:
-          item.status === SalaryRequestStatus.SUBMITTED ? null : addDays(14),
+        productId,
+        configId,
+        requestedAmount: item.requestedAmount,
+        employerApprovedAmount: isEmployerApproved ? item.requestedAmount : null,
+        adminApprovedAmount: isAdminApproved ? item.requestedAmount : null,
+        purposeCategory: 'EMERGENCY',
         status: item.status,
-        reason: 'Demo salary advance',
+        submittedAt: item.submittedAt,
+        // Snapshot
+        snapshotAnnualInterestRate: 36,
+        snapshotInterestFreePercentage: 0,
+        snapshotProcessingFeeRate: 0,
+        snapshotGstRate: 0,
+        snapshotMaxAdvancePercentage: 50,
+        snapshotSalaryInHand: emp.salary,
+        snapshotInterestDays: interestDays,
+        snapshotRecoveryDate: recoveryDate,
+        // Approval tracking
+        employerApprovedBy: isEmployerApproved ? employerUserId : null,
+        employerApprovedAt: item.employerApprovedAt ?? null,
+        adminApprovedBy: isAdminApproved ? adminUserId : null,
+        adminApprovedAt: item.adminApprovedAt ?? null,
+        remarks: 'Demo loan application',
       },
     });
 
-    await upsertAuditLog(`demo-audit-${item.id}`, employerUserId, {
-      action:
-        item.status === SalaryRequestStatus.SUBMITTED
-          ? 'SALARY_REQUEST_CREATED'
-          : 'SALARY_REQUEST_APPROVED',
-      entityType: 'SALARY_REQUEST',
-      entityId: salaryRequest.id,
-      newValue: {
-        amount: Number(salaryRequest.amount),
-        status: salaryRequest.status,
+    // History entry
+    await prisma.loanApplicationHistory.upsert({
+      where: { id: `history-${item.applicationId}` },
+      update: {},
+      create: {
+        id: `history-${item.applicationId}`,
+        loanApplicationId: loanApp.id,
+        previousStatus: null,
+        newStatus: LoanApplicationStatus.SUBMITTED,
+        changedBy: emp.id,
+        actorRole: 'EMPLOYEE',
+        remarks: 'Application submitted',
+        createdAt: item.submittedAt,
       },
     });
 
-    const statusesWithDisbursal: SalaryRequestStatus[] = [
-      SalaryRequestStatus.READY_FOR_DISBURSAL,
-      SalaryRequestStatus.DISBURSED,
-      SalaryRequestStatus.REPAID,
-    ];
-
-    if (statusesWithDisbursal.includes(item.status)) {
-      await seedDisbursalAndRepayment(salaryRequest, adminUserId);
+    // Disbursal + Repayment for applicable statuses
+    if (isAdminApproved && item.status !== LoanApplicationStatus.READY_FOR_DISBURSAL) {
+      await seedDisbursalAndRepayment(
+        loanApp.id,
+        item.requestedAmount,
+        interestDays,
+        recoveryDate,
+        item.status === LoanApplicationStatus.REPAID,
+        adminUserId,
+        item.submittedAt,
+      );
     }
   }
+
+  console.log(`  ✓ ${workflow.length} demo LoanApplications`);
 }
 
 async function seedDisbursalAndRepayment(
-  salaryRequest: {
-    id: string;
-    amount: unknown;
-    status: SalaryRequestStatus;
-  },
+  loanApplicationId: string,
+  amount: number,
+  interestDays: number,
+  dueDate: Date,
+  isPaid: boolean,
   adminUserId: string,
+  submittedAt: Date,
 ) {
-  const disbursedStatuses: SalaryRequestStatus[] = [
-    SalaryRequestStatus.DISBURSED,
-    SalaryRequestStatus.REPAID,
-  ];
-  const shouldBeDisbursed = disbursedStatuses.includes(salaryRequest.status);
-  const disbursalStatus = shouldBeDisbursed
-    ? DisbursalStatus.DISBURSED
-    : DisbursalStatus.PENDING;
+  const disbursedAt = new Date(submittedAt.getTime() + 2 * day);
+  const paidDate = isPaid ? new Date(dueDate.getTime() + 2 * day) : null;
+
+  // interest = principal × (rate/365) × days  (36% p.a.)
+  const principal = amount;
+  const interestAmount = parseFloat(
+    ((principal * 0.36 * interestDays) / 365).toFixed(2),
+  );
+  const totalAmount = parseFloat((principal + interestAmount).toFixed(2));
 
   await prisma.disbursal.upsert({
-    where: {
-      salaryRequestId: salaryRequest.id,
-    },
-    update: {
-      amount: Number(salaryRequest.amount),
-      disbursedBy: shouldBeDisbursed ? adminUserId : null,
-      disbursedAt: shouldBeDisbursed ? addDays(-8) : null,
-      status: disbursalStatus,
-      remarks: shouldBeDisbursed
-        ? 'Demo disbursal completed'
-        : 'Awaiting payout',
-    },
+    where: { loanApplicationId },
+    update: {},
     create: {
-      salaryRequestId: salaryRequest.id,
-      amount: Number(salaryRequest.amount),
-      disbursedBy: shouldBeDisbursed ? adminUserId : null,
-      disbursedAt: shouldBeDisbursed ? addDays(-8) : null,
-      status: disbursalStatus,
-      remarks: shouldBeDisbursed
-        ? 'Demo disbursal completed'
-        : 'Awaiting payout',
+      loanApplicationId,
+      disbursedAmount: principal,
+      fundingSource: 'MOBPAE',
+      disbursedBy: adminUserId,
+      disbursedAt,
+      status: DisbursalStatus.DISBURSED,
+      remarks: 'Demo disbursal completed',
     },
   });
-
-  if (!shouldBeDisbursed) return;
-
-  const principal = Number(salaryRequest.amount);
-  const interest = Number((principal * 0.01).toFixed(2));
-  const total = principal + interest;
-  const paid = salaryRequest.status === SalaryRequestStatus.REPAID;
 
   await prisma.repayment.upsert({
-    where: {
-      salaryRequestId: salaryRequest.id,
-    },
-    update: {
-      dueDate: paid ? addDays(-12) : addDays(10),
-      paidDate: paid ? addDays(-10) : null,
-      status: paid ? RepaymentStatus.PAID : RepaymentStatus.SCHEDULED,
-      principalAmount: principal,
-      interestAmount: interest,
-      totalAmount: total,
-      interestRate: 36,
-      interestDays: 10,
-      remarks: paid ? 'Recovered through payroll' : 'Scheduled for payroll',
-    },
+    where: { loanApplicationId },
+    update: {},
     create: {
-      salaryRequestId: salaryRequest.id,
-      dueDate: paid ? addDays(-12) : addDays(10),
-      paidDate: paid ? addDays(-10) : null,
-      status: paid ? RepaymentStatus.PAID : RepaymentStatus.SCHEDULED,
+      loanApplicationId,
+      dueDate,
+      paidDate,
+      status: isPaid ? RepaymentStatus.PAID : RepaymentStatus.SCHEDULED,
       principalAmount: principal,
-      interestAmount: interest,
-      totalAmount: total,
+      interestFreeAmount: 0,
+      interestBearingAmount: principal,
+      interestAmount,
+      processingFee: 0,
+      gstAmount: 0,
+      totalAmount,
       interestRate: 36,
-      interestDays: 10,
-      remarks: paid ? 'Recovered through payroll' : 'Scheduled for payroll',
+      interestDays,
+      remarks: isPaid ? 'Recovered through payroll' : 'Scheduled for payroll',
     },
   });
-
-  await upsertAuditLog(
-    `demo-audit-disbursed-${salaryRequest.id}`,
-    adminUserId,
-    {
-      action: 'DISBURSAL_DISBURSED',
-      entityType: 'DISBURSAL',
-      entityId: salaryRequest.id,
-      newValue: {
-        amount: principal,
-        status: disbursalStatus,
-      },
-    },
-  );
 }
 
+// ── 12. Settlements + Notifications ─────────────────────────────────────────
 async function seedSettlements(employerId: string, adminUserId: string) {
   const settlements = [
     {
@@ -841,68 +940,47 @@ async function seedSettlements(employerId: string, adminUserId: string) {
       principalAmount: 6500,
       interestAmount: 50,
     },
-    {
-      payrollMonth: isoMonth(1),
-      status: EmployerSettlementStatus.PENDING,
-      paidDate: null,
-      referenceNumber: null,
-      outstandingAmount: 0,
-      principalAmount: 0,
-      interestAmount: 0,
-    },
   ];
 
-  for (const settlement of settlements) {
-    const totalAmount =
-      settlement.principalAmount + settlement.interestAmount + 0;
-
+  for (const s of settlements) {
+    const totalAmount = s.principalAmount + s.interestAmount;
     const record = await prisma.employerSettlement.upsert({
       where: {
-        employerId_payrollMonth: {
-          employerId,
-          payrollMonth: settlement.payrollMonth,
-        },
+        employerId_payrollMonth: { employerId, payrollMonth: s.payrollMonth },
       },
       update: {
-        principalAmount: settlement.principalAmount,
-        interestAmount: settlement.interestAmount,
+        principalAmount: s.principalAmount,
+        interestAmount: s.interestAmount,
         lateFeeAmount: 0,
         totalAmount,
-        outstandingAmount: settlement.outstandingAmount,
-        dueDate:
-          settlement.status === EmployerSettlementStatus.PAID
-            ? addDays(-12)
-            : addDays(10),
-        paidDate: settlement.paidDate,
-        status: settlement.status,
-        referenceNumber: settlement.referenceNumber,
-        notes: 'Demo settlement generated by seed',
+        outstandingAmount: s.outstandingAmount,
+        dueDate: s.status === EmployerSettlementStatus.PAID ? addDays(-12) : addDays(10),
+        paidDate: s.paidDate,
+        status: s.status,
+        referenceNumber: s.referenceNumber,
       },
       create: {
         employerId,
-        payrollMonth: settlement.payrollMonth,
-        principalAmount: settlement.principalAmount,
-        interestAmount: settlement.interestAmount,
+        payrollMonth: s.payrollMonth,
+        principalAmount: s.principalAmount,
+        interestAmount: s.interestAmount,
         lateFeeAmount: 0,
         totalAmount,
-        outstandingAmount: settlement.outstandingAmount,
-        dueDate:
-          settlement.status === EmployerSettlementStatus.PAID
-            ? addDays(-12)
-            : addDays(10),
-        paidDate: settlement.paidDate,
-        status: settlement.status,
-        referenceNumber: settlement.referenceNumber,
+        outstandingAmount: s.outstandingAmount,
+        dueDate: s.status === EmployerSettlementStatus.PAID ? addDays(-12) : addDays(10),
+        paidDate: s.paidDate,
+        status: s.status,
+        referenceNumber: s.referenceNumber,
         notes: 'Demo settlement generated by seed',
       },
     });
 
     await upsertAuditLog(
-      `demo-audit-settlement-${settlement.payrollMonth}`,
+      `demo-audit-settlement-${s.payrollMonth}`,
       adminUserId,
       {
         action:
-          settlement.status === EmployerSettlementStatus.PAID
+          s.status === EmployerSettlementStatus.PAID
             ? 'SETTLEMENT_PAID'
             : 'SETTLEMENT_GENERATED',
         entityType: 'SETTLEMENT',
@@ -915,51 +993,102 @@ async function seedSettlements(employerId: string, adminUserId: string) {
       },
     );
   }
+
+  console.log(`  ✓ ${settlements.length} demo EmployerSettlements`);
 }
 
 async function seedNotifications(adminUserId: string, employerUserId: string) {
   const notifications = [
     {
-      id: 'demo-notification-admin-kyc',
+      id: 'demo-notif-admin-kyc',
       userId: adminUserId,
       title: 'KYC review queue',
       message: 'Three demo employees have pending or rejected KYC documents.',
     },
     {
-      id: 'demo-notification-admin-salary',
+      id: 'demo-notif-admin-disbursal',
       userId: adminUserId,
       title: 'Disbursal ready',
-      message: 'One salary advance is ready for admin disbursal.',
+      message: 'One loan application is ready for admin disbursal.',
     },
     {
-      id: 'demo-notification-employer-request',
+      id: 'demo-notif-employer-request',
       userId: employerUserId,
-      title: 'Salary request pending',
+      title: 'Loan application pending',
       message: 'Arjun Sharma submitted a salary advance request.',
     },
   ];
 
-  for (const notification of notifications) {
+  for (const n of notifications) {
     await prisma.notification.upsert({
-      where: {
-        id: notification.id,
-      },
-      update: {
-        userId: notification.userId,
-        title: notification.title,
-        message: notification.message,
-        type: NotificationType.SYSTEM,
-        isRead: false,
-      },
-      create: {
-        ...notification,
-        type: NotificationType.SYSTEM,
-        isRead: false,
-      },
+      where: { id: n.id },
+      update: {},
+      create: { ...n, type: NotificationType.SYSTEM, isRead: false },
     });
   }
+
+  console.log(`  ✓ ${notifications.length} demo Notifications`);
 }
 
+// ── App Information ──────────────────────────────────────────────────────────
+async function seedAppInformation() {
+  const entries = [
+    {
+      type: 'ABOUT' as const,
+      title: 'About MobPae',
+      version: '2.0.0',
+      content: `MobPae is a salary advance platform that empowers employees to access a portion of their earned salary before payday — instantly, securely, and without hidden charges.\n\nWe partner with employers to offer this benefit as part of their employee wellness programme.`,
+    },
+    {
+      type: 'PRIVACY_POLICY' as const,
+      title: 'Privacy Policy',
+      version: '1.0.0',
+      content: `Last updated: July 2026\n\nMobPae collects only the information necessary to process salary advances: name, email, phone, KYC documents, bank account details, and device/usage data. Data is encrypted in transit and at rest. We never sell personal data. Contact support@mobpae.com for privacy queries.`,
+    },
+    {
+      type: 'TERMS_CONDITIONS' as const,
+      title: 'Terms & Conditions',
+      version: '1.0.0',
+      content: `Last updated: July 2026\n\nBy using MobPae you agree to these Terms. Salary advances are limited to your employer-approved percentage of salary. Repayment is deducted automatically from your next payroll. An active MobPae membership is required to access advances.`,
+    },
+    {
+      type: 'HOW_IT_WORKS' as const,
+      title: 'How It Works',
+      version: '1.0.0',
+      content: `1. Sign Up — Log in with credentials sent by your employer.\n2. Complete KYC — Upload Aadhaar, PAN, salary slip.\n3. Add Bank Account — Link where you want the advance credited.\n4. Activate Membership — Unlock salary advances.\n5. Request Advance — Submit the amount needed.\n6. Receive Money — Advance is credited once approved.\n7. Auto-Repayment — Deducted from your next salary.`,
+    },
+    {
+      type: 'FAQ' as const,
+      title: 'FAQ',
+      version: '1.0.0',
+      content: `Q: How much can I borrow?\nA: Up to 50% of your monthly salary (subject to your employer's policy and MobPae limit).\n\nQ: What are the charges?\nA: Simple interest at 36% p.a., calculated daily from request date to payroll date. No processing fees.\n\nQ: How fast is disbursal?\nA: Typically within 1–3 business days after admin approval.\n\nQ: Can I have multiple advances?\nA: Only one active advance at a time. Apply again after full repayment.`,
+    },
+    {
+      type: 'CONTACT' as const,
+      title: 'Contact & Support',
+      version: '1.0.0',
+      content: `Email: support@mobpae.com\nBusiness hours: Mon–Fri 9AM–6PM IST\nWebsite: https://mobpae.com`,
+    },
+    {
+      type: 'WHATS_NEW' as const,
+      title: "What's New",
+      version: '2.0.0',
+      content: `Version 2.0.0 — July 2026\n- Rebuilt lending engine as a product-based platform\n- Versioned product configuration\n- Improved eligibility and pricing engine\n- Human-readable application numbers (MP-SA-2026-XXXXXXXX)\n- Detailed repayment breakdown`,
+    },
+  ];
+
+  for (const entry of entries) {
+    await (prisma.appInformation as any).upsert({
+      where: { type: entry.type },
+      update: { title: entry.title, content: entry.content, version: entry.version },
+      create: { ...entry, isActive: true },
+    });
+  }
+
+  console.log(`  ✓ ${entries.length} AppInformation rows`);
+}
+
+// ── Audit log helper ─────────────────────────────────────────────────────────
 async function upsertAuditLog(
   id: string,
   userId: string | null,
@@ -971,7 +1100,7 @@ async function upsertAuditLog(
     newValue?: Record<string, unknown> | null;
   },
 ) {
-  const auditData: {
+  const payload: {
     userId: string | null;
     action: string;
     entityType: string;
@@ -985,276 +1114,79 @@ async function upsertAuditLog(
     entityId: data.entityId,
   };
 
-  if (data.oldValue) {
-    auditData.oldValue = data.oldValue as Prisma.InputJsonObject;
-  }
-
-  if (data.newValue) {
-    auditData.newValue = data.newValue as Prisma.InputJsonObject;
-  }
+  if (data.oldValue) payload.oldValue = data.oldValue as Prisma.InputJsonObject;
+  if (data.newValue) payload.newValue = data.newValue as Prisma.InputJsonObject;
 
   await prisma.auditLog.upsert({
-    where: {
-      id,
-    },
-    update: auditData,
-    create: {
-      id,
-      ...auditData,
-    },
+    where: { id },
+    update: payload,
+    create: { id, ...payload },
   });
 }
 
-async function seedAppInformation() {
-  const entries: Array<{
-    type: AppInfoType;
-    title: string;
-    content: string;
-    version: string;
-  }> = [
-    {
-      type: AppInfoType.ABOUT,
-      title: 'About MobPae',
-      version: '1.0.0',
-      content: `MobPae is a salary advance platform that empowers employees to access a portion of their earned salary before payday — instantly, securely, and without any hidden charges.
-
-We partner with employers to offer this benefit as part of their employee wellness programme. Once your employer is onboarded, you can request an advance in minutes directly from the MobPae app.
-
-**Our Mission**
-To eliminate financial stress for working India by making salary advances simple, transparent, and accessible to every employee.
-
-**How We Work**
-MobPae works with your employer to offer salary advances against your earned salary. The advance amount is automatically deducted from your next salary, so there is nothing extra to pay separately.
-
-**Contact**
-Email: support@mobpae.com
-Website: https://mobpae.com`,
-    },
-    {
-      type: AppInfoType.PRIVACY_POLICY,
-      title: 'Privacy Policy',
-      version: '1.0.0',
-      content: `Last updated: June 2026
-
-MobPae ("we", "our", "us") is committed to protecting your personal information. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and services.
-
-**Information We Collect**
-- Personal identification: name, email address, phone number, employee code
-- Financial information: salary details, bank account information (for disbursal and repayment)
-- KYC documents: Aadhaar, PAN card, salary slips as required by law
-- Selfie / photo for identity verification
-- Device and usage data to improve the app experience
-
-**How We Use Your Information**
-- To process salary advance requests
-- To verify your identity and comply with KYC regulations
-- To communicate important updates about your requests
-- To improve our products and services
-
-**Data Security**
-We implement industry-standard security measures to protect your personal data. All sensitive data is encrypted in transit and at rest.
-
-**Data Sharing**
-We share your data only with your employer (for advance processing) and with regulated financial partners. We never sell your personal data to third parties.
-
-**Your Rights**
-You may request access to, correction of, or deletion of your personal data by contacting us at support@mobpae.com.
-
-**Contact**
-For privacy-related queries, email us at support@mobpae.com.`,
-    },
-    {
-      type: AppInfoType.TERMS_CONDITIONS,
-      title: 'Terms & Conditions',
-      version: '1.0.0',
-      content: `Last updated: June 2026
-
-Please read these Terms and Conditions carefully before using the MobPae application.
-
-**1. Acceptance of Terms**
-By accessing or using MobPae, you agree to be bound by these Terms. If you do not agree, please do not use the app.
-
-**2. Eligibility**
-You must be an employee of an employer that has been onboarded with MobPae and must have completed KYC verification to use salary advance services.
-
-**3. Salary Advance**
-- Advances are limited to a percentage of your salary as configured by your employer and MobPae.
-- Interest is charged on the advance amount from the request date to the repayment date, at the applicable annual rate displayed in the app.
-- Repayment is automatically deducted from your salary on the next payroll date.
-
-**4. Membership**
-Access to salary advances requires an active MobPae membership. Membership is subject to fees and validity periods displayed in the app.
-
-**5. KYC and Verification**
-You must provide accurate and up-to-date KYC documents. Providing false information may result in suspension of your account.
-
-**6. Prohibited Use**
-You may not use MobPae for any unlawful purpose or in violation of any applicable regulations.
-
-**7. Limitation of Liability**
-MobPae shall not be liable for any indirect, incidental, or consequential damages arising from your use of the service.
-
-**8. Changes to Terms**
-We reserve the right to modify these Terms at any time. Continued use of the app after changes constitutes acceptance.
-
-**Contact**
-For questions about these Terms, contact us at support@mobpae.com.`,
-    },
-    {
-      type: AppInfoType.HOW_IT_WORKS,
-      title: 'How It Works',
-      version: '1.0.0',
-      content: `Getting a salary advance with MobPae is simple and takes just a few minutes.
-
-**Step 1 — Sign Up**
-Your employer will send you an invitation to join MobPae. Download the app and log in with the credentials provided.
-
-**Step 2 — Complete KYC**
-Upload your Aadhaar, PAN card, and a recent salary slip. Our team reviews documents within 24 hours.
-
-**Step 3 — Add Bank Account**
-Link your bank account where you want the advance to be credited.
-
-**Step 4 — Activate Membership**
-Activate your MobPae membership to unlock salary advances.
-
-**Step 5 — Request an Advance**
-Select the amount you need (up to your approved limit), review the repayment details, and submit. Your employer approves the request.
-
-**Step 6 — Receive Money**
-Once approved, the advance is disbursed directly to your bank account.
-
-**Step 7 — Automatic Repayment**
-The advance plus applicable interest is automatically deducted from your next salary. No action needed from your side.`,
-    },
-    {
-      type: AppInfoType.FAQ,
-      title: 'Frequently Asked Questions',
-      version: '1.0.0',
-      content: `**Q: Who can use MobPae?**
-A: Any employee whose employer is registered and active on the MobPae platform. You will receive an invitation from your employer to join.
-
-**Q: How much can I borrow?**
-A: The advance limit is based on your salary and your employer's policy — typically up to 10% of your monthly salary, subject to a maximum limit.
-
-**Q: What are the charges?**
-A: MobPae charges a simple annual interest rate on the advance amount, calculated for the number of days between your request date and your payday. There are no processing fees or hidden charges.
-
-**Q: When is the advance repaid?**
-A: The advance (principal + interest) is automatically deducted from your salary on the next payroll date. You do not need to transfer money separately.
-
-**Q: What documents do I need?**
-A: Aadhaar card, PAN card, and latest salary slip.
-
-**Q: How long does verification take?**
-A: KYC verification is typically completed within 24 hours of document submission.
-
-**Q: Can I take multiple advances?**
-A: Only one active advance is allowed at a time. Once your existing advance is fully repaid, you can apply for another.
-
-**Q: What if my request is rejected?**
-A: Your employer reviews and approves requests. If rejected, you will receive a notification with the reason. You can reapply once any issues are resolved.
-
-**Q: Is my data safe?**
-A: Yes. All data is encrypted and stored securely. We never share your personal information with third parties except as required to process your advance.
-
-**Q: How do I contact support?**
-A: Email us at support@mobpae.com and our team will respond within one business day.`,
-    },
-    {
-      type: AppInfoType.CONTACT,
-      title: 'Contact & Support',
-      version: '1.0.0',
-      content: `We are here to help. Reach out to us through any of the following channels.
-
-**Email Support**
-support@mobpae.com
-Response time: within 1 business day
-
-**Business Hours**
-Monday – Friday: 9:00 AM – 6:00 PM IST
-Saturday: 10:00 AM – 2:00 PM IST
-Sunday: Closed
-
-**Website**
-https://mobpae.com
-
-**For Employers**
-If you are an employer and want to onboard your company to MobPae, please submit an enquiry on our website or email us at support@mobpae.com.`,
-    },
-    {
-      type: AppInfoType.WHATS_NEW,
-      title: "What's New",
-      version: '2.0.0',
-      content: `**Version 2.0.0 — June 2026**
-
-- New app design with improved navigation
-- Faster KYC verification
-- Advance calculator with real-time repayment preview
-- Improved notification centre
-- Profile photo upload
-- Bug fixes and performance improvements
-
-**Version 1.0.0 — January 2026**
-
-- Initial launch
-- Salary advance requests
-- KYC document upload
-- Bank account linking
-- Membership activation`,
-    },
-  ];
-
-  // Cast needed until `npx prisma generate` is run locally after migration
-  const db = (prisma as any).appInformation;
-  for (const entry of entries) {
-    await db.upsert({
-      where: { type: entry.type },
-      update: { title: entry.title, content: entry.content, version: entry.version, isActive: true },
-      create: { type: entry.type, title: entry.title, content: entry.content, version: entry.version, isActive: true },
-    });
-  }
-
-  console.log('App information seeded.');
-}
-
+// ── MAIN ─────────────────────────────────────────────────────────────────────
 async function main() {
-  console.log('Seeding MobPae demo data...');
+  console.log('🌱 Seeding MobPae v3.1...');
 
+  // 1. Admin
   const admin = await upsertUser(ADMIN_EMAIL, Role.ADMIN, ADMIN_PASSWORD);
+  console.log(`  ✓ Admin user: ${ADMIN_EMAIL}`);
+
+  // 2. Settings
   await seedSettings();
 
+  // 3. AppInformation
+  await seedAppInformation();
+
+  // 4+5. LoanProduct + config
+  const saProduct = await seedLendingCatalog();
+
+  // 6. MembershipPlanConfig
+  await seedMembershipPlans(saProduct.id);
+
+  // 7. Sequence
+  await seedSequence();
+
+  // 8. Employer
   const employer = await seedEmployer(admin.id);
   const employerUser = await prisma.user.findUniqueOrThrow({
-    where: {
-      email: EMPLOYER_EMAIL,
-    },
+    where: { email: EMPLOYER_EMAIL },
   });
-  const seededEmployees = await seedEmployees(employer.id, admin.id);
+  console.log(`  ✓ Employer: ${employer.companyName}`);
 
-  await seedSalaryWorkflows(
+  // 9. EmployerProductConfig
+  await seedEmployerProductConfig(employer.id, saProduct.id);
+
+  // 10. Employees
+  const seededEmployees = await seedEmployees(employer.id, admin.id, saProduct.id);
+  console.log(`  ✓ ${seededEmployees.length} demo employees`);
+
+  // 11. Loan applications
+  const activeConfig = await prisma.loanProductConfig.findFirstOrThrow({
+    where: { productId: saProduct.id, isActive: true },
+  });
+  await seedLoanApplicationWorkflows(
     employer.id,
     seededEmployees,
     admin.id,
     employerUser.id,
+    saProduct.id,
+    activeConfig.id,
   );
+
+  // 12. Settlements + Notifications
   await seedSettlements(employer.id, admin.id);
   await seedNotifications(admin.id, employerUser.id);
-  await seedAppInformation();
 
-  console.log('Demo seed complete.');
-  console.log(`Admin: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
-  console.log(`Employer: ${EMPLOYER_EMAIL} / ${DEMO_PASSWORD}`);
-  console.log(
-    'Employees: emp001@northstar.mobpae.com ... emp010@northstar.mobpae.com / Demo@1234',
-  );
+  console.log('\n🌱 Seed complete.');
+  console.log(`   Admin:    ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+  console.log(`   Employer: ${EMPLOYER_EMAIL} / ${DEMO_PASSWORD}`);
+  console.log(`   Employees: emp001@northstar.mobpae.com – emp010@ / ${DEMO_PASSWORD}`);
 }
 
 main()
-  .catch((error) => {
-    console.error('Seed failed', error);
+  .catch((e) => {
+    console.error('Seed failed:', e);
     process.exit(1);
   })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .finally(() => prisma.$disconnect());

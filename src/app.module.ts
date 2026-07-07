@@ -16,8 +16,11 @@ import { UsersModule } from './users/users.module';
 import { EmployersModule } from './employers/employers.module';
 import { EmployeesModule } from './employees/employees.module';
 
-import { SalaryRequestsModule } from './salary-requests/salary-requests.module';
-import { SalaryLimitsModule } from './salary-limits/salary-limits.module';
+import { LoanProductsModule } from './loan-products/loan-products.module';
+import { EmployerProductConfigsModule } from './employer-product-configs/employer-product-configs.module';
+import { PricingModule } from './pricing/pricing.module';
+import { EligibilityModule } from './eligibility/eligibility.module';
+import { LoanApplicationsModule } from './loan-applications/loan-applications.module';
 
 import { DisbursalsModule } from './disbursals/disbursals.module';
 import { RepaymentsModule } from './repayments/repayments.module';
@@ -94,8 +97,11 @@ import { AppInformationModule } from './app-information/app-information.module';
     EmployersModule,
     EmployeesModule,
 
-    SalaryRequestsModule,
-    SalaryLimitsModule,
+    LoanProductsModule,
+    EmployerProductConfigsModule,
+    PricingModule,
+    EligibilityModule,
+    LoanApplicationsModule,
 
     DisbursalsModule,
     RepaymentsModule,

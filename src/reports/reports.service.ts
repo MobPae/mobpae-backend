@@ -16,9 +16,9 @@ export class ReportsService {
       activeEmployees,
       pendingKyc,
       pendingBankVerification,
-      pendingSalaryRequests,
-      approvedSalaryRequests,
-      disbursedSalaryRequests,
+      pendingLoanApplications,
+      approvedLoanApplications,
+      disbursedLoanApplications,
       totalDisbursed,
       totalRecovered,
       outstanding,
@@ -57,19 +57,19 @@ export class ReportsService {
           verified: false,
         },
       }),
-      this.prisma.salaryRequest.count({
+      this.prisma.loanApplication.count({
         where: {
           status: 'SUBMITTED',
         },
       }),
-      this.prisma.salaryRequest.count({
+      this.prisma.loanApplication.count({
         where: {
           status: {
             in: ['EMPLOYER_APPROVED', 'READY_FOR_DISBURSAL'],
           },
         },
       }),
-      this.prisma.salaryRequest.count({
+      this.prisma.loanApplication.count({
         where: {
           status: {
             in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'],
@@ -81,7 +81,7 @@ export class ReportsService {
           status: 'DISBURSED',
         },
         _sum: {
-          amount: true,
+          disbursedAmount: true,
         },
       }),
       this.prisma.repayment.aggregate({
@@ -131,10 +131,10 @@ export class ReportsService {
       activeEmployees,
       pendingKyc,
       pendingBankVerification,
-      pendingSalaryRequests,
-      approvedSalaryRequests,
-      disbursedSalaryRequests,
-      totalDisbursedAmount: this.toNumber(totalDisbursed._sum.amount),
+      pendingLoanApplications,
+      approvedLoanApplications,
+      disbursedLoanApplications,
+      totalDisbursedAmount: this.toNumber(totalDisbursed._sum.disbursedAmount),
       totalRecoveredAmount: this.toNumber(totalRecovered._sum.totalAmount),
       outstandingAmount: this.toNumber(outstanding._sum.totalAmount),
       pendingSettlements,

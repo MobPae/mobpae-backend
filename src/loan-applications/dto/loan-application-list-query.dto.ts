@@ -1,11 +1,9 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { LoanApplicationStatus } from '@prisma/client';
 import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
-
 import { ListQueryDto } from '../../common/dto/list-query.dto';
 
-/** @deprecated Use LoanApplicationsModule query DTO instead. */
-export class SalaryRequestListQueryDto extends ListQueryDto {
+export class LoanApplicationListQueryDto extends ListQueryDto {
   @ApiPropertyOptional({ enum: LoanApplicationStatus })
   @IsOptional()
   @IsEnum(LoanApplicationStatus)
@@ -21,21 +19,13 @@ export class SalaryRequestListQueryDto extends ListQueryDto {
   @IsString()
   employeeId?: string;
 
-  @ApiPropertyOptional({
-    example: '2026-06-01T00:00:00.000Z',
-    description: 'Include requests created on or after this ISO date.',
-  })
+  @ApiPropertyOptional({ example: '2026-07-01T00:00:00.000Z' })
   @IsOptional()
-  @IsString()
   @IsDateString()
   startDate?: string;
 
-  @ApiPropertyOptional({
-    example: '2026-06-30T23:59:59.999Z',
-    description: 'Include requests created on or before this ISO date.',
-  })
+  @ApiPropertyOptional({ example: '2026-07-31T23:59:59.999Z' })
   @IsOptional()
-  @IsString()
   @IsDateString()
   endDate?: string;
 }

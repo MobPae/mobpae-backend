@@ -291,7 +291,7 @@ export class EmailService {
     recoveries?: Array<{
       employeeName: string;
       employeeCode?: string | null;
-      salaryRequestId: string;
+      loanApplicationId: string;
       principalAmount: number;
       interestAmount: number;
       totalAmount: number;
@@ -310,7 +310,7 @@ export class EmailService {
                   )}</span>
                 </td>
                 <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #6b7280;">${this.escapeHtml(
-                  recovery.salaryRequestId,
+                  recovery.loanApplicationId,
                 )}</td>
                 <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${this.formatCurrency(
                   recovery.principalAmount,

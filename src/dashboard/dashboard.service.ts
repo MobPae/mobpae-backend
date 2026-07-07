@@ -1,14 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { SettingsService } from '../settings/settings.service';
 import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 
 @Injectable()
 export class DashboardService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly settingsService: SettingsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getAdminDashboard() {
     const [
@@ -16,37 +12,17 @@ export class DashboardService {
       activeEmployers,
       totalEmployees,
       pendingKycDocuments,
-      pendingSalaryRequests,
+      pendingLoanApplications,
       pendingDisbursals,
       activeRepayments,
     ] = await Promise.all([
       this.prisma.employer.count(),
-      this.prisma.employer.count({
-        where: {
-          status: 'ACTIVE',
-        },
-      }),
+      this.prisma.employer.count({ where: { status: 'ACTIVE' } }),
       this.prisma.employee.count(),
-      this.prisma.kycDocument.count({
-        where: {
-          status: 'PENDING',
-        },
-      }),
-      this.prisma.salaryRequest.count({
-        where: {
-          status: 'SUBMITTED',
-        },
-      }),
-      this.prisma.disbursal.count({
-        where: {
-          status: 'PENDING',
-        },
-      }),
-      this.prisma.repayment.count({
-        where: {
-          status: 'SCHEDULED',
-        },
-      }),
+      this.prisma.kycDocument.count({ where: { status: 'PENDING' } }),
+      this.prisma.loanApplication.count({ where: { status: 'SUBMITTED' } }),
+      this.prisma.disbursal.count({ where: { status: 'PENDING' } }),
+      this.prisma.repayment.count({ where: { status: 'SCHEDULED' } }),
     ]);
 
     return {
@@ -54,18 +30,14 @@ export class DashboardService {
       activeEmployers,
       totalEmployees,
       pendingKycDocuments,
-      pendingSalaryRequests,
+      pendingLoanApplications,
       pendingDisbursals,
       activeRepayments,
     };
   }
 
   async getEmployerDashboard(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
-    });
+    const employer = await this.prisma.employer.findUnique({ where: { userId } });
 
     if (!employer) {
       throw new NotFoundException('Employer not found');
@@ -79,147 +51,76 @@ export class DashboardService {
       totalEmployees,
       activeEmployees,
       appActivatedEmployees,
-
-      pendingSalaryRequests,
-      approvedRequests,
-      disbursedRequests,
-
+      pendingApplications,
+      approvedApplications,
+      disbursedApplications,
       scheduledRecoveries,
       overdueRecoveries,
       recoveryAmount,
-
       pendingSettlements,
       overdueSettlements,
       settlementAmount,
-
-      recentSalaryRequests,
+      recentApplications,
     ] = await Promise.all([
-      /**
-       * Employees
-       */
+      this.prisma.employee.count({ where: { employerId } }),
       this.prisma.employee.count({
-        where: {
-          employerId,
-        },
+        where: { employerId, employmentStatus: 'ACTIVE' },
       }),
-
       this.prisma.employee.count({
+        where: { employerId, appActivated: true },
+      }),
+
+      this.prisma.loanApplication.count({
+        where: { employerId, status: 'SUBMITTED' },
+      }),
+      this.prisma.loanApplication.count({
+        where: { employerId, status: 'EMPLOYER_APPROVED' },
+      }),
+      this.prisma.loanApplication.count({
         where: {
           employerId,
-          employmentStatus: 'ACTIVE',
+          status: { in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'] },
         },
       }),
 
-      this.prisma.employee.count({
-        where: {
-          employerId,
-          appActivated: true,
-        },
-      }),
-
-      /**
-       * Salary Requests
-       */
-      this.prisma.salaryRequest.count({
-        where: {
-          employerId,
-          status: 'SUBMITTED',
-        },
-      }),
-
-      this.prisma.salaryRequest.count({
-        where: {
-          employerId,
-          status: 'EMPLOYER_APPROVED',
-        },
-      }),
-
-      this.prisma.salaryRequest.count({
-        where: {
-          employerId,
-          status: {
-            in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'],
-          },
-        },
-      }),
-
-      /**
-       * Recoveries
-       */
       this.prisma.repayment.count({
         where: {
-          salaryRequest: {
-            employerId,
-          },
+          loanApplication: { employerId },
           status: 'SCHEDULED',
         },
       }),
-
       this.prisma.repayment.count({
         where: {
-          salaryRequest: {
-            employerId,
-          },
+          loanApplication: { employerId },
           status: 'OVERDUE',
         },
       }),
-
       this.prisma.repayment.aggregate({
         where: {
-          salaryRequest: {
-            employerId,
-          },
-          status: {
-            in: ['SCHEDULED', 'OVERDUE'],
-          },
+          loanApplication: { employerId },
+          status: { in: ['SCHEDULED', 'OVERDUE'] },
         },
-        _sum: {
-          totalAmount: true,
-        },
-      }),
-
-      /**
-       * Settlements
-       */
-      this.prisma.employerSettlement.count({
-        where: {
-          employerId,
-          status: 'PENDING',
-        },
+        _sum: { totalAmount: true },
       }),
 
       this.prisma.employerSettlement.count({
-        where: {
-          employerId,
-          status: 'OVERDUE',
-        },
+        where: { employerId, status: 'PENDING' },
       }),
-
+      this.prisma.employerSettlement.count({
+        where: { employerId, status: 'OVERDUE' },
+      }),
       this.prisma.employerSettlement.aggregate({
         where: {
           employerId,
-          status: {
-            in: ['PENDING', 'OVERDUE', 'PARTIALLY_PAID'],
-          },
+          status: { in: ['PENDING', 'OVERDUE', 'PARTIALLY_PAID'] },
         },
-        _sum: {
-          outstandingAmount: true,
-        },
+        _sum: { outstandingAmount: true },
       }),
 
-      /**
-       * Recent Activity
-       */
-      this.prisma.salaryRequest.findMany({
-        where: {
-          employerId,
-        },
-        include: {
-          employee: true,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
+      this.prisma.loanApplication.findMany({
+        where: { employerId },
+        include: { employee: true },
+        orderBy: { createdAt: 'desc' },
         take: 5,
       }),
     ]);
@@ -230,32 +131,29 @@ export class DashboardService {
         active: activeEmployees,
         appActivated: appActivatedEmployees,
       },
-
-      salaryRequests: {
-        pending: pendingSalaryRequests,
-        approved: approvedRequests,
-        disbursed: disbursedRequests,
+      loanApplications: {
+        pending: pendingApplications,
+        approved: approvedApplications,
+        disbursed: disbursedApplications,
       },
-
       recoveries: {
         scheduled: scheduledRecoveries,
         overdue: overdueRecoveries,
         amountDue: Number(recoveryAmount._sum?.totalAmount) || 0,
       },
-
       settlements: {
         pending: pendingSettlements,
         overdue: overdueSettlements,
         outstandingAmount:
           Number(settlementAmount._sum?.outstandingAmount) || 0,
       },
-
-      recentActivity: recentSalaryRequests.map((request) => ({
-        id: request.id,
-        employeeName: request.employee.name,
-        amount: Number(request.amount),
-        status: request.status,
-        requestedAt: request.createdAt,
+      recentActivity: recentApplications.map((app) => ({
+        id: app.id,
+        applicationNumber: app.applicationNumber,
+        employeeName: app.employee.name,
+        requestedAmount: Number(app.requestedAmount),
+        status: app.status,
+        submittedAt: app.submittedAt,
       })),
     };
   }
@@ -263,40 +161,23 @@ export class DashboardService {
   async getEmployeeDashboard(employeeId: string) {
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
-      include: { employer: { select: { payrollDate: true, payrollCutoffDate: true } } },
+      include: {
+        employer: {
+          select: { payrollDate: true, payrollCutoffDate: true },
+        },
+        loanLimit: true,
+      },
     });
 
     if (!employee) {
       throw new NotFoundException('Employee not found');
     }
 
-    const advanceSettings = await this.settingsService.getAdvanceSettings();
-    const approvedLimit = this.settingsService.calculateAvailableAdvance(
-      Number(employee.salaryInHand),
-      advanceSettings,
-    );
+    const maximumEligibleAmount = employee.loanLimit
+      ? Number(employee.loanLimit.maximumEligibleAmount)
+      : 0;
 
-    const latestRequest = await this.prisma.salaryRequest.findFirst({
-      where: {
-        employeeId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    const repayment = await this.prisma.repayment.findFirst({
-      where: {
-        salaryRequest: {
-          employeeId,
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    const activeRequest = await this.prisma.salaryRequest.findFirst({
+    const activeApplication = await this.prisma.loanApplication.findFirst({
       where: {
         employeeId,
         status: {
@@ -309,51 +190,55 @@ export class DashboardService {
           ],
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
 
-    const activeRequestAmount = activeRequest
-      ? Number(activeRequest.approvedAmount ?? activeRequest.amount)
+    const latestApplication = await this.prisma.loanApplication.findFirst({
+      where: { employeeId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const repayment = await this.prisma.repayment.findFirst({
+      where: { loanApplication: { employeeId } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const activeRequestAmount = activeApplication
+      ? Number(
+          activeApplication.adminApprovedAmount ??
+            activeApplication.employerApprovedAmount ??
+            activeApplication.requestedAmount,
+        )
       : 0;
-    const availableAdvance = Math.max(0, approvedLimit - activeRequestAmount);
+    const availableAdvance = Math.max(0, maximumEligibleAmount - activeRequestAmount);
 
     const kycDocuments = await this.prisma.kycDocument.findMany({
-      where: {
-        employeeId,
-      },
+      where: { employeeId },
     });
 
-    const kycCompleted =
-      REQUIRED_KYC_DOCUMENTS.every((type) =>
-        kycDocuments.some(
-          (doc) => doc.documentType === type && doc.status === 'VERIFIED',
-        ),
-      );
+    const kycCompleted = REQUIRED_KYC_DOCUMENTS.every((type) =>
+      kycDocuments.some(
+        (doc) => doc.documentType === type && doc.status === 'VERIFIED',
+      ),
+    );
 
     return {
-      employeeName: employee?.name,
+      employeeName: employee.name,
       kycCompleted,
       selfieStatus: employee.selfieStatus,
-      approvedLimit,
+      maximumEligibleAmount,
       activeRequestAmount,
       availableAdvance,
       salaryInHand: Number(employee.salaryInHand),
-      advanceSettings,
-      activeRequestStatus: latestRequest?.status || null,
-      activeRepaymentStatus: repayment?.status || null,
+      activeApplicationStatus: latestApplication?.status ?? null,
+      activeRepaymentStatus: repayment?.status ?? null,
       payrollDay: employee.employer?.payrollDate ?? null,
       payrollCutoffDate: employee.employer?.payrollCutoffDate ?? null,
     };
   }
 
   async getEmployerTrends(userId: string, period: string = 'monthly') {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
-    });
+    const employer = await this.prisma.employer.findUnique({ where: { userId } });
 
     if (!employer) {
       throw new NotFoundException('Employer not found');
@@ -370,10 +255,10 @@ export class DashboardService {
       }[]
     >`
       SELECT
-        TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') AS month,
-  
+        TO_CHAR(DATE_TRUNC('month', "submittedAt"), 'YYYY-MM') AS month,
+
         COUNT(*) AS "requestCount",
-  
+
         COUNT(*) FILTER (
           WHERE status IN (
             'EMPLOYER_APPROVED',
@@ -383,7 +268,7 @@ export class DashboardService {
             'REPAID'
           )
         ) AS "approvedCount",
-  
+
         COUNT(*) FILTER (
           WHERE status IN (
             'DISBURSED',
@@ -391,40 +276,33 @@ export class DashboardService {
             'REPAID'
           )
         ) AS "disbursedCount",
-  
-        COALESCE(SUM(amount), 0) AS "requestedAmount",
-  
+
+        COALESCE(SUM("requestedAmount"), 0) AS "requestedAmount",
+
         COALESCE(
           SUM(
             CASE
-              WHEN status IN (
-                'DISBURSED',
-                'REPAYMENT_SCHEDULED',
-                'REPAID'
-              )
-              THEN amount
+              WHEN status IN ('DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID')
+              THEN "adminApprovedAmount"
               ELSE 0
             END
           ),
           0
         ) AS "disbursedAmount"
-  
-      FROM salary_requests
-  
+
+      FROM loan_applications
+
       WHERE "employerId" = ${employer.id}
-        AND "createdAt" >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'
-  
+        AND "submittedAt" >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months'
+
       GROUP BY 1
       ORDER BY 1 ASC
     `;
 
-    const months: string[] = [];
-
     const today = new Date();
-
+    const months: string[] = [];
     for (let i = 5; i >= 0; i--) {
       const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
-
       months.push(
         `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
       );
@@ -432,25 +310,16 @@ export class DashboardService {
 
     const trends = months.map((month) => {
       const record = rawData.find((item) => item.month === month);
-
       return {
         month,
-
         requestCount: Number(record?.requestCount ?? 0),
-
         approvedCount: Number(record?.approvedCount ?? 0),
-
         disbursedCount: Number(record?.disbursedCount ?? 0),
-
         requestedAmount: Number(record?.requestedAmount ?? 0),
-
         disbursedAmount: Number(record?.disbursedAmount ?? 0),
       };
     });
 
-    return {
-      period,
-      trends,
-    };
+    return { period, trends };
   }
 }

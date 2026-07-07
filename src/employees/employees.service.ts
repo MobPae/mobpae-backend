@@ -598,7 +598,7 @@ export class EmployeesService {
       },
       include: {
         employer: true,
-        salaryLimit: true,
+        loanLimit: true,
         membership: true,
         bankAccount: true,
         kycDocuments: true,
@@ -610,36 +610,14 @@ export class EmployeesService {
     }
 
     /**
-     * Salary Advance Settings
-     *
-     * Available Advance =
-     * MIN(
-     *   Salary × Advance Percentage,
-     *   Maximum Advance
-     * )
+     * Loan Limit — set by admin when onboarding the employee.
+     * Available advance = maximumEligibleAmount − active outstanding requests.
      */
-    const advancePercentageSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'advancePercentage',
-      },
-    });
+    const maximumEligibleAmount = employee.loanLimit
+      ? Number(employee.loanLimit.maximumEligibleAmount)
+      : 0;
 
-    const maximumAdvanceSetting = await this.prisma.setting.findUnique({
-      where: {
-        key: 'maximumAdvance',
-      },
-    });
-
-    const advancePercentage = Number(advancePercentageSetting?.value ?? 40);
-
-    const maximumAdvance = Number(maximumAdvanceSetting?.value ?? 10000);
-
-    const percentageBasedAmount =
-      Number(employee.salaryInHand) * (advancePercentage / 100);
-
-    const approvedLimit = Math.min(percentageBasedAmount, maximumAdvance);
-
-    const activeRequests = await this.prisma.salaryRequest.findMany({
+    const activeRequests = await this.prisma.loanApplication.findMany({
       where: {
         employeeId: employee.id,
         status: {
@@ -654,17 +632,17 @@ export class EmployeesService {
         },
       },
       select: {
-        amount: true,
-        approvedAmount: true,
+        requestedAmount: true,
+        adminApprovedAmount: true,
       },
     });
 
     const activeRequestAmount = activeRequests.reduce(
       (total, request) =>
-        total + Number(request.approvedAmount ?? request.amount),
+        total + Number(request.adminApprovedAmount ?? request.requestedAmount),
       0,
     );
-    const availableAdvance = Math.max(0, approvedLimit - activeRequestAmount);
+    const availableAdvance = Math.max(0, maximumEligibleAmount - activeRequestAmount);
 
     /**
      * KYC Status
@@ -713,7 +691,7 @@ export class EmployeesService {
        * Salary Info
        */
       salaryInHand: Number(employee.salaryInHand),
-      approvedLimit,
+      maximumEligibleAmount,
       activeRequestAmount,
       availableAdvance,
 
@@ -750,7 +728,7 @@ export class EmployeesService {
 
   async getAppState(userId: string) {
     const profile = await this.findByUserId(userId);
-    const currentRequest = await this.prisma.salaryRequest.findFirst({
+    const currentRequest = await this.prisma.loanApplication.findFirst({
       where: {
         employeeId: profile.id,
         status: {
@@ -829,25 +807,22 @@ export class EmployeesService {
       },
       salaryAdvance: {
         salaryInHand: profile.salaryInHand,
-        approvedLimit: profile.approvedLimit,
+        maximumEligibleAmount: profile.maximumEligibleAmount,
         usedLimit: profile.activeRequestAmount,
         availableAdvance: profile.availableAdvance,
       },
       currentRequest: currentRequest
         ? {
             id: currentRequest.id,
-            amount: Number(currentRequest.amount),
-            approvedAmount:
-              currentRequest.approvedAmount === null ||
-              currentRequest.approvedAmount === undefined
+            applicationNumber: currentRequest.applicationNumber,
+            requestedAmount: Number(currentRequest.requestedAmount),
+            adminApprovedAmount:
+              currentRequest.adminApprovedAmount == null
                 ? null
-                : Number(currentRequest.approvedAmount),
+                : Number(currentRequest.adminApprovedAmount),
             status: currentRequest.status,
-            requestedAt: currentRequest.requestedAt,
-            repaymentDate:
-              currentRequest.repayment?.dueDate ??
-              currentRequest.repaymentDate ??
-              null,
+            submittedAt: currentRequest.submittedAt,
+            repaymentDate: currentRequest.repayment?.dueDate ?? null,
             totalPayable:
               currentRequest.repayment?.totalAmount === undefined ||
               currentRequest.repayment?.totalAmount === null
@@ -1318,7 +1293,7 @@ export class EmployeesService {
       where: {
         employerId,
         id: { not: myId },
-        salaryRequests: {
+        loanApplications: {
           some: {
             status: {
               in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'],
@@ -1329,7 +1304,7 @@ export class EmployeesService {
     });
 
     // Recent activity from peers — last 5 disbursed/repaid requests
-    const recentRequests = await this.prisma.salaryRequest.findMany({
+    const recentRequests = await this.prisma.loanApplication.findMany({
       where: {
         employerId,
         employeeId: { not: myId },

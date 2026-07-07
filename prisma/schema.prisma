@@ -1,3 +1,8 @@
+// ============================================================
+// MobPae Backend — Prisma Schema v3.1
+// Product-Based Lending Platform
+// ============================================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -6,6 +11,10 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ============================================================
+// CORE USER MODEL
+// ============================================================
 
 model User {
   id              String               @id @default(uuid())
@@ -27,28 +36,37 @@ model User {
   @@map("users")
 }
 
+// ============================================================
+// EMPLOYER
+// ============================================================
+
 model Employer {
-  id                String               @id @default(uuid())
-  companyName       String
-  companyCode       String               @unique
-  contactPerson     String
-  email             String               @unique
-  phone             String
-  payrollDate       Int
-  payrollCutoffDate Int
-  status            EmployerStatus       @default(PENDING)
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  userId            String               @unique
-  riskStatus        EmployerRiskStatus   @default(GOOD)
-  employees         Employee[]
-  employerEnquiry   EmployerEnquiry?
-  settlements       EmployerSettlement[]
-  user              User                 @relation(fields: [userId], references: [id])
-  salaryRequests    SalaryRequest[]
+  id                     String                  @id @default(uuid())
+  companyName            String
+  companyCode            String                  @unique
+  contactPerson          String
+  email                  String                  @unique
+  phone                  String
+  payrollDate            Int
+  payrollCutoffDate      Int
+  status                 EmployerStatus          @default(PENDING)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  userId                 String                  @unique
+  riskStatus             EmployerRiskStatus      @default(GOOD)
+  employees              Employee[]
+  employerEnquiry        EmployerEnquiry?
+  settlements            EmployerSettlement[]
+  user                   User                    @relation(fields: [userId], references: [id])
+  loanApplications       LoanApplication[]
+  employerProductConfigs EmployerProductConfig[]
 
   @@map("employers")
 }
+
+// ============================================================
+// EMPLOYEE
+// ============================================================
 
 model Employee {
   id               String               @id @default(uuid())
@@ -74,14 +92,18 @@ model Employee {
   user             User?                @relation(fields: [userId], references: [id])
   kycDocuments     KycDocument[]
   membership       Membership?
-  salaryLimit      SalaryLimit?
-  salaryRequests   SalaryRequest[]
+  loanLimit        LoanLimit?
+  loanApplications LoanApplication[]
 
   @@unique([employerId, employeeCode])
   @@index([employerId])
   @@index([selfieStatus])
   @@map("employees")
 }
+
+// ============================================================
+// EMPLOYEE BANK ACCOUNT
+// ============================================================
 
 model EmployeeBankAccount {
   id                String   @id @default(uuid())
@@ -100,93 +122,265 @@ model EmployeeBankAccount {
   @@map("employee_bank_accounts")
 }
 
-model SalaryLimit {
-  id                  String   @id @default(uuid())
-  employeeId          String   @unique
-  approvedLimit       Decimal  @db.Decimal(12, 2)
-  maxRequestsPerCycle Int      @default(1)
-  cooldownDays        Int      @default(0)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  employee            Employee @relation(fields: [employeeId], references: [id])
+// ============================================================
+// LOAN PRODUCT CATALOG
+// Each product type (SA, PL, etc.) has exactly one row here.
+// ============================================================
 
-  @@map("salary_limits")
+model LoanProduct {
+  id               String                  @id @default(uuid())
+  productType      LoanProductType         @unique
+  displayName      String
+  description      String?
+  isActive         Boolean                 @default(true)
+  launchDate       DateTime?
+  retirementDate   DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  configs          LoanProductConfig[]
+  loanApplications LoanApplication[]
+  employerConfigs  EmployerProductConfig[]
+  membershipPlans  MembershipPlanConfig[]
+
+  @@map("loan_products")
 }
 
-model SalaryRequest {
-  id             String                 @id @default(uuid())
-  employeeId     String
-  employerId     String
-  amount         Decimal                @db.Decimal(12, 2)
-  approvedAmount Decimal?               @db.Decimal(12, 2)
-  approvedBy     String?
-  approvedAt     DateTime?
-  reason         String?
-  remarks        String?
-  requestedAt    DateTime               @default(now())
-  repaymentDate  DateTime?
-  status         SalaryRequestStatus    @default(SUBMITTED)
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  disbursal      Disbursal?
-  repayment      Repayment?
-  history        SalaryRequestHistory[]
-  employee       Employee               @relation(fields: [employeeId], references: [id])
-  employer       Employer               @relation(fields: [employerId], references: [id])
+// ============================================================
+// VERSIONED PRODUCT CONFIGURATION
+// Immutable once active. New version always creates a new row.
+// previousVersionId forms a singly-linked version chain.
+// ============================================================
+
+model LoanProductConfig {
+  id                String   @id @default(uuid())
+  productId         String
+  versionNumber     Int
+  versionName       String?
+  isActive          Boolean  @default(false)
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+
+  // Self-referential: points to the version this supersedes.
+  // @unique ensures at most one successor per version.
+  previousVersionId String?  @unique
+
+  // EligibilityRules — parsed by EligibilityService
+  // Shape: { maximumAdvancePercentage, minimumAdvanceAmount,
+  //          minimumSalaryInHand, minimumTenureMonths,
+  //          requiresKyc, requiresMembership, requiresBankAccount,
+  //          requiresActiveSelfie, maxRequestsPerCycle, cooldownDays }
+  eligibilityRules  Json
+
+  // PricingRules — consumed by PricingService (pure function, no I/O)
+  // Shape: { annualInterestRate, interestFreePercentage,
+  //          processingFeeRate, gstRate }
+  pricingRules      Json
+
+  // OperationalRules — consumed by LoanApplicationsService
+  // Shape: { requiresEmployerApproval, requiresAdminApproval,
+  //          minDisbursalDays, maxDisbursalDays, defaultFundingSource }
+  operationalRules  Json
+
+  createdBy         String?
+  createdAt         DateTime @default(now())
+
+  product          LoanProduct        @relation(fields: [productId], references: [id])
+  previousVersion  LoanProductConfig? @relation("ConfigVersionChain", fields: [previousVersionId], references: [id])
+  nextVersion      LoanProductConfig? @relation("ConfigVersionChain")
+  loanApplications LoanApplication[]
+
+  @@unique([productId, versionNumber])
+  @@index([productId, isActive])
+  @@map("loan_product_configs")
+}
+
+// ============================================================
+// EMPLOYER PRODUCT CONFIG (per-employer overrides)
+// Controls which products an employer enables and whether
+// they can override the advance percentage cap.
+// ============================================================
+
+model EmployerProductConfig {
+  id                               String      @id @default(uuid())
+  employerId                       String
+  productId                        String
+  // When set, overrides LoanProductConfig.eligibilityRules.maximumAdvancePercentage
+  maximumAdvancePercentageOverride Decimal?    @db.Decimal(5, 2)
+  requiresEmployerApproval         Boolean     @default(true)
+  isEnabled                        Boolean     @default(true)
+  createdAt                        DateTime    @default(now())
+  updatedAt                        DateTime    @updatedAt
+  employer                         Employer    @relation(fields: [employerId], references: [id])
+  product                          LoanProduct @relation(fields: [productId], references: [id])
+
+  @@unique([employerId, productId])
+  @@map("employer_product_configs")
+}
+
+// ============================================================
+// LOAN LIMIT (replaces SalaryLimit)
+// Set by Admin after KYC verification. One per employee.
+// ============================================================
+
+model LoanLimit {
+  id                    String   @id @default(uuid())
+  employeeId            String   @unique
+  maximumEligibleAmount Decimal  @db.Decimal(12, 2)
+  maxRequestsPerCycle   Int      @default(1)
+  cooldownDays          Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  employee              Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("loan_limits")
+}
+
+// ============================================================
+// LOAN APPLICATION (replaces SalaryRequest)
+// ============================================================
+
+model LoanApplication {
+  id                String @id @default(uuid())
+
+  // Human-readable reference: MP-SA-2026-00001234
+  // Populated from PostgreSQL sequence `loan_application_seq` in service layer
+  applicationNumber String @unique
+
+  employeeId String
+  employerId String
+  productId  String
+  // Frozen config version at submission time — never updated
+  configId   String
+
+  // Three distinct amounts representing three decision points
+  requestedAmount        Decimal  @db.Decimal(12, 2)
+  employerApprovedAmount Decimal? @db.Decimal(12, 2)
+  adminApprovedAmount    Decimal? @db.Decimal(12, 2)
+
+  // Loan purpose
+  purposeCategory LoanPurposeCategory
+  purposeNote     String?
+
+  // Status and timestamps
+  status      LoanApplicationStatus @default(SUBMITTED)
+  submittedAt DateTime              @default(now())
+
+  // ── SNAPSHOT (frozen at submission time) ──────────────────
+  // Rates from active LoanProductConfig.pricingRules at submission
+  snapshotAnnualInterestRate     Decimal @db.Decimal(5, 2)
+  snapshotInterestFreePercentage Decimal @default(0) @db.Decimal(5, 2)
+  snapshotProcessingFeeRate      Decimal @default(0) @db.Decimal(5, 4)
+  snapshotGstRate                Decimal @default(0) @db.Decimal(5, 4)
+  // Effective advance % used (after employer override is applied)
+  snapshotMaxAdvancePercentage   Decimal @db.Decimal(5, 2)
+  // Employee facts at the moment of submission
+  snapshotSalaryInHand           Decimal @db.Decimal(12, 2)
+  // Pre-computed from employer's payroll dates — deterministic, frozen here
+  snapshotInterestDays           Int
+  snapshotRecoveryDate           DateTime
+  // ─────────────────────────────────────────────────────────
+
+  // Approval tracking
+  employerApprovedBy String?
+  employerApprovedAt DateTime?
+  adminApprovedBy    String?
+  adminApprovedAt    DateTime?
+  rejectedBy         String?
+  rejectedAt         DateTime?
+  rejectionReason    String?
+  remarks            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employee  Employee               @relation(fields: [employeeId], references: [id])
+  employer  Employer               @relation(fields: [employerId], references: [id])
+  product   LoanProduct            @relation(fields: [productId], references: [id])
+  config    LoanProductConfig      @relation(fields: [configId], references: [id])
+  history   LoanApplicationHistory[]
+  disbursal Disbursal?
+  repayment Repayment?
 
   @@index([employeeId])
   @@index([employerId])
   @@index([status])
-  @@map("salary_requests")
+  @@index([productId])
+  @@index([submittedAt])
+  @@map("loan_applications")
 }
 
-model SalaryRequestHistory {
-  id              String               @id @default(uuid())
-  salaryRequestId String
-  previousStatus  SalaryRequestStatus?
-  newStatus       SalaryRequestStatus
-  changedBy       String?
-  actorRole       String?
-  remarks         String?
-  createdAt       DateTime             @default(now())
-  salaryRequest   SalaryRequest        @relation(fields: [salaryRequestId], references: [id])
+// ============================================================
+// LOAN APPLICATION HISTORY (replaces SalaryRequestHistory)
+// ============================================================
 
-  @@index([salaryRequestId, createdAt])
+model LoanApplicationHistory {
+  id                String                 @id @default(uuid())
+  loanApplicationId String
+  previousStatus    LoanApplicationStatus?
+  newStatus         LoanApplicationStatus
+  changedBy         String?
+  actorRole         String?
+  remarks           String?
+  createdAt         DateTime               @default(now())
+  loanApplication   LoanApplication        @relation(fields: [loanApplicationId], references: [id])
+
+  @@index([loanApplicationId, createdAt])
   @@index([newStatus])
-  @@map("salary_request_history")
+  @@map("loan_application_history")
 }
+
+// ============================================================
+// DISBURSAL
+// ============================================================
 
 model Disbursal {
-  id              String          @id @default(uuid())
-  salaryRequestId String          @unique
-  amount          Decimal         @db.Decimal(12, 2)
-  disbursedBy     String?
-  disbursedAt     DateTime?
-  status          DisbursalStatus @default(PENDING)
-  remarks         String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  salaryRequest   SalaryRequest   @relation(fields: [salaryRequestId], references: [id])
+  id                String          @id @default(uuid())
+  loanApplicationId String          @unique
+  disbursedAmount   Decimal         @db.Decimal(12, 2)
+  fundingSource     String?         // MOBPAE | EMPLOYER | PARTNER
+  disbursedBy       String?
+  disbursedAt       DateTime?
+  status            DisbursalStatus @default(PENDING)
+  remarks           String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  loanApplication   LoanApplication @relation(fields: [loanApplicationId], references: [id])
 
   @@map("disbursals")
 }
 
+// ============================================================
+// REPAYMENT
+// Amounts are computed at disbursal time using snapshot rates
+// + actual disbursedAmount. The snapshot is the source of truth
+// for rates; Repayment is the source of truth for amounts.
+// ============================================================
+
 model Repayment {
-  id              String              @id @default(uuid())
-  salaryRequestId String              @unique
-  settlementId    String?
-  dueDate         DateTime
-  paidDate        DateTime?
-  status          RepaymentStatus     @default(SCHEDULED)
-  remarks         String?
+  id                String              @id @default(uuid())
+  loanApplicationId String              @unique
+  settlementId      String?
+  dueDate           DateTime
+  paidDate          DateTime?
+  status            RepaymentStatus     @default(SCHEDULED)
+  remarks           String?
+
+  // Final computed amounts (calculated at disbursal with snapshot rates)
+  principalAmount       Decimal @db.Decimal(12, 2)
+  interestFreeAmount    Decimal @default(0) @db.Decimal(12, 2)
+  interestBearingAmount Decimal @default(0) @db.Decimal(12, 2)
+  interestAmount        Decimal @default(0) @db.Decimal(12, 2)
+  processingFee         Decimal @default(0) @db.Decimal(12, 2)
+  gstAmount             Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount           Decimal @db.Decimal(12, 2)
+
+  // Frozen rates copied from snapshot (makes repayment self-contained for display)
+  interestRate Decimal @default(36) @db.Decimal(5, 2)
+  interestDays Int     @default(0)
+
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
-  interestAmount  Decimal             @default(0) @db.Decimal(12, 2)
-  interestDays    Int                 @default(0)
-  interestRate    Decimal             @default(36) @db.Decimal(5, 2)
-  principalAmount Decimal             @default(0) @db.Decimal(12, 2)
-  totalAmount     Decimal             @default(0) @db.Decimal(12, 2)
-  salaryRequest   SalaryRequest       @relation(fields: [salaryRequestId], references: [id])
+  loanApplication LoanApplication     @relation(fields: [loanApplicationId], references: [id])
   settlement      EmployerSettlement? @relation(fields: [settlementId], references: [id])
 
   @@index([settlementId])
@@ -196,160 +390,62 @@ model Repayment {
   @@map("repayments")
 }
 
-model EmployerEnquiry {
-  id            String                @id @default(uuid())
-  companyName   String
-  contactPerson String
-  email         String
-  phone         String
-  employeeCount Int?
-  status        EmployerEnquiryStatus @default(NEW)
-  remarks       String?
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  employerId    String?               @unique
-  employer      Employer?             @relation(fields: [employerId], references: [id])
-
-  @@index([status])
-  @@index([createdAt])
-  @@map("employer_enquiries")
-}
-
-model Notification {
-  id        String           @id @default(uuid())
-  userId    String
-  title     String
-  message   String
-  type      NotificationType @default(SYSTEM)
-  isRead    Boolean          @default(false)
-  createdAt DateTime         @default(now())
-  user      User             @relation(fields: [userId], references: [id])
-
-  @@index([userId, isRead])
-  @@index([createdAt])
-  @@map("notifications")
-}
-
-model AuditLog {
-  id         String   @id @default(uuid())
-  userId     String?
-  action     String
-  entityType String
-  entityId   String
-  oldValue   Json?
-  newValue   Json?
-  createdAt  DateTime @default(now())
-  user       User?    @relation(fields: [userId], references: [id])
-
-  @@index([createdAt])
-  @@index([action])
-  @@index([entityType])
-  @@index([userId])
-  @@index([entityType, entityId])
-  @@map("audit_logs")
-}
-
-model UserSession {
-  id           String   @id @default(uuid())
-  userId       String
-  refreshToken String
-  deviceInfo   String?
-  ipAddress    String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  user         User     @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([isActive])
-  @@index([isActive, updatedAt])
-  @@map("user_sessions")
-}
-
-model PasswordResetToken {
-  id            String    @id @default(uuid())
-  userId        String
-  tokenHash     String
-  expiresAt     DateTime
-  usedAt        DateTime?
-  createdAt     DateTime  @default(now())
-  tokenSelector String?   @unique
-  user          User      @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([expiresAt])
-  @@map("password_reset_tokens")
-}
-
-model KycDocument {
-  id           String          @id @default(uuid())
-  employeeId   String
-  documentType KycDocumentType
-  filePath     String
-  status       KycStatus       @default(PENDING)
-  verifiedBy   String?
-  verifiedAt   DateTime?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  employee     Employee        @relation(fields: [employeeId], references: [id])
-
-  @@unique([employeeId, documentType])
-  @@index([status])
-  @@index([status, employeeId])
-  @@map("kyc_documents")
-}
-
-model Setting {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  value     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("settings")
-}
-
-model MembershipPlanConfig {
-  id            String   @id @default(uuid())
-  planKey       String   @unique @map("plan_key")
-  planName      String   @map("plan_name")
-  amount        Decimal  @db.Decimal(12, 2)
-  validityDays  Int      @map("validity_days")
-  billingLabel  String   @map("billing_label")
-  perMonthLabel String?  @map("per_month_label")
-  isPreferred   Boolean  @default(false) @map("is_preferred")
-  isActive      Boolean  @default(true) @map("is_active")
-  sortOrder     Int      @default(0) @map("sort_order")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  @@map("membership_plan_configs")
-}
+// ============================================================
+// MEMBERSHIP
+// ============================================================
 
 model Membership {
   id                String           @id @default(uuid())
   employeeId        String           @unique
+  planKey           String           @map("plan_key")
   planType          String           @default("MONTHLY") @map("plan_type")
   planName          String
-  amount            Decimal            @db.Decimal(12, 2)
+  amount            Decimal          @db.Decimal(12, 2)
   startDate         DateTime
   endDate           DateTime
-  status            MembershipStatus   @default(PENDING)
+  status            MembershipStatus @default(PENDING)
   paymentReference  String?
   paymentScreenshot String?
   verifiedBy        String?
   verifiedAt        DateTime?
   remarks           String?
   couponCode        String?
-  discountAmount    Decimal?           @db.Decimal(12, 2)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  employee          Employee           @relation(fields: [employeeId], references: [id])
+  discountAmount    Decimal?         @db.Decimal(12, 2)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  employee          Employee         @relation(fields: [employeeId], references: [id])
 
   @@index([status])
   @@index([endDate])
   @@map("memberships")
 }
+
+// ============================================================
+// MEMBERSHIP PLAN CONFIG
+// ============================================================
+
+model MembershipPlanConfig {
+  id            String      @id @default(uuid())
+  productId     String      @map("product_id")
+  planKey       String      @unique @map("plan_key")
+  planName      String      @map("plan_name")
+  amount        Decimal     @db.Decimal(12, 2)
+  validityDays  Int         @map("validity_days")
+  billingLabel  String      @map("billing_label")
+  perMonthLabel String?     @map("per_month_label")
+  isPreferred   Boolean     @default(false) @map("is_preferred")
+  isActive      Boolean     @default(true) @map("is_active")
+  sortOrder     Int         @default(0) @map("sort_order")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  product       LoanProduct @relation(fields: [productId], references: [id])
+
+  @@map("membership_plan_configs")
+}
+
+// ============================================================
+// MEMBERSHIP COUPON
+// ============================================================
 
 model MembershipCoupon {
   id             String    @id @default(uuid())
@@ -364,6 +460,10 @@ model MembershipCoupon {
 
   @@map("membership_coupons")
 }
+
+// ============================================================
+// EMPLOYER SETTLEMENT
+// ============================================================
 
 model EmployerSettlement {
   id                String                   @id @default(uuid())
@@ -390,6 +490,171 @@ model EmployerSettlement {
   @@map("employer_settlements")
 }
 
+// ============================================================
+// EMPLOYER ENQUIRY
+// ============================================================
+
+model EmployerEnquiry {
+  id            String                @id @default(uuid())
+  companyName   String
+  contactPerson String
+  email         String
+  phone         String
+  employeeCount Int?
+  status        EmployerEnquiryStatus @default(NEW)
+  remarks       String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  employerId    String?               @unique
+  employer      Employer?             @relation(fields: [employerId], references: [id])
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("employer_enquiries")
+}
+
+// ============================================================
+// KYC DOCUMENT
+// ============================================================
+
+model KycDocument {
+  id           String          @id @default(uuid())
+  employeeId   String
+  documentType KycDocumentType
+  filePath     String
+  status       KycStatus       @default(PENDING)
+  verifiedBy   String?
+  verifiedAt   DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  employee     Employee        @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, documentType])
+  @@index([status])
+  @@index([status, employeeId])
+  @@map("kyc_documents")
+}
+
+// ============================================================
+// SETTINGS (global platform settings only — OTP, versioning,
+// notifications, maintenance mode. No lending rules here.)
+// ============================================================
+
+model Setting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// ============================================================
+// APP INFORMATION
+// ============================================================
+
+model AppInformation {
+  id        String      @id @default(uuid())
+  type      AppInfoType
+  title     String
+  content   String      @db.Text
+  version   String?
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([type])
+  @@index([type, isActive])
+  @@map("app_information")
+}
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      NotificationType @default(SYSTEM)
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@index([action])
+  @@index([entityType])
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// USER SESSION
+// ============================================================
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  refreshToken String
+  deviceInfo   String?
+  ipAddress    String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([isActive])
+  @@index([isActive, updatedAt])
+  @@map("user_sessions")
+}
+
+// ============================================================
+// PASSWORD RESET TOKEN
+// ============================================================
+
+model PasswordResetToken {
+  id            String    @id @default(uuid())
+  userId        String
+  tokenHash     String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+  tokenSelector String?   @unique
+  user          User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
 enum Role {
   ADMIN
   EMPLOYER
@@ -415,12 +680,35 @@ enum SelfieStatus {
   REJECTED
 }
 
-enum SalaryRequestStatus {
+// Product type codes — short, immutable, used in applicationNumber prefix
+enum LoanProductType {
+  SA // Salary Advance
+  PL // Personal Loan
+  HL // Housing Loan
+  VL // Vehicle Loan
+  EL // Education Loan
+  CL // Credit Line
+}
+
+enum LoanPurposeCategory {
+  MEDICAL
+  EDUCATION
+  HOUSE_RENT
+  UTILITY_BILLS
+  EMERGENCY
+  FAMILY_EXPENSE
+  TRAVEL
+  SHOPPING
+  OTHER
+}
+
+enum LoanApplicationStatus {
   SUBMITTED
   EMPLOYER_APPROVED
   EMPLOYER_REJECTED
   AWAITING_MEMBERSHIP_PAYMENT
   READY_FOR_DISBURSAL
+  ADMIN_REJECTED
   DISBURSED
   REPAYMENT_SCHEDULED
   REPAID
@@ -486,21 +774,6 @@ enum NotificationType {
   SYSTEM
   EMAIL
   SMS
-}
-
-model AppInformation {
-  id        String      @id @default(uuid())
-  type      AppInfoType
-  title     String
-  content   String      @db.Text
-  version   String?
-  isActive  Boolean     @default(true)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  @@unique([type])
-  @@index([type, isActive])
-  @@map("app_information")
 }
 
 enum AppInfoType {

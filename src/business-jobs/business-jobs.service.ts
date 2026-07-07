@@ -5,7 +5,6 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { EmployerSettlementsService } from '../employer-settlements/employer-settlements.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SalaryRequestsService } from '../salary-requests/salary-requests.service';
 
 @Injectable()
 export class BusinessJobsService {
@@ -14,12 +13,29 @@ export class BusinessJobsService {
     private readonly auditLogsService: AuditLogsService,
     private readonly notificationsService: NotificationsService,
     private readonly employerSettlementsService: EmployerSettlementsService,
-    private readonly salaryRequestsService: SalaryRequestsService,
   ) {}
 
+  /**
+   * Expire SUBMITTED loan applications that have had no action for > 3 days.
+   */
   @Cron('30 1 * * *')
-  async expireStaleSalaryRequests() {
-    return this.salaryRequestsService.expirePendingRequests(3);
+  async expireStaleApplications() {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 3);
+
+    const stale = await this.prisma.loanApplication.findMany({
+      where: { status: 'SUBMITTED', submittedAt: { lt: cutoff } },
+      select: { id: true },
+    });
+
+    if (stale.length === 0) return { expired: 0 };
+
+    await this.prisma.loanApplication.updateMany({
+      where: { id: { in: stale.map((a) => a.id) } },
+      data: { status: 'EXPIRED' },
+    });
+
+    return { expired: stale.length };
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
@@ -106,7 +122,7 @@ export class BusinessJobsService {
         },
       },
       include: {
-        salaryRequest: {
+        loanApplication: {
           include: {
             employee: {
               select: {
@@ -157,7 +173,7 @@ export class BusinessJobsService {
           },
         });
 
-        const userId = repayment.salaryRequest.employee.userId;
+        const userId = repayment.loanApplication.employee.userId;
 
         if (userId) {
           await this.notificationsService.createSystemNotification(

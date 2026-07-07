@@ -121,7 +121,7 @@ export class EmployerSettlementsService {
         employer: true,
         repayments: {
           include: {
-            salaryRequest: {
+            loanApplication: {
               include: {
                 employee: true,
               },
@@ -192,8 +192,8 @@ export class EmployerSettlementsService {
 
     const paidDate = new Date();
     const repaymentIds = settlement.repayments.map((repayment) => repayment.id);
-    const salaryRequestIds = settlement.repayments.map(
-      (repayment) => repayment.salaryRequestId,
+    const loanApplicationIds = settlement.repayments.map(
+      (repayment) => repayment.loanApplicationId,
     );
 
     const { transition, updatedSettlement } = await this.prisma.$transaction(
@@ -214,10 +214,10 @@ export class EmployerSettlementsService {
         });
 
         if (transition.count > 0 && repaymentIds.length > 0) {
-          const salaryRequests = await tx.salaryRequest.findMany({
+          const salaryRequests = await tx.loanApplication.findMany({
             where: {
               id: {
-                in: salaryRequestIds,
+                in: loanApplicationIds,
               },
             },
             select: {
@@ -241,10 +241,10 @@ export class EmployerSettlementsService {
             },
           });
 
-          await tx.salaryRequest.updateMany({
+          await tx.loanApplication.updateMany({
             where: {
               id: {
-                in: salaryRequestIds,
+                in: loanApplicationIds,
               },
             },
             data: {
@@ -252,9 +252,9 @@ export class EmployerSettlementsService {
             },
           });
 
-          await tx.salaryRequestHistory.createMany({
+          await tx.loanApplicationHistory.createMany({
             data: salaryRequests.map((request) => ({
-              salaryRequestId: request.id,
+              loanApplicationId: request.id,
               previousStatus: request.status,
               newStatus: 'REPAID',
               changedBy: actorUserId ?? null,
@@ -302,7 +302,7 @@ export class EmployerSettlementsService {
         paidDate: updatedSettlement.paidDate?.toISOString() ?? null,
         referenceNumber: updatedSettlement.referenceNumber,
         repaymentIds,
-        salaryRequestIds,
+        loanApplicationIds,
       },
     });
 
@@ -464,7 +464,7 @@ export class EmployerSettlementsService {
         employer: true,
         repayments: {
           include: {
-            salaryRequest: {
+            loanApplication: {
               include: {
                 employee: true,
               },
@@ -498,9 +498,9 @@ export class EmployerSettlementsService {
         outstandingAmount: Number(settlement.outstandingAmount),
         settlementId: settlement.id,
         recoveries: settlement.repayments.map((repayment) => ({
-          employeeName: repayment.salaryRequest.employee.name,
-          employeeCode: repayment.salaryRequest.employee.employeeCode,
-          salaryRequestId: repayment.salaryRequestId,
+          employeeName: repayment.loanApplication.employee.name,
+          employeeCode: repayment.loanApplication.employee.employeeCode,
+          loanApplicationId: repayment.loanApplicationId,
           principalAmount: Number(repayment.principalAmount),
           interestAmount: Number(repayment.interestAmount),
           totalAmount: Number(repayment.totalAmount),

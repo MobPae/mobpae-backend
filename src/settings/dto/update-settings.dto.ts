@@ -1,45 +1,13 @@
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
+/**
+ * Platform-level settings only. Lending rules live in LoanProductConfig.
+ */
 export class UpdateSettingsDto {
-  @IsOptional()
-  @IsString()
-  advancePercentage?: string;
-
-  @IsOptional()
-  @IsString()
-  interestChargePercentage?: string;
-
-  @IsOptional()
-  @IsString()
-  processingFeePercentage?: string;
-
-  @IsOptional()
-  @IsString()
-  minimumSalary?: string;
-
-  @IsOptional()
-  @IsString()
-  maximumAdvance?: string;
-
+  // Notification toggles
   @IsOptional()
   @IsBoolean()
-  requireKyc?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  requireBankVerification?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  allowMultipleRequestsPerCycle?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  allowRequestWithOutstandingBalance?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  salaryRequestAlert?: boolean;
+  loanApplicationAlert?: boolean;
 
   @IsOptional()
   @IsBoolean()
@@ -53,14 +21,7 @@ export class UpdateSettingsDto {
   @IsBoolean()
   bankVerificationAlert?: boolean;
 
-  @IsOptional()
-  @IsString()
-  MEMBERSHIP_AMOUNT?: string;
-
-  @IsOptional()
-  @IsString()
-  MEMBERSHIP_VALIDITY_DAYS?: string;
-
+  // Employer settlement
   @IsOptional()
   @IsString()
   EMPLOYER_GRACE_DAYS?: string;
@@ -68,4 +29,30 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsString()
   EMPLOYER_LATE_FEE_PERCENTAGE?: string;
+
+  // Membership payment info
+  @IsOptional()
+  @IsString()
+  MEMBERSHIP_PAYMENT_UPI_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  MEMBERSHIP_PAYMENT_BENEFICIARY?: string;
+
+  @IsOptional()
+  @IsString()
+  MEMBERSHIP_PAYMENT_INSTRUCTIONS?: string;
+
+  // App
+  @IsOptional()
+  @IsString()
+  APP_VERSION?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  APP_MAINTENANCE_MODE?: boolean;
+
+  @IsOptional()
+  @IsString()
+  APP_MAINTENANCE_MESSAGE?: string;
 }

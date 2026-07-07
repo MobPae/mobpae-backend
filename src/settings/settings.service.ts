@@ -1,10 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
-import {
-  AdvanceSettings,
-  SettingsPolicyService,
-} from './settings-policy.service';
+import { SettingsPolicyService } from './settings-policy.service';
 
 @Injectable()
 export class SettingsService {
@@ -17,20 +14,6 @@ export class SettingsService {
     return this.settingsPolicy.getAllSettings();
   }
 
-  async getAdvanceSettings(): Promise<AdvanceSettings> {
-    return this.settingsPolicy.getAdvanceSettings();
-  }
-
-  calculateAvailableAdvance(
-    salaryInHand: number,
-    settings: AdvanceSettings,
-  ): number {
-    return this.settingsPolicy.calculateAvailableAdvance(
-      salaryInHand,
-      settings,
-    );
-  }
-
   async update(dto: UpdateSettingsDto) {
     const entries = Object.entries(dto);
 
@@ -40,16 +23,9 @@ export class SettingsService {
       }
 
       await this.prisma.setting.upsert({
-        where: {
-          key,
-        },
-        update: {
-          value: String(value),
-        },
-        create: {
-          key,
-          value: String(value),
-        },
+        where: { key },
+        update: { value: String(value) },
+        create: { key, value: String(value) },
       });
     }
 

@@ -4,39 +4,34 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PricingService } from '../pricing/pricing.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PayrollUtil } from '../common/utils/payroll.util';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-import { SettingsPolicyService } from '../settings/settings-policy.service';
 import { DisbursalListQueryDto } from './dto/disbursal-list-query.dto';
 
 @Injectable()
 export class DisbursalsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly pricingService: PricingService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly auditLogsService: AuditLogsService,
-    private readonly settingsPolicy: SettingsPolicyService,
   ) {}
 
   async create(dto: CreateDisbursalDto, actorUserId: string) {
-    const salaryRequest = await this.prisma.salaryRequest.findUnique({
-      where: {
-        id: dto.salaryRequestId,
-      },
+    const loanApplication = await this.prisma.loanApplication.findUnique({
+      where: { id: dto.loanApplicationId },
     });
 
-    if (!salaryRequest) {
-      throw new BadRequestException('Salary request not found');
+    if (!loanApplication) {
+      throw new BadRequestException('Loan application not found');
     }
 
     const existingDisbursal = await this.prisma.disbursal.findUnique({
-      where: {
-        salaryRequestId: salaryRequest.id,
-      },
+      where: { loanApplicationId: loanApplication.id },
     });
 
     if (existingDisbursal) {
@@ -44,9 +39,7 @@ export class DisbursalsService {
     }
 
     const employer = await this.prisma.employer.findUnique({
-      where: {
-        id: salaryRequest.employerId,
-      },
+      where: { id: loanApplication.employerId },
     });
 
     if (!employer) {
@@ -59,43 +52,38 @@ export class DisbursalsService {
       );
     }
 
-    if (salaryRequest.status !== 'READY_FOR_DISBURSAL') {
+    if (loanApplication.status !== 'READY_FOR_DISBURSAL') {
       throw new BadRequestException(
-        'Salary request is not ready for disbursal. Employer approval and active membership are required.',
+        'Loan application is not ready for disbursal. Employer and admin approval are required.',
       );
     }
 
-    // Guard: employee must have an active membership before disbursal is created
+    // Guard: employee must have an active membership
     const membership = await this.prisma.membership.findUnique({
-      where: { employeeId: salaryRequest.employeeId },
+      where: { employeeId: loanApplication.employeeId },
     });
     const membershipActive =
-      membership?.status === 'ACTIVE' &&
-      membership.endDate > new Date();
+      membership?.status === 'ACTIVE' && membership.endDate > new Date();
     if (!membershipActive) {
       throw new BadRequestException(
         'Employee does not have an active membership. Disbursal cannot proceed.',
       );
     }
 
+    // Use adminApprovedAmount if set, otherwise requestedAmount
+    const disbursedAmount = Number(
+      loanApplication.adminApprovedAmount ?? loanApplication.requestedAmount,
+    );
+
     const disbursal = await this.prisma.disbursal.upsert({
-      where: {
-        salaryRequestId: salaryRequest.id,
-      },
+      where: { loanApplicationId: loanApplication.id },
       update: {},
       create: {
-        salaryRequestId: salaryRequest.id,
-        amount: salaryRequest.approvedAmount ?? salaryRequest.amount,
+        loanApplicationId: loanApplication.id,
+        disbursedAmount,
+        fundingSource: 'MOBPAE',
       },
     });
-
-    // Status is already READY_FOR_DISBURSAL; only sync approvedAmount if missing
-    if (!salaryRequest.approvedAmount) {
-      await this.prisma.salaryRequest.update({
-        where: { id: salaryRequest.id },
-        data: { approvedAmount: salaryRequest.amount },
-      });
-    }
 
     await this.writeAuditLog({
       userId: actorUserId,
@@ -120,7 +108,7 @@ export class DisbursalsService {
                 lte: query.endDate ? new Date(query.endDate) : undefined,
               }
             : undefined,
-        salaryRequest:
+        loanApplication:
           query.employerId || query.employeeId
             ? {
                 employerId: query.employerId,
@@ -129,7 +117,7 @@ export class DisbursalsService {
             : undefined,
       },
       include: {
-        salaryRequest: {
+        loanApplication: {
           include: {
             employee: {
               include: {
@@ -139,32 +127,24 @@ export class DisbursalsService {
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   /**
-   * Marks a salary advance as disbursed.
+   * Marks a loan advance as disbursed.
    *
-   * Business Flow:
-   * 1. Validate disbursal exists.
-   * 2. Validate status is PENDING.
-   * 3. Validate employer is not BLOCKED.
-   * 4. Mark disbursal as DISBURSED.
-   * 5. Update salary request status.
+   * Flow:
+   * 1. Validate disbursal is PENDING.
+   * 2. Validate employer is not BLOCKED.
+   * 3. Mark DISBURSED.
+   * 4. Create Repayment using SNAPSHOT rates + disbursedAmount (not live settings).
+   * 5. Transition LoanApplication → REPAYMENT_SCHEDULED.
    * 6. Notify employee.
-   *
-   * Result:
-   * Employee receives advance salary.
    */
-
   async disburse(id: string, actorUserId: string) {
     const existingDisbursal = await this.prisma.disbursal.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
     });
 
     if (!existingDisbursal) {
@@ -175,80 +155,64 @@ export class DisbursalsService {
       if (existingDisbursal.status === 'DISBURSED') {
         return existingDisbursal;
       }
-
       throw new BadRequestException('Disbursal is not pending');
     }
 
-    const salaryRequest = await this.prisma.salaryRequest.findUnique({
-      where: {
-        id: existingDisbursal.salaryRequestId,
-      },
-      include: {
-        employee: true,
-        employer: true,
-      },
+    const loanApplication = await this.prisma.loanApplication.findUnique({
+      where: { id: existingDisbursal.loanApplicationId },
+      include: { employee: true, employer: true },
     });
 
-    if (!salaryRequest) {
-      throw new NotFoundException('Salary request not found');
+    if (!loanApplication) {
+      throw new NotFoundException('Loan application not found');
     }
 
-    if (salaryRequest.employer.riskStatus === 'BLOCKED') {
+    if (loanApplication.employer.riskStatus === 'BLOCKED') {
       throw new BadRequestException(
         'Employer has overdue settlements. Please clear outstanding dues before further disbursals.',
       );
     }
 
-    const annualInterestRate =
-      await this.settingsPolicy.getAnnualInterestRate();
-    const approvedAmount = Number(
-      salaryRequest.approvedAmount ?? salaryRequest.amount,
-    );
-    const repaymentCalculation = PayrollUtil.calculateRepayment(
-      approvedAmount,
-      salaryRequest.requestedAt,
-      salaryRequest.employer.payrollCutoffDate,
-      salaryRequest.employer.payrollDate,
-      annualInterestRate,
-    );
+    const disbursedAmount = Number(existingDisbursal.disbursedAmount);
+
+    // ── Repayment calculation using SNAPSHOT rates ───────────────────────────
+    // Snapshot fields were frozen at submission time — never recalculated here.
+    const annualInterestRate = Number(loanApplication.snapshotAnnualInterestRate);
+    const interestDays = loanApplication.snapshotInterestDays ?? 0;
+    const dueDate = loanApplication.snapshotRecoveryDate;
+
+    const { interestFreeAmount, interestBearingAmount, interestAmount, processingFee, gstAmount, totalAmount } =
+      this.pricingService.computeRepaymentBreakdown(disbursedAmount, {
+        snapshotAnnualInterestRate: annualInterestRate,
+        snapshotInterestFreePercentage: Number(loanApplication.snapshotInterestFreePercentage),
+        snapshotProcessingFeeRate: Number(loanApplication.snapshotProcessingFeeRate),
+        snapshotGstRate: Number(loanApplication.snapshotGstRate),
+        snapshotInterestDays: interestDays,
+      });
+    // ────────────────────────────────────────────────────────────────────────
 
     const { disbursal, repayment, repaymentCreated, transitioned } =
       await this.prisma.$transaction(async (tx) => {
         const claim = await tx.disbursal.updateMany({
-          where: {
-            id,
-            status: 'PENDING',
-          },
-          data: {
-            status: 'DISBURSED',
-            disbursedAt: new Date(),
-          },
+          where: { id, status: 'PENDING' },
+          data: { status: 'DISBURSED', disbursedAt: new Date(), disbursedBy: actorUserId },
         });
 
         if (claim.count === 0) {
           const [disbursal, repayment] = await Promise.all([
             tx.disbursal.findUnique({ where: { id } }),
             tx.repayment.findUnique({
-              where: { salaryRequestId: salaryRequest.id },
+              where: { loanApplicationId: loanApplication.id },
             }),
           ]);
 
-          if (!disbursal) {
-            throw new NotFoundException('Disbursal not found');
-          }
+          if (!disbursal) throw new NotFoundException('Disbursal not found');
 
-          return {
-            disbursal,
-            repayment,
-            repaymentCreated: false,
-            transitioned: false,
-          };
+          return { disbursal, repayment, repaymentCreated: false, transitioned: false };
         }
 
         let repayment = await tx.repayment.findUnique({
-          where: {
-            salaryRequestId: salaryRequest.id,
-          },
+          where: { loanApplicationId: loanApplication.id },
         });
 
         let repaymentCreated = false;
@@ -256,46 +220,35 @@ export class DisbursalsService {
         if (!repayment) {
           repayment = await tx.repayment.create({
             data: {
-              salaryRequestId: salaryRequest.id,
-              principalAmount: approvedAmount,
-              interestAmount: repaymentCalculation.interestAmount,
-              totalAmount: repaymentCalculation.totalAmount,
+              loanApplicationId: loanApplication.id,
+              principalAmount: disbursedAmount,
+              interestFreeAmount,
+              interestBearingAmount,
+              interestAmount,
+              processingFee,
+              gstAmount,
+              totalAmount,
               interestRate: annualInterestRate,
-              interestDays: repaymentCalculation.interestDays,
-              dueDate: repaymentCalculation.dueDate,
+              interestDays,
+              dueDate,
               status: 'SCHEDULED',
             },
           });
-
           repaymentCreated = true;
         }
 
-        const disbursal = await tx.disbursal.findUnique({
-          where: { id },
+        const disbursal = await tx.disbursal.findUnique({ where: { id } });
+        if (!disbursal) throw new NotFoundException('Disbursal not found');
+
+        await tx.loanApplication.update({
+          where: { id: disbursal.loanApplicationId },
+          data: { status: 'REPAYMENT_SCHEDULED' },
         });
 
-        if (!disbursal) {
-          throw new NotFoundException('Disbursal not found');
-        }
-
-        // Status moves to REPAYMENT_SCHEDULED because the repayment record
-        // was just created in this same transaction. The SalaryRequest skips
-        // straight to REPAYMENT_SCHEDULED so the employee's 6-step timeline
-        // renders correctly. The Disbursal record itself holds the DISBURSED
-        // status for admin views.
-        await tx.salaryRequest.update({
-          where: {
-            id: disbursal.salaryRequestId,
-          },
+        await tx.loanApplicationHistory.create({
           data: {
-            status: 'REPAYMENT_SCHEDULED',
-          },
-        });
-
-        await tx.salaryRequestHistory.create({
-          data: {
-            salaryRequestId: disbursal.salaryRequestId,
-            previousStatus: salaryRequest.status,
+            loanApplicationId: disbursal.loanApplicationId,
+            previousStatus: loanApplication.status,
             newStatus: 'REPAYMENT_SCHEDULED',
             changedBy: actorUserId,
             actorRole: 'ADMIN',
@@ -303,23 +256,18 @@ export class DisbursalsService {
           },
         });
 
-        return {
-          disbursal,
-          repayment,
-          repaymentCreated,
-          transitioned: true,
-        };
+        return { disbursal, repayment, repaymentCreated, transitioned: true };
       });
 
     if (!transitioned) {
       return disbursal;
     }
 
-    if (salaryRequest.employee.userId) {
+    if (loanApplication.employee.userId) {
       await this.notificationsService.createSystemNotification(
-        salaryRequest.employee.userId,
-        'Salary Disbursed',
-        `₹${disbursal.amount} has been disbursed to your registered bank account.`,
+        loanApplication.employee.userId,
+        'Salary Advance Disbursed',
+        `₹${disbursedAmount} has been disbursed to your registered bank account.`,
       );
     }
 
@@ -338,21 +286,21 @@ export class DisbursalsService {
       userId: actorUserId,
       action: 'DISBURSAL_DISBURSED',
       entityType: 'DISBURSAL',
-      entityId: disbursal.id,
+      entityId: disbursal!.id,
       oldValue: this.disbursalAuditValue(existingDisbursal),
-      newValue: this.disbursalAuditValue(disbursal),
+      newValue: this.disbursalAuditValue(disbursal!),
     });
 
     try {
       await this.emailService.sendDisbursalSuccessfulEmail({
-        to: salaryRequest.employee.email,
-        employeeName: salaryRequest.employee.name,
-        disbursedAmount: Number(disbursal.amount),
-        disbursalDate: disbursal.disbursedAt ?? new Date(),
+        to: loanApplication.employee.email,
+        employeeName: loanApplication.employee.name,
+        disbursedAmount,
+        disbursalDate: disbursal!.disbursedAt ?? new Date(),
         repaymentDate: repayment?.dueDate,
       });
     } catch (error) {
-      console.error('Failed to send disbursal successful email', error);
+      console.error('Failed to send disbursal email', error);
     }
 
     return disbursal;
@@ -360,15 +308,15 @@ export class DisbursalsService {
 
   private disbursalAuditValue(disbursal: {
     id: string;
-    salaryRequestId: string;
-    amount: unknown;
+    loanApplicationId: string;
+    disbursedAmount: unknown;
     status: string;
     disbursedAt?: Date | null;
   }) {
     return {
       id: disbursal.id,
-      salaryRequestId: disbursal.salaryRequestId,
-      amount: Number(disbursal.amount),
+      loanApplicationId: disbursal.loanApplicationId,
+      disbursedAmount: Number(disbursal.disbursedAmount),
       status: disbursal.status,
       disbursedAt: disbursal.disbursedAt?.toISOString() ?? null,
     };
@@ -376,7 +324,7 @@ export class DisbursalsService {
 
   private repaymentAuditValue(repayment: {
     id: string;
-    salaryRequestId: string;
+    loanApplicationId: string;
     principalAmount: unknown;
     interestAmount: unknown;
     totalAmount: unknown;
@@ -387,7 +335,7 @@ export class DisbursalsService {
   }) {
     return {
       id: repayment.id,
-      salaryRequestId: repayment.salaryRequestId,
+      loanApplicationId: repayment.loanApplicationId,
       principalAmount: Number(repayment.principalAmount),
       interestAmount: Number(repayment.interestAmount),
       totalAmount: Number(repayment.totalAmount),
@@ -420,13 +368,8 @@ export class DisbursalsService {
       entityId: data.entityId,
     };
 
-    if (data.oldValue !== null) {
-      auditData.oldValue = data.oldValue;
-    }
-
-    if (data.newValue !== null) {
-      auditData.newValue = data.newValue;
-    }
+    if (data.oldValue !== null) auditData.oldValue = data.oldValue;
+    if (data.newValue !== null) auditData.newValue = data.newValue;
 
     await this.auditLogsService.log(auditData);
   }

@@ -1,9 +1,9 @@
-import { IsDateString, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsString } from 'class-validator';
 
+/** @deprecated Repayments are now created automatically at disbursal time. */
 export class CreateRepaymentDto {
+  @ApiProperty({ description: 'ID of the LoanApplication' })
   @IsString()
-  salaryRequestId: string;
-
-  @IsDateString()
-  dueDate: string;
+  loanApplicationId: string;
 }

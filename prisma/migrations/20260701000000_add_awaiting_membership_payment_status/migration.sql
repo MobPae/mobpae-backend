@@ -1,2 +1,0 @@
--- AlterEnum
-ALTER TYPE "SalaryRequestStatus" ADD VALUE 'AWAITING_MEMBERSHIP_PAYMENT';

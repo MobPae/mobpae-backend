@@ -49,8 +49,13 @@ export class MembershipService {
       throw new ConflictException(`A plan with key '${dto.planKey}' already exists`);
     }
 
+    const saProduct = await this.prisma.loanProduct.findFirstOrThrow({
+      where: { productType: 'SA' },
+    });
+
     return this.prisma.membershipPlanConfig.create({
       data: {
+        productId: saProduct.id,
         planKey: dto.planKey,
         planName: dto.planName,
         amount: dto.amount,
@@ -179,6 +184,7 @@ export class MembershipService {
       },
       create: {
         employeeId,
+        planKey: plan.planKey,
         planType: plan.planKey,
         planName: plan.planName,
         amount: plan.amount,
@@ -272,6 +278,7 @@ export class MembershipService {
         },
         create: {
           employeeId: employee.id,
+          planKey: plan.planKey,
           planType: plan.planKey,
           planName: plan.planName,
           amount: payableAmount,
@@ -363,7 +370,7 @@ export class MembershipService {
     }
 
     // Auto-advance any AWAITING_MEMBERSHIP_PAYMENT salary requests
-    const waitingRequests = await this.prisma.salaryRequest.findMany({
+    const waitingRequests = await this.prisma.loanApplication.findMany({
       where: {
         employeeId: membership.employeeId,
         status: 'AWAITING_MEMBERSHIP_PAYMENT',
@@ -372,7 +379,7 @@ export class MembershipService {
     });
 
     if (waitingRequests.length > 0) {
-      await this.prisma.salaryRequest.updateMany({
+      await this.prisma.loanApplication.updateMany({
         where: {
           employeeId: membership.employeeId,
           status: 'AWAITING_MEMBERSHIP_PAYMENT',
@@ -380,9 +387,9 @@ export class MembershipService {
         data: { status: 'READY_FOR_DISBURSAL' },
       });
 
-      await this.prisma.salaryRequestHistory.createMany({
+      await this.prisma.loanApplicationHistory.createMany({
         data: waitingRequests.map((request) => ({
-          salaryRequestId: request.id,
+          loanApplicationId: request.id,
           previousStatus: request.status,
           newStatus: 'READY_FOR_DISBURSAL',
           changedBy: adminUserId,

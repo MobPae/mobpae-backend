@@ -4,11 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateRepaymentDto } from './dto/create-repayment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
-import { PayrollUtil } from '../common/utils/payroll.util';
-import { SettingsPolicyService } from '../settings/settings-policy.service';
 import { RepaymentListQueryDto } from './dto/repayment-list-query.dto';
 
 @Injectable()
@@ -17,110 +14,40 @@ export class RepaymentsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
-    private readonly settingsPolicy: SettingsPolicyService,
   ) {}
-
-  async create(dto: CreateRepaymentDto) {
-    const salaryRequest = await this.prisma.salaryRequest.findUnique({
-      where: {
-        id: dto.salaryRequestId,
-      },
-      include: {
-        employer: true,
-      },
-    });
-
-    if (!salaryRequest) {
-      throw new BadRequestException('Salary request not found');
-    }
-
-    const existingRepayment = await this.prisma.repayment.findUnique({
-      where: {
-        salaryRequestId: salaryRequest.id,
-      },
-    });
-
-    if (existingRepayment) {
-      throw new BadRequestException('Repayment already exists');
-    }
-
-    if (salaryRequest.status !== 'DISBURSED') {
-      throw new BadRequestException('Salary request is not disbursed');
-    }
-
-    const annualInterestRate =
-      await this.settingsPolicy.getAnnualInterestRate();
-
-    const approvedAmount = Number(
-      salaryRequest.approvedAmount ?? salaryRequest.amount,
-    );
-
-    const repaymentCalculation = PayrollUtil.calculateRepayment(
-      approvedAmount,
-      salaryRequest.requestedAt,
-      salaryRequest.employer.payrollCutoffDate,
-      salaryRequest.employer.payrollDate,
-      annualInterestRate,
-    );
-
-    return this.prisma.repayment.create({
-      data: {
-        salaryRequestId: salaryRequest.id,
-        principalAmount: approvedAmount,
-        interestAmount: repaymentCalculation.interestAmount,
-        totalAmount: repaymentCalculation.totalAmount,
-        interestRate: annualInterestRate,
-        interestDays: repaymentCalculation.interestDays,
-        dueDate: repaymentCalculation.dueDate,
-      },
-    });
-  }
 
   async findByEmployee(employeeId: string) {
     const repayments = await this.prisma.repayment.findMany({
-      where: {
-        salaryRequest: {
-          employeeId,
-        },
-      },
-      include: {
-        salaryRequest: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      where: { loanApplication: { employeeId } },
+      include: { loanApplication: true },
+      orderBy: { createdAt: 'desc' },
     });
 
-    return repayments.map((repayment) => ({
-      id: repayment.id,
-
-      salaryRequestId: repayment.salaryRequestId,
-
-      principalAmount: Number(repayment.principalAmount),
-
-      interestAmount: Number(repayment.interestAmount),
-
-      totalAmount: Number(repayment.totalAmount),
-
-      interestDays: repayment.interestDays,
-
-      dueDate: repayment.dueDate,
-
-      status: repayment.status,
+    return repayments.map((r) => ({
+      id: r.id,
+      loanApplicationId: r.loanApplicationId,
+      applicationNumber: r.loanApplication.applicationNumber,
+      principalAmount: Number(r.principalAmount),
+      interestFreeAmount: Number(r.interestFreeAmount),
+      interestBearingAmount: Number(r.interestBearingAmount),
+      interestAmount: Number(r.interestAmount),
+      processingFee: Number(r.processingFee),
+      gstAmount: Number(r.gstAmount),
+      totalAmount: Number(r.totalAmount),
+      interestDays: r.interestDays,
+      dueDate: r.dueDate,
+      status: r.status,
     }));
   }
 
   /**
    * Marks repayment as completed.
    *
-   * Business Flow:
+   * Flow:
    * 1. Validate repayment exists.
-   * 2. Mark repayment as PAID.
-   * 3. Update salary request status to REPAID.
+   * 2. Mark PAID.
+   * 3. Transition LoanApplication → REPAID.
    * 4. Notify employee.
-   *
-   * Result:
-   * Employee becomes eligible for future requests.
    */
   async pay(id: string) {
     const existingRepayment = await this.prisma.repayment.findUnique({
@@ -138,21 +65,11 @@ export class RepaymentsService {
     const { repayment, transitioned } = await this.prisma.$transaction(
       async (tx) => {
         const claim = await tx.repayment.updateMany({
-          where: {
-            id,
-            status: {
-              not: 'PAID',
-            },
-          },
-          data: {
-            status: 'PAID',
-            paidDate: new Date(),
-          },
+          where: { id, status: { not: 'PAID' } },
+          data: { status: 'PAID', paidDate: new Date() },
         });
 
-        const repayment = await tx.repayment.findUnique({
-          where: { id },
-        });
+        const repayment = await tx.repayment.findUnique({ where: { id } });
 
         if (!repayment) {
           throw new NotFoundException('Repayment not found');
@@ -162,28 +79,20 @@ export class RepaymentsService {
           return { repayment, transitioned: false };
         }
 
-        const salaryRequest = await tx.salaryRequest.findUnique({
-          where: {
-            id: repayment.salaryRequestId,
-          },
-          select: {
-            status: true,
-          },
+        const loanApplication = await tx.loanApplication.findUnique({
+          where: { id: repayment.loanApplicationId },
+          select: { status: true },
         });
 
-        await tx.salaryRequest.update({
-          where: {
-            id: repayment.salaryRequestId,
-          },
-          data: {
-            status: 'REPAID',
-          },
+        await tx.loanApplication.update({
+          where: { id: repayment.loanApplicationId },
+          data: { status: 'REPAID' },
         });
 
-        await tx.salaryRequestHistory.create({
+        await tx.loanApplicationHistory.create({
           data: {
-            salaryRequestId: repayment.salaryRequestId,
-            previousStatus: salaryRequest?.status ?? null,
+            loanApplicationId: repayment.loanApplicationId,
+            previousStatus: loanApplication?.status ?? null,
             newStatus: 'REPAID',
             changedBy: null,
             actorRole: 'SYSTEM',
@@ -199,28 +108,24 @@ export class RepaymentsService {
       return repayment;
     }
 
-    const salaryRequest = await this.prisma.salaryRequest.findUnique({
-      where: {
-        id: repayment.salaryRequestId,
-      },
-      include: {
-        employee: true,
-      },
+    const loanApplication = await this.prisma.loanApplication.findUnique({
+      where: { id: repayment.loanApplicationId },
+      include: { employee: true },
     });
 
-    if (salaryRequest?.employee.userId) {
+    if (loanApplication?.employee.userId) {
       await this.notificationsService.createSystemNotification(
-        salaryRequest.employee.userId,
+        loanApplication.employee.userId,
         'Repayment Completed',
         'Your salary advance repayment has been completed successfully.',
       );
     }
 
-    if (salaryRequest?.employee) {
+    if (loanApplication?.employee) {
       try {
         await this.emailService.sendRepaymentPaidEmail({
-          to: salaryRequest.employee.email,
-          employeeName: salaryRequest.employee.name,
+          to: loanApplication.employee.email,
+          employeeName: loanApplication.employee.name,
           totalAmount: Number(repayment.totalAmount),
           paidDate: repayment.paidDate ?? new Date(),
         });
@@ -245,27 +150,21 @@ export class RepaymentsService {
             : undefined,
       },
       include: {
-        salaryRequest: {
+        loanApplication: {
           include: {
             employee: {
-              include: {
-                employer: true,
-              },
+              include: { employer: true },
             },
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   async findAllForEmployer(userId: string) {
     const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
+      where: { userId },
     });
 
     if (!employer) {
@@ -274,51 +173,40 @@ export class RepaymentsService {
 
     const repayments = await this.prisma.repayment.findMany({
       where: {
-        salaryRequest: {
-          employee: {
-            employerId: employer.id,
-          },
+        loanApplication: {
+          employee: { employerId: employer.id },
         },
       },
       include: {
-        salaryRequest: {
-          include: {
-            employee: true,
-          },
+        loanApplication: {
+          include: { employee: true },
         },
       },
-      orderBy: {
-        dueDate: 'asc',
-      },
+      orderBy: { dueDate: 'asc' },
     });
 
-    return repayments.map((repayment) => ({
-      id: repayment.id,
-
-      principalAmount: repayment.principalAmount,
-      interestAmount: repayment.interestAmount,
-      totalAmount: repayment.totalAmount,
-
-      dueDate: repayment.dueDate,
-      status: repayment.status,
-
+    return repayments.map((r) => ({
+      id: r.id,
+      principalAmount: r.principalAmount,
+      interestAmount: r.interestAmount,
+      totalAmount: r.totalAmount,
+      dueDate: r.dueDate,
+      status: r.status,
       employee: {
-        id: repayment.salaryRequest.employee.id,
-        employeeCode: repayment.salaryRequest.employee.employeeCode,
-        name: repayment.salaryRequest.employee.name,
+        id: r.loanApplication.employee.id,
+        employeeCode: r.loanApplication.employee.employeeCode,
+        name: r.loanApplication.employee.name,
       },
-
-      salaryRequest: {
-        id: repayment.salaryRequest.id,
+      loanApplication: {
+        id: r.loanApplication.id,
+        applicationNumber: r.loanApplication.applicationNumber,
       },
     }));
   }
 
   async findByUserId(userId: string) {
     const employee = await this.prisma.employee.findFirst({
-      where: {
-        userId,
-      },
+      where: { userId },
     });
 
     if (!employee) {
