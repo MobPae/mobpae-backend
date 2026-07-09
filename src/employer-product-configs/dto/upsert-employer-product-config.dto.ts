@@ -1,27 +1,25 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
-  IsNumber,
+  IsInt,
   IsOptional,
-  IsString,
-  Max,
   Min,
 } from 'class-validator';
 
 export class UpsertEmployerProductConfigDto {
   @ApiPropertyOptional({
     description:
-      'Override the global maximumAdvancePercentage for this employer. ' +
-      'Must be ≤ the product config default. Set null to use global default.',
-    minimum: 1,
-    maximum: 100,
-    example: 40,
+      'Override the platform advance cap with an absolute ₹ amount for this employer ' +
+      '(applies equally to all employees of this employer). ' +
+      'Hard ceiling of salary × 50% is still enforced per employee at application time. ' +
+      'Set null to remove override and fall back to platform default (min(salary×10%, ₹5000)).',
+    minimum: 1000,
+    example: 7000,
   })
   @IsOptional()
-  @IsNumber()
-  @Min(1)
-  @Max(100)
-  maximumAdvancePercentageOverride?: number | null;
+  @IsInt()
+  @Min(1000)
+  maximumAdvanceAmountOverride?: number | null;
 
   @ApiPropertyOptional({
     description:

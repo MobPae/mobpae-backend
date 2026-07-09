@@ -2,14 +2,17 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { RequestMembershipDto } from './dto/request-membership.dto';
+import { RazorpayService } from '../razorpay/razorpay.service';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
 import { CreateMembershipPlanConfigDto } from './dto/create-membership-plan-config.dto';
 import { UpdateMembershipPlanConfigDto } from './dto/update-membership-plan-config.dto';
+import { InitiatePaymentDto } from './dto/initiate-payment.dto';
+import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -21,13 +24,18 @@ import {
 } from '../common/utils/pagination.util';
 import { MembershipListQueryDto } from './dto/membership-list-query.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { ConfigService } from '@nestjs/config';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class MembershipService {
+  private readonly logger = new Logger(MembershipService.name);
+
   constructor(
     private readonly prisma: PrismaService,
+    private readonly razorpayService: RazorpayService,
+    private readonly configService: ConfigService,
     private readonly emailService: EmailService,
     private readonly notificationsService: NotificationsService,
     private readonly auditLogsService: AuditLogsService,
@@ -78,14 +86,14 @@ export class MembershipService {
     return this.prisma.membershipPlanConfig.update({
       where: { planKey },
       data: {
-        ...(dto.planName !== undefined && { planName: dto.planName }),
-        ...(dto.amount !== undefined && { amount: dto.amount }),
-        ...(dto.validityDays !== undefined && { validityDays: dto.validityDays }),
-        ...(dto.billingLabel !== undefined && { billingLabel: dto.billingLabel }),
-        ...(dto.perMonthLabel !== undefined && { perMonthLabel: dto.perMonthLabel }),
-        ...(dto.isPreferred !== undefined && { isPreferred: dto.isPreferred }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.sortOrder !== undefined && { sortOrder: dto.sortOrder }),
+        planName: dto.planName ?? plan.planName,
+        amount: dto.amount ?? plan.amount,
+        validityDays: dto.validityDays ?? plan.validityDays,
+        billingLabel: dto.billingLabel ?? plan.billingLabel,
+        perMonthLabel:
+          dto.perMonthLabel !== undefined ? dto.perMonthLabel : plan.perMonthLabel,
+        isPreferred: dto.isPreferred ?? plan.isPreferred,
+        sortOrder: dto.sortOrder ?? plan.sortOrder,
       },
     });
   }
@@ -102,14 +110,17 @@ export class MembershipService {
     });
   }
 
-  // ─── Employee: membership ─────────────────────────────────────────────────
+  // ─── Employee: my membership ─────────────────────────────────────────────
 
   async getMyMembership(userId: string) {
-    const employee = await this.prisma.employee.findFirst({ where: { userId } });
+    const employee = await this.prisma.employee.findUnique({ where: { userId } });
     if (!employee) throw new NotFoundException('Employee not found');
 
     const [membership, plans] = await Promise.all([
-      this.prisma.membership.findUnique({ where: { employeeId: employee.id } }),
+      this.prisma.membership.findUnique({
+        where: { employeeId: employee.id },
+        include: { paymentOrder: true },
+      }),
       this.getActivePlansConfig(),
     ]);
 
@@ -139,7 +150,7 @@ export class MembershipService {
       active: membership.status === 'ACTIVE',
       planType: membership.planType,
       planName: membership.planName,
-      amountPaid: Number(membership.amount),
+      amountPaid: Number(membership.amountPaid ?? membership.amount),
       memberSince: membership.startDate,
       validTill: membership.endDate,
       daysRemaining,
@@ -148,8 +159,378 @@ export class MembershipService {
     };
   }
 
+  // ─── Payment: Razorpay flow ──────────────────────────────────────────────
+
   /**
-   * Internal: fast-activate a membership (e.g. from AWAITING_MEMBERSHIP_PAYMENT flow).
+   * Step 1: Initiate payment.
+   * Creates a Razorpay order and persists a PaymentOrder record.
+   * Returns the order details needed to open the Razorpay checkout modal.
+   */
+  async initiatePayment(userId: string, dto: InitiatePaymentDto) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId },
+      include: { user: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found');
+
+    // Block if already has an active membership
+    const existing = await this.prisma.membership.findUnique({
+      where: { employeeId: employee.id },
+    });
+    if (existing?.status === 'ACTIVE' && existing.endDate > new Date()) {
+      throw new BadRequestException('You already have an active membership');
+    }
+
+    // Validate plan
+    const plan = await this.prisma.membershipPlanConfig.findUnique({
+      where: { planKey: dto.planKey },
+    });
+    if (!plan) throw new BadRequestException(`Plan '${dto.planKey}' not found`);
+    if (!plan.isActive) throw new BadRequestException(`Plan '${dto.planKey}' is not available`);
+
+    // Coupon handling
+    let discountAmountPaise = 0;
+    let couponCode: string | null = null;
+
+    if (dto.couponCode?.trim()) {
+      const couponResult = await this.validateCoupon(dto.couponCode.trim());
+      discountAmountPaise = Math.round(couponResult.discountAmount * 100); // rupees → paise
+      couponCode = couponResult.couponCode;
+    }
+
+    const planAmountPaise = Math.round(Number(plan.amount) * 100);
+    const finalAmountPaise = Math.max(0, planAmountPaise - discountAmountPaise);
+
+    // Check if there's already a non-expired CREATED order for this employee + plan
+    // Return it instead of creating a duplicate (handles browser refreshes / double taps)
+    const existingOrder = await this.prisma.paymentOrder.findFirst({
+      where: {
+        employeeId: employee.id,
+        planKey: plan.planKey,
+        status: 'CREATED',
+        expiresAt: { gt: new Date() },
+        couponCode: couponCode ?? null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (existingOrder) {
+      return {
+        orderId: existingOrder.providerOrderId,
+        paymentOrderId: existingOrder.id,
+        amount: existingOrder.amount,
+        currency: existingOrder.currency,
+        keyId: this.razorpayService.getKeyId(),
+        planName: plan.planName,
+        description: `MobPae ${plan.planName} Membership`,
+        employeeName: employee.name,
+        employeeEmail: employee.email,
+        employeePhone: employee.phone,
+      };
+    }
+
+    // Create Razorpay order
+    const receipt = `mp-mem-${employee.id.slice(-8)}-${Date.now()}`;
+    const rzpOrder = await this.razorpayService.createOrder({
+      amount: finalAmountPaise,
+      currency: 'INR',
+      receipt,
+      notes: {
+        employeeId: employee.id,
+        planKey: plan.planKey,
+        employeeName: employee.name,
+        ...(couponCode ? { couponCode } : {}),
+      },
+    });
+
+    // Persist PaymentOrder
+    const paymentOrder = await this.prisma.paymentOrder.create({
+      data: {
+        provider: 'RAZORPAY',
+        providerOrderId: rzpOrder.id,
+        amount: finalAmountPaise,
+        currency: 'INR',
+        employeeId: employee.id,
+        planKey: plan.planKey,
+        couponCode,
+        discountAmount: discountAmountPaise,
+        status: 'CREATED',
+        notes: {
+          receipt,
+          planName: plan.planName,
+        },
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+      },
+    });
+
+    return {
+      orderId: rzpOrder.id,
+      paymentOrderId: paymentOrder.id,
+      amount: finalAmountPaise,
+      currency: 'INR',
+      keyId: this.razorpayService.getKeyId(),
+      planName: plan.planName,
+      description: `MobPae ${plan.planName} Membership`,
+      employeeName: employee.name,
+      employeeEmail: employee.email,
+      employeePhone: employee.phone,
+    };
+  }
+
+  /**
+   * Step 2a: Client-side verification (fast path).
+   * Called by the app immediately after Razorpay checkout handler fires.
+   * Verifies the signature and activates membership instantly.
+   * Idempotent: safe to call multiple times for the same payment.
+   */
+  async verifyPayment(userId: string, dto: VerifyPaymentDto) {
+    // 1. Verify HMAC signature
+    let signatureValid: boolean;
+    try {
+      signatureValid = this.razorpayService.verifyPaymentSignature({
+        razorpayOrderId: dto.razorpayOrderId,
+        razorpayPaymentId: dto.razorpayPaymentId,
+        razorpaySignature: dto.razorpaySignature,
+      });
+    } catch {
+      throw new BadRequestException('Signature verification failed');
+    }
+
+    if (!signatureValid) {
+      throw new BadRequestException('Invalid payment signature');
+    }
+
+    // 2. Load the PaymentOrder
+    const order = await this.prisma.paymentOrder.findUnique({
+      where: { providerOrderId: dto.razorpayOrderId },
+      include: { employee: true },
+    });
+    if (!order) throw new NotFoundException('Payment order not found');
+
+    // Verify the order belongs to this user
+    if (order.employee.userId !== userId) {
+      throw new BadRequestException('Payment order does not belong to this user');
+    }
+
+    // 3. Idempotent: already captured → return existing membership
+    if (order.status === 'CAPTURED') {
+      const membership = await this.prisma.membership.findUnique({
+        where: { paymentOrderId: order.id },
+      });
+      return {
+        success: true,
+        alreadyActivated: true,
+        membership,
+      };
+    }
+
+    // 4. Activate membership
+    const membership = await this.activateMembershipFromOrder(order, {
+      providerPaymentId: dto.razorpayPaymentId,
+      providerSignature: dto.razorpaySignature,
+      source: 'CLIENT',
+    });
+
+    return { success: true, alreadyActivated: false, membership };
+  }
+
+  /**
+   * Step 2b: Webhook handler (authoritative path).
+   * Called by WebhooksController when Razorpay sends payment.captured / order.paid.
+   * Idempotent: safe to call multiple times.
+   */
+  async handleWebhookPayment(params: {
+    eventType: string;
+    razorpayOrderId: string;
+    razorpayPaymentId: string;
+    status: string;
+    method?: string;
+    rawPayload?: unknown;
+  }) {
+    const order = await this.prisma.paymentOrder.findUnique({
+      where: { providerOrderId: params.razorpayOrderId },
+      include: { employee: true },
+    });
+
+    if (!order) {
+      this.logger.warn(
+        `Webhook: PaymentOrder not found for Razorpay order ${params.razorpayOrderId}`,
+      );
+      return;
+    }
+
+    // Idempotent: already captured
+    if (order.status === 'CAPTURED') {
+      this.logger.debug(
+        `Webhook: Order ${order.id} already captured — skipping`,
+      );
+      return;
+    }
+
+    await this.activateMembershipFromOrder(order, {
+      providerPaymentId: params.razorpayPaymentId,
+      source: 'WEBHOOK',
+      method: params.method,
+      rawPayload: params.rawPayload,
+    });
+  }
+
+  /**
+   * Webhook handler for payment.failed events.
+   * Records the failure event for audit trail. Does NOT cancel the order
+   * (the user may retry within the 15-minute window).
+   */
+  async handleWebhookPaymentFailed(params: {
+    razorpayOrderId: string;
+    razorpayPaymentId?: string;
+    errorCode?: string;
+    errorDescription?: string;
+    rawPayload?: unknown;
+  }) {
+    const order = await this.prisma.paymentOrder.findUnique({
+      where: { providerOrderId: params.razorpayOrderId },
+    });
+
+    if (!order) return;
+    if (order.status === 'CAPTURED') return; // Already succeeded, ignore the failed event
+
+    await this.prisma.$transaction([
+      this.prisma.paymentOrder.update({
+        where: { id: order.id },
+        data: { status: 'ATTEMPTED' }, // Attempted but failed; user can retry
+      }),
+      this.prisma.paymentEvent.create({
+        data: {
+          orderId: order.id,
+          providerPaymentId: params.razorpayPaymentId ?? null,
+          eventType: 'payment.failed',
+          source: 'WEBHOOK',
+          status: 'failed',
+          errorCode: params.errorCode ?? null,
+          errorDescription: params.errorDescription ?? null,
+          rawPayload: params.rawPayload as any ?? undefined,
+        },
+      }),
+    ]);
+  }
+
+  // ─── Admin: approve / reject (manual override) ───────────────────────────
+
+  /**
+   * Admin can manually activate a membership (override for edge cases).
+   * Also handles auto-advancing salary requests that were AWAITING_MEMBERSHIP_PAYMENT.
+   */
+  async approve(membershipId: string, adminUserId: string) {
+    const membership = await this.prisma.membership.findUnique({
+      where: { id: membershipId },
+    });
+
+    if (!membership) throw new NotFoundException('Membership not found');
+    if (membership.status === 'ACTIVE')
+      throw new BadRequestException('Membership already active');
+
+    const plan = await this.getPlanOrDefault(membership.planType);
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + plan.validityDays);
+
+    const updatedMembership = await this.prisma.$transaction(async (tx) => {
+      return tx.membership.update({
+        where: { id: membershipId },
+        data: {
+          status: 'ACTIVE',
+          startDate,
+          endDate,
+          verifiedAt: new Date(),
+          verifiedBy: adminUserId,
+          remarks: null,
+        },
+        include: { employee: true },
+      });
+    });
+
+    // Notifications + email
+    if (updatedMembership.employee?.userId) {
+      await this.notificationsService
+        .createSystemNotification(
+          updatedMembership.employee.userId,
+          'Membership Approved',
+          `Your MobPae ${plan.planName} membership is now active.`,
+        )
+        .catch((err) => console.error('Membership approved notification error', err));
+    }
+
+    try {
+      await this.emailService.sendMembershipApprovedEmail({
+        to: updatedMembership.employee.email,
+        employeeName: updatedMembership.employee.name,
+        plan: updatedMembership.planName,
+        startDate,
+        endDate,
+      });
+    } catch (err) {
+      console.error('Failed to send membership approved email', err);
+    }
+
+    // Auto-advance any AWAITING_MEMBERSHIP_PAYMENT salary requests
+    await this.advancePendingLoanRequests(
+      membership.employeeId,
+      updatedMembership.employee,
+      adminUserId,
+    );
+
+    return updatedMembership;
+  }
+
+  async reject(membershipId: string, remarks: string, actorUserId: string) {
+    const membership = await this.prisma.membership.findUnique({
+      where: { id: membershipId },
+      include: { employee: true },
+    });
+
+    if (!membership) throw new NotFoundException('Membership not found');
+
+    const updated = await this.prisma.membership.update({
+      where: { id: membershipId },
+      data: { status: 'CANCELLED', remarks },
+    });
+
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'MEMBERSHIP_CANCELLED',
+      entityType: 'MEMBERSHIP',
+      entityId: membershipId,
+      oldValue: { status: membership.status, remarks: membership.remarks },
+      newValue: { status: updated.status, remarks: updated.remarks },
+    });
+
+    if (membership.employee?.userId) {
+      await this.notificationsService
+        .createSystemNotification(
+          membership.employee.userId,
+          'Membership Cancelled',
+          remarks || 'Your membership has been cancelled.',
+        )
+        .catch((err) => console.error('Membership cancelled notification error', err));
+    }
+
+    try {
+      await this.emailService.sendMembershipRejectedEmail({
+        to: membership.employee.email,
+        employeeName: membership.employee.name,
+        remarks,
+      });
+    } catch (err) {
+      console.error('Failed to send membership cancelled email', err);
+    }
+
+    return updated;
+  }
+
+  // ─── Internal: fast-activate (used by loan-applications flow) ───────────
+
+  /**
+   * Directly activates a membership for an employee (e.g. admin action or test).
    * Uses the plan already stored on the membership record, defaulting to MONTHLY.
    */
   async activate(employeeId: string) {
@@ -213,273 +594,6 @@ export class MembershipService {
     return membership.status === 'ACTIVE' && membership.endDate > new Date();
   }
 
-  async requestMembership(userId: string, dto: RequestMembershipDto) {
-    const employee = await this.prisma.employee.findUnique({ where: { userId } });
-    if (!employee) throw new NotFoundException('Employee not found');
-
-    const existingMembership = await this.prisma.membership.findUnique({
-      where: { employeeId: employee.id },
-    });
-    if (existingMembership?.status === 'ACTIVE') {
-      throw new BadRequestException('Membership already active');
-    }
-
-    // Validate plan exists and is currently active
-    const plan = await this.prisma.membershipPlanConfig.findUnique({
-      where: { planKey: dto.planType },
-    });
-    if (!plan) throw new BadRequestException(`Plan '${dto.planType}' does not exist`);
-    if (!plan.isActive) throw new BadRequestException(`Plan '${dto.planType}' is not available`);
-
-    // Coupon handling — discount is applied flat to the selected plan amount
-    let discountAmount = 0;
-    let couponCode: string | null = null;
-
-    if (dto.couponCode?.trim()) {
-      const coupon = await this.prisma.membershipCoupon.findUnique({
-        where: { code: dto.couponCode.trim().toUpperCase() },
-      });
-
-      if (!coupon) throw new BadRequestException('Invalid coupon code');
-      if (!coupon.isActive) throw new BadRequestException('Coupon is inactive');
-      if (coupon.validTill && coupon.validTill < new Date())
-        throw new BadRequestException('Coupon expired');
-      if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit)
-        throw new BadRequestException('Coupon usage limit reached');
-
-      discountAmount = Number(coupon.discountAmount);
-      couponCode = coupon.code;
-    }
-
-    const payableAmount = Math.max(0, Number(plan.amount) - discountAmount);
-
-    // Dates are set now; admin approval resets them to the actual activation date
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.validityDays);
-
-    const membership = await this.prisma.$transaction(async (tx) => {
-      return tx.membership.upsert({
-        where: { employeeId: employee.id },
-        update: {
-          planType: plan.planKey,
-          planName: plan.planName,
-          amount: payableAmount,
-          couponCode,
-          discountAmount,
-          startDate,
-          endDate,
-          status: 'PENDING',
-          verifiedAt: null,
-          verifiedBy: null,
-          paymentReference: dto.paymentReference ?? null,
-          paymentScreenshot: dto.paymentScreenshot ?? null,
-          remarks: null,
-        },
-        create: {
-          employeeId: employee.id,
-          planKey: plan.planKey,
-          planType: plan.planKey,
-          planName: plan.planName,
-          amount: payableAmount,
-          couponCode,
-          discountAmount,
-          startDate,
-          endDate,
-          status: 'PENDING',
-          paymentReference: dto.paymentReference ?? null,
-          paymentScreenshot: dto.paymentScreenshot ?? null,
-        },
-      });
-    });
-
-    return {
-      success: true,
-      message: 'Membership payment submitted for verification',
-      membership,
-    };
-  }
-
-  async findPending(query: MembershipListQueryDto = {}) {
-    return this.findAll({ ...query, status: 'PENDING' });
-  }
-
-  async approve(membershipId: string, adminUserId: string) {
-    const membership = await this.prisma.membership.findUnique({
-      where: { id: membershipId },
-    });
-
-    if (!membership) throw new NotFoundException('Membership not found');
-    if (membership.status === 'ACTIVE')
-      throw new BadRequestException('Membership already approved');
-
-    // Validity comes from the DB plan — always up-to-date regardless of when the plan was defined
-    const plan = await this.getPlanOrDefault(membership.planType);
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.validityDays);
-
-    const updatedMembership = await this.prisma.$transaction(async (tx) => {
-      if (membership.couponCode) {
-        const coupon = await tx.membershipCoupon.findUnique({
-          where: { code: membership.couponCode },
-        });
-        if (coupon) {
-          await tx.membershipCoupon.update({
-            where: { id: coupon.id },
-            data: { usedCount: { increment: 1 } },
-          });
-        }
-      }
-
-      return tx.membership.update({
-        where: { id: membershipId },
-        data: {
-          status: 'ACTIVE',
-          startDate,
-          endDate,
-          verifiedAt: new Date(),
-          verifiedBy: adminUserId,
-          remarks: null,
-        },
-        include: { employee: true },
-      });
-    });
-
-    // Post-transaction: notifications + email
-    if (updatedMembership.employee?.userId) {
-      await this.notificationsService
-        .createSystemNotification(
-          updatedMembership.employee.userId,
-          'Membership Approved',
-          `Your MobPae ${plan.planName} membership is now active.`,
-        )
-        .catch((err) => console.error('Membership approved notification error', err));
-    }
-
-    try {
-      await this.emailService.sendMembershipApprovedEmail({
-        to: updatedMembership.employee.email,
-        employeeName: updatedMembership.employee.name,
-        plan: updatedMembership.planName,
-        startDate,
-        endDate,
-      });
-    } catch (err) {
-      console.error('Failed to send membership approved email', err);
-    }
-
-    // Auto-advance any AWAITING_MEMBERSHIP_PAYMENT salary requests
-    const waitingRequests = await this.prisma.loanApplication.findMany({
-      where: {
-        employeeId: membership.employeeId,
-        status: 'AWAITING_MEMBERSHIP_PAYMENT',
-      },
-      include: { employee: true },
-    });
-
-    if (waitingRequests.length > 0) {
-      await this.prisma.loanApplication.updateMany({
-        where: {
-          employeeId: membership.employeeId,
-          status: 'AWAITING_MEMBERSHIP_PAYMENT',
-        },
-        data: { status: 'READY_FOR_DISBURSAL' },
-      });
-
-      await this.prisma.loanApplicationHistory.createMany({
-        data: waitingRequests.map((request) => ({
-          loanApplicationId: request.id,
-          previousStatus: request.status,
-          newStatus: 'READY_FOR_DISBURSAL',
-          changedBy: adminUserId,
-          actorRole: 'ADMIN',
-          remarks: 'Membership approved; request ready for disbursal',
-        })),
-      });
-
-      if (updatedMembership.employee?.userId) {
-        await this.notificationsService
-          .createSystemNotification(
-            updatedMembership.employee.userId,
-            'Advance Request Ready for Disbursal',
-            'Your membership is now active. Your salary advance request has been moved to Ready for Disbursal.',
-          )
-          .catch((err) => console.error('Advance ready notification error', err));
-      }
-
-      const admins = await this.prisma.user.findMany({
-        where: { role: 'ADMIN', isActive: true },
-        select: { id: true },
-      });
-
-      const emp = waitingRequests[0]?.employee;
-      if (emp) {
-        await Promise.all(
-          admins.map((admin) =>
-            this.notificationsService
-              .createSystemNotification(
-                admin.id,
-                'Salary Request Ready for Disbursal',
-                `${emp.name}'s membership has been activated. Their salary advance request is now ready for disbursal.`,
-              )
-              .catch((err) =>
-                console.error('Admin disbursal notification error', err),
-              ),
-          ),
-        );
-      }
-    }
-
-    return updatedMembership;
-  }
-
-  async reject(membershipId: string, remarks: string, actorUserId: string) {
-    const membership = await this.prisma.membership.findUnique({
-      where: { id: membershipId },
-      include: { employee: true },
-    });
-
-    if (!membership) throw new NotFoundException('Membership not found');
-
-    const updated = await this.prisma.membership.update({
-      where: { id: membershipId },
-      data: { status: 'PENDING', remarks },
-    });
-
-    await this.auditLogsService.log({
-      userId: actorUserId,
-      action: 'MEMBERSHIP_REJECTED',
-      entityType: 'MEMBERSHIP',
-      entityId: membershipId,
-      oldValue: { status: membership.status, remarks: membership.remarks },
-      newValue: { status: updated.status, remarks: updated.remarks },
-    });
-
-    if (membership.employee?.userId) {
-      await this.notificationsService
-        .createSystemNotification(
-          membership.employee.userId,
-          'Membership Not Approved',
-          remarks ||
-            'Your membership payment proof needs an update. Please upload it again.',
-        )
-        .catch((err) => console.error('Membership rejected notification error', err));
-    }
-
-    try {
-      await this.emailService.sendMembershipRejectedEmail({
-        to: membership.employee.email,
-        employeeName: membership.employee.name,
-        remarks,
-      });
-    } catch (err) {
-      console.error('Failed to send membership rejected email', err);
-    }
-
-    return updated;
-  }
-
   // ─── Coupon management ───────────────────────────────────────────────────
 
   async createCoupon(dto: CreateMembershipCouponDto) {
@@ -525,7 +639,7 @@ export class MembershipService {
   async findOne(id: string) {
     const membership = await this.prisma.membership.findUnique({
       where: { id },
-      include: { employee: true },
+      include: { employee: true, paymentOrder: { include: { events: true } } },
     });
     if (!membership) throw new NotFoundException('Membership not found');
     return membership;
@@ -539,7 +653,6 @@ export class MembershipService {
         ? {
             OR: [
               { planName: containsSearch(query) },
-              { paymentReference: containsSearch(query) },
               { couponCode: containsSearch(query) },
               { employee: { name: containsSearch(query) } },
               { employee: { email: containsSearch(query) } },
@@ -556,7 +669,10 @@ export class MembershipService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.membership.findMany({
         where,
-        include: { employee: { include: { employer: true } } },
+        include: {
+          employee: { include: { employer: true } },
+          paymentOrder: true,
+        },
         orderBy: getOrderBy(
           query,
           ['planName', 'amount', 'startDate', 'endDate', 'status', 'createdAt'],
@@ -571,6 +687,10 @@ export class MembershipService {
     return paginate(data, total, page, limit);
   }
 
+  async findPending(query: MembershipListQueryDto = {}) {
+    return this.findAll({ ...query, status: 'PENDING' });
+  }
+
   // ─── Summaries ───────────────────────────────────────────────────────────
 
   async getSummary() {
@@ -582,7 +702,7 @@ export class MembershipService {
       (m) => m.status === 'ACTIVE' && m.endDate < new Date(),
     ).length;
     const membershipRevenue = memberships.reduce(
-      (sum, m) => sum + Number(m.amount),
+      (sum, m) => sum + Number(m.amountPaid ?? m.amount),
       0,
     );
     return { totalMembers: memberships.length, active, pending, rejected, expired, membershipRevenue };
@@ -612,7 +732,7 @@ export class MembershipService {
       const summary = employerMap.get(employer.id);
       summary.totalMembers++;
       if (membership.status === 'ACTIVE') summary.activeMembers++;
-      summary.membershipRevenue += Number(membership.amount);
+      summary.membershipRevenue += Number(membership.amountPaid ?? membership.amount);
     }
 
     return Array.from(employerMap.values()).sort(
@@ -625,7 +745,7 @@ export class MembershipService {
     const repayments = await this.prisma.repayment.findMany();
 
     const membershipRevenue = memberships.reduce(
-      (sum, m) => sum + Number(m.amount),
+      (sum, m) => sum + Number(m.amountPaid ?? m.amount),
       0,
     );
     const interestRevenue = repayments.reduce(
@@ -643,49 +763,232 @@ export class MembershipService {
   // ─── Config (served to the employee app) ────────────────────────────────
 
   async getConfig() {
-    const [plans, settings] = await Promise.all([
+    const [plans, benefitsSetting] = await Promise.all([
       this.getActivePlansConfig(),
-      this.prisma.setting.findMany({
-        where: {
-          key: {
-            in: [
-              'MEMBERSHIP_BENEFITS',
-              'MEMBERSHIP_PAYMENT_UPI_ID',
-              'MEMBERSHIP_PAYMENT_QR_URL',
-              'MEMBERSHIP_PAYMENT_BENEFICIARY',
-              'MEMBERSHIP_PAYMENT_INSTRUCTIONS',
-            ],
-          },
-        },
+      this.prisma.setting.findUnique({
+        where: { key: 'MEMBERSHIP_BENEFITS' },
       }),
     ]);
 
-    const getValue = (key: string) => settings.find((s) => s.key === key)?.value;
-
-    const membershipBenefitsRaw = getValue('MEMBERSHIP_BENEFITS');
+    const membershipBenefits = benefitsSetting?.value
+      ? (JSON.parse(benefitsSetting.value) as string[])
+      : [
+          'Advances up to 50% of salary, instantly',
+          'Zero processing fees on every advance',
+          'Auto-recovery on payday — no EMIs',
+          'Priority chat support',
+        ];
 
     return {
       plans,
-      membershipBenefits: membershipBenefitsRaw
-        ? (JSON.parse(membershipBenefitsRaw) as string[])
-        : [
-            'Advances up to 50% of salary, instantly',
-            'Zero processing fees on every advance',
-            'Auto-recovery on payday — no EMIs',
-            'Priority chat support',
-          ],
+      membershipBenefits,
       payment: {
-        upiId: getValue('MEMBERSHIP_PAYMENT_UPI_ID') ?? '',
-        qrUrl: getValue('MEMBERSHIP_PAYMENT_QR_URL') ?? '',
-        beneficiaryName: getValue('MEMBERSHIP_PAYMENT_BENEFICIARY') ?? 'MobPae',
-        instructions:
-          getValue('MEMBERSHIP_PAYMENT_INSTRUCTIONS') ??
-          'Pay using UPI and upload the payment screenshot for admin verification.',
+        provider: 'razorpay',
+        keyId: this.razorpayService.getKeyId(),
       },
     };
   }
 
+  // ─── Plan config management ──────────────────────────────────────────────
+
+  // (Already defined above — listPlanConfigs, createPlanConfig, updatePlanConfig, togglePlanConfig)
+
   // ─── Private helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Core membership activation logic.
+   * Used by both verifyPayment (client path) and handleWebhookPayment (webhook path).
+   * Runs inside a transaction: updates PaymentOrder status, creates PaymentEvent,
+   * upserts Membership, increments coupon usage, sends notifications.
+   */
+  private async activateMembershipFromOrder(
+    order: {
+      id: string;
+      employeeId: string;
+      planKey: string;
+      amount: number;
+      couponCode: string | null;
+      discountAmount: number;
+      employee: { userId: string | null; name: string; email: string; phone: string };
+    },
+    event: {
+      providerPaymentId?: string;
+      providerSignature?: string;
+      source: string;
+      method?: string;
+      rawPayload?: unknown;
+    },
+  ) {
+    const plan = await this.getPlanOrDefault(order.planKey);
+    const now = new Date();
+    const endDate = new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000);
+    const amountPaid = order.amount / 100; // paise → rupees
+
+    const membership = await this.prisma.$transaction(async (tx) => {
+      // 1. Update PaymentOrder status
+      await tx.paymentOrder.update({
+        where: { id: order.id },
+        data: { status: 'CAPTURED' },
+      });
+
+      // 2. Record PaymentEvent
+      await tx.paymentEvent.create({
+        data: {
+          orderId: order.id,
+          providerPaymentId: event.providerPaymentId ?? null,
+          providerSignature: event.providerSignature ?? null,
+          eventType: 'payment.captured',
+          source: event.source,
+          status: 'captured',
+          method: event.method ?? null,
+          rawPayload: event.rawPayload as any ?? undefined,
+          capturedAt: now,
+        },
+      });
+
+      // 3. Upsert Membership (handles re-subscriptions)
+      const mem = await tx.membership.upsert({
+        where: { employeeId: order.employeeId },
+        create: {
+          employeeId: order.employeeId,
+          planKey: plan.planKey,
+          planType: plan.planKey,
+          planName: plan.planName,
+          amount: plan.amount,
+          amountPaid,
+          startDate: now,
+          endDate,
+          status: 'ACTIVE',
+          paymentOrderId: order.id,
+          couponCode: order.couponCode,
+          discountAmount: order.discountAmount > 0 ? order.discountAmount / 100 : null,
+        },
+        update: {
+          planKey: plan.planKey,
+          planType: plan.planKey,
+          planName: plan.planName,
+          amount: plan.amount,
+          amountPaid,
+          startDate: now,
+          endDate,
+          status: 'ACTIVE',
+          paymentOrderId: order.id,
+          couponCode: order.couponCode,
+          discountAmount: order.discountAmount > 0 ? order.discountAmount / 100 : null,
+          verifiedBy: null,
+          verifiedAt: null,
+          remarks: null,
+        },
+      });
+
+      // 4. Increment coupon usage
+      if (order.couponCode) {
+        await tx.membershipCoupon
+          .update({
+            where: { code: order.couponCode },
+            data: { usedCount: { increment: 1 } },
+          })
+          .catch((err) =>
+            this.logger.warn(`Failed to increment coupon usage for ${order.couponCode}: ${err}`),
+          );
+      }
+
+      return mem;
+    });
+
+    // 5. Post-transaction: notifications, email, salary request advancement
+    await Promise.allSettled([
+      order.employee.userId
+        ? this.notificationsService.createSystemNotification(
+            order.employee.userId,
+            'Membership Activated!',
+            `Your MobPae ${plan.planName} membership is now active. Enjoy advances up to 50% of your salary.`,
+          )
+        : Promise.resolve(),
+
+      this.emailService
+        .sendMembershipApprovedEmail({
+          to: order.employee.email,
+          employeeName: order.employee.name,
+          plan: plan.planName,
+          startDate: now,
+          endDate,
+        })
+        .catch((err) => this.logger.warn(`Membership email failed: ${err}`)),
+
+      this.advancePendingLoanRequests(
+        order.employeeId,
+        { userId: order.employee.userId } as any,
+        'SYSTEM',
+      ),
+    ]);
+
+    return membership;
+  }
+
+  /**
+   * Auto-advances any salary requests that were waiting for membership payment.
+   * Called after membership activation.
+   */
+  private async advancePendingLoanRequests(
+    employeeId: string,
+    employee: { userId: string | null },
+    actorId: string,
+  ) {
+    const waitingRequests = await this.prisma.loanApplication.findMany({
+      where: {
+        employeeId,
+        status: 'AWAITING_MEMBERSHIP_PAYMENT',
+      },
+    });
+
+    if (waitingRequests.length === 0) return;
+
+    await this.prisma.loanApplication.updateMany({
+      where: {
+        employeeId,
+        status: 'AWAITING_MEMBERSHIP_PAYMENT',
+      },
+      data: { status: 'READY_FOR_DISBURSAL' },
+    });
+
+    await this.prisma.loanApplicationHistory.createMany({
+      data: waitingRequests.map((req) => ({
+        loanApplicationId: req.id,
+        previousStatus: req.status,
+        newStatus: 'READY_FOR_DISBURSAL',
+        changedBy: actorId,
+        actorRole: 'SYSTEM',
+        remarks: 'Membership payment confirmed; request ready for disbursal',
+      })),
+    });
+
+    if (employee.userId) {
+      await this.notificationsService
+        .createSystemNotification(
+          employee.userId,
+          'Advance Request Ready',
+          'Your salary advance request is now ready for disbursal.',
+        )
+        .catch(() => null);
+    }
+
+    // Notify admins
+    const admins = await this.prisma.user.findMany({
+      where: { role: 'ADMIN', isActive: true },
+      select: { id: true },
+    });
+
+    await Promise.allSettled(
+      admins.map((admin) =>
+        this.notificationsService.createSystemNotification(
+          admin.id,
+          'Salary Request Ready for Disbursal',
+          `An employee's membership has been activated. Their salary advance request is now ready for disbursal.`,
+        ),
+      ),
+    );
+  }
 
   /**
    * Returns all active plans sorted by sortOrder ascending.
@@ -744,8 +1047,7 @@ export class MembershipService {
   }
 
   /**
-   * Fetches a plan by key. Falls back to MONTHLY if the key is no longer active
-   * (guards against edge-cases where a plan is deactivated after a membership was created).
+   * Fetches a plan by key. Falls back to MONTHLY if the key is no longer active.
    */
   private async getPlanOrDefault(planKey: string) {
     const plan = await this.prisma.membershipPlanConfig.findUnique({

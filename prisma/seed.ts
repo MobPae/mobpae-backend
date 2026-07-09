@@ -147,20 +147,21 @@ async function seedLendingCatalog() {
         isActive: true,
         effectiveFrom: new Date('2026-07-01'),
         eligibilityRules: {
-          maximumAdvancePercentage: 50,
+          platformAdvancePercentage: 10,
+          platformMaxAdvanceAmount: 5000,
+          hardCeilingPercentage: 50,
           minimumAdvanceAmount: 1000,
           minimumSalaryInHand: 10000,
           minimumTenureMonths: 3,
           requiresKyc: true,
           requiresMembership: true,
           requiresBankAccount: true,
-          requiresActiveSelfie: true,
+          requiresActiveSelfie: false,
           maxRequestsPerCycle: 1,
           cooldownDays: 0,
         },
         pricingRules: {
           annualInterestRate: 36,
-          interestFreePercentage: 0,
           processingFeeRate: 0,
           gstRate: 0,
         },
@@ -186,27 +187,27 @@ async function seedLendingCatalog() {
 async function seedMembershipPlans(productId: string) {
   const plans = [
     {
-      planKey: 'SA_MONTHLY',
+      planKey: 'MONTHLY',
       planName: 'Monthly',
-      amount: 99,
+      amount: 175,
       validityDays: 30,
-      billingLabel: '₹99 / month',
+      billingLabel: '₹175 / month',
       perMonthLabel: null,
       isPreferred: false,
       sortOrder: 1,
     },
     {
-      planKey: 'SA_QUARTERLY',
-      planName: 'Quarterly',
-      amount: 249,
-      validityDays: 90,
-      billingLabel: '₹249 / 3 months',
+      planKey: 'BIANNUAL',
+      planName: '6 Month',
+      amount: 499,
+      validityDays: 180,
+      billingLabel: '₹499 / 6 months',
       perMonthLabel: '₹83 / month',
       isPreferred: true,
       sortOrder: 2,
     },
     {
-      planKey: 'SA_ANNUAL',
+      planKey: 'ANNUAL',
       planName: 'Annual',
       amount: 799,
       validityDays: 365,
@@ -217,10 +218,25 @@ async function seedMembershipPlans(productId: string) {
     },
   ];
 
+  // Delete stale plans not in the current set (cascade through payment orders/events first)
+  const validKeys = plans.map((p) => p.planKey);
+  const staleOrders = await prisma.paymentOrder.findMany({
+    where: { planKey: { notIn: validKeys } },
+    select: { id: true },
+  });
+  const staleOrderIds = staleOrders.map((o) => o.id);
+  if (staleOrderIds.length) {
+    await prisma.paymentEvent.deleteMany({ where: { orderId: { in: staleOrderIds } } });
+    await prisma.paymentOrder.deleteMany({ where: { id: { in: staleOrderIds } } });
+  }
+  await prisma.membershipPlanConfig.deleteMany({
+    where: { planKey: { notIn: validKeys } },
+  });
+
   for (const plan of plans) {
     await prisma.membershipPlanConfig.upsert({
       where: { planKey: plan.planKey },
-      update: {},
+      update: { ...plan },
       create: { productId, ...plan },
     });
   }
@@ -313,7 +329,7 @@ async function seedEmployerProductConfig(employerId: string, productId: string) 
     create: {
       employerId,
       productId,
-      maximumAdvancePercentageOverride: null, // use global default (50%)
+      maximumAdvanceAmountOverride: null, // use platform default: min(salary×10%, ₹5000)
       requiresEmployerApproval: true,
       isEnabled: true,
     },
@@ -484,6 +500,54 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     bankVerified: false,
     membershipStatus: MembershipStatus.ACTIVE,
   },
+  {
+    code: 'EMP011',
+    name: 'Ananya Sharma',
+    phone: '+91 98765 43111',
+    salary: 38000,
+    employmentStatus: EmployeeStatus.ACTIVE,
+    appActivated: true,
+    selfieStatus: SelfieStatus.VERIFIED,
+    kyc: {
+      PAN: KycStatus.VERIFIED,
+      AADHAR: KycStatus.VERIFIED,
+      SALARY_SLIP: KycStatus.VERIFIED,
+    },
+    bankVerified: true,
+    membershipStatus: MembershipStatus.PENDING,
+  },
+  {
+    code: 'EMP012',
+    name: 'Rohan Mehta',
+    phone: '+91 98765 43112',
+    salary: 52000,
+    employmentStatus: EmployeeStatus.ACTIVE,
+    appActivated: true,
+    selfieStatus: SelfieStatus.VERIFIED,
+    kyc: {
+      PAN: KycStatus.VERIFIED,
+      AADHAR: KycStatus.VERIFIED,
+      SALARY_SLIP: KycStatus.VERIFIED,
+    },
+    bankVerified: true,
+    membershipStatus: MembershipStatus.PENDING,
+  },
+  {
+    code: 'EMP013',
+    name: 'Sneha Kulkarni',
+    phone: '+91 98765 43113',
+    salary: 44000,
+    employmentStatus: EmployeeStatus.ACTIVE,
+    appActivated: true,
+    selfieStatus: SelfieStatus.VERIFIED,
+    kyc: {
+      PAN: KycStatus.VERIFIED,
+      AADHAR: KycStatus.VERIFIED,
+      SALARY_SLIP: KycStatus.VERIFIED,
+    },
+    bankVerified: true,
+    membershipStatus: MembershipStatus.PENDING,
+  },
 ];
 
 async function seedEmployees(
@@ -630,21 +694,16 @@ async function seedMembership(
   await prisma.membership.upsert({
     where: { employeeId },
     update: {
-      planKey: 'SA_ANNUAL',
-      planType: 'ANNUAL',
-      planName: 'Annual Membership',
-      amount: isActive ? 799 : 0,
+      planKey: 'BIANNUAL',
+      planType: 'BIANNUAL',
+      planName: '6 Month Membership',
+      amount: isActive ? 499 : 0,
+      amountPaid: isActive ? 499 : null,
       startDate,
       endDate,
       status,
       verifiedBy: isActive ? adminUserId : null,
       verifiedAt: isActive ? addDays(-45) : null,
-      paymentReference: isActive
-        ? `DEMO-MEM-${employeeId.slice(0, 8)}`
-        : null,
-      paymentScreenshot: isActive
-        ? `uploads/demo/membership-${employeeId.slice(0, 8)}.png`
-        : null,
       remarks:
         status === MembershipStatus.REJECTED
           ? 'Demo rejected membership request'
@@ -652,21 +711,16 @@ async function seedMembership(
     },
     create: {
       employeeId,
-      planKey: 'SA_ANNUAL',
-      planType: 'ANNUAL',
-      planName: 'Annual Membership',
-      amount: isActive ? 799 : 0,
+      planKey: 'BIANNUAL',
+      planType: 'BIANNUAL',
+      planName: '6 Month Membership',
+      amount: isActive ? 499 : 0,
+      amountPaid: isActive ? 499 : null,
       startDate,
       endDate,
       status,
       verifiedBy: isActive ? adminUserId : null,
       verifiedAt: isActive ? addDays(-45) : null,
-      paymentReference: isActive
-        ? `DEMO-MEM-${employeeId.slice(0, 8)}`
-        : null,
-      paymentScreenshot: isActive
-        ? `uploads/demo/membership-${employeeId.slice(0, 8)}.png`
-        : null,
       remarks:
         status === MembershipStatus.REJECTED
           ? 'Demo rejected membership request'
@@ -679,13 +733,13 @@ async function seedLoanLimit(employeeId: string, salary: number) {
   await prisma.loanLimit.upsert({
     where: { employeeId },
     update: {
-      maximumEligibleAmount: Math.min(salary * 0.5, 25000),
+      maximumEligibleAmount: Math.min(salary * 0.1, 5000),
       maxRequestsPerCycle: 1,
       cooldownDays: 0,
     },
     create: {
       employeeId,
-      maximumEligibleAmount: Math.min(salary * 0.5, 25000),
+      maximumEligibleAmount: Math.min(salary * 0.1, 5000),
       maxRequestsPerCycle: 1,
       cooldownDays: 0,
     },
@@ -815,7 +869,6 @@ async function seedLoanApplicationWorkflows(
         submittedAt: item.submittedAt,
         // Snapshot
         snapshotAnnualInterestRate: 36,
-        snapshotInterestFreePercentage: 0,
         snapshotProcessingFeeRate: 0,
         snapshotGstRate: 0,
         snapshotMaxAdvancePercentage: 50,

@@ -71,17 +71,24 @@ export class LoanApplicationsService {
 
     const pricing = config.pricingRules as unknown as PricingRules;
     const eligibility = config.eligibilityRules as unknown as EligibilityRules;
-    const maxAdvancePercentage = employerConfig?.maximumAdvancePercentageOverride
-      ? Number(employerConfig.maximumAdvancePercentageOverride)
-      : eligibility.maximumAdvancePercentage;
+
+    // Platform cap = interest-free threshold (always platform-computed, never employer-overridden)
+    const salaryPreview = Number(employee.salaryInHand);
+    const platformAdvancePct = eligibility.platformAdvancePercentage ?? 10;
+    const platformMaxAmt = eligibility.platformMaxAdvanceAmount ?? 5000;
+    const hardCeilingPct = eligibility.hardCeilingPercentage ?? 50;
+    const interestFreeThresholdPreview = Math.min(
+      salaryPreview * (platformAdvancePct / 100),
+      platformMaxAmt,
+    );
 
     const snapshot = this.pricingService.computeSnapshot({
-      salaryInHand: Number(employee.salaryInHand),
+      salaryInHand: salaryPreview,
       annualInterestRate: pricing.annualInterestRate,
-      interestFreePercentage: pricing.interestFreePercentage,
+      interestFreeThreshold: interestFreeThresholdPreview,
       processingFeeRate: pricing.processingFeeRate,
       gstRate: pricing.gstRate,
-      maxAdvancePercentage,
+      hardCeilingPercentage: hardCeilingPct,
       submissionDate: new Date(),
       payrollDate: employee.employer.payrollDate,
       payrollCutoffDate: employee.employer.payrollCutoffDate,
@@ -101,9 +108,123 @@ export class LoanApplicationsService {
   // ── Employee: eligibility check ─────────────────────────────────────────────
 
   async getEligibility(userId: string) {
-    const employee = await this.prisma.employee.findUnique({ where: { userId } });
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId },
+      include: {
+        employer: { select: { payrollDate: true, payrollCutoffDate: true } },
+      },
+    });
     if (!employee) throw new NotFoundException('Employee not found');
-    return this.eligibilityService.check(employee.id);
+
+    // Run eligibility check and extra queries in parallel
+    const [eligResult, kycDocs, bankAccount, membership, activeApp, scheduledRepayment, employerConfig] =
+      await Promise.all([
+        this.eligibilityService.check(employee.id),
+        this.prisma.kycDocument.findMany({
+          where: { employeeId: employee.id },
+          select: { documentType: true, status: true },
+        }),
+        this.prisma.employeeBankAccount.findUnique({
+          where: { employeeId: employee.id },
+          select: { verified: true },
+        }),
+        this.prisma.membership.findUnique({
+          where: { employeeId: employee.id },
+          select: { status: true },
+        }),
+        this.prisma.loanApplication.findFirst({
+          where: { employeeId: employee.id, status: { in: ACTIVE_STATUSES } },
+          include: {
+            repayment: {
+              select: {
+                status: true, totalAmount: true, dueDate: true,
+                interestAmount: true, principalAmount: true,
+                interestDays: true, interestRate: true,
+              },
+            },
+            disbursal: { select: { status: true, disbursedAmount: true, disbursedAt: true } },
+          },
+          orderBy: { submittedAt: 'desc' },
+        }),
+        this.prisma.repayment.findFirst({
+          where: { status: 'SCHEDULED', loanApplication: { employeeId: employee.id } },
+          select: { id: true, status: true, dueDate: true, totalAmount: true },
+          orderBy: { dueDate: 'asc' },
+        }),
+        this.prisma.employerProductConfig.findFirst({
+          where: { employerId: employee.employerId, product: { productType: 'SA' } },
+          select: { requiresEmployerApproval: true },
+        }),
+      ]);
+
+    // ── Setup items ────────────────────────────────────────────────────────────
+    const kycHasRejected = kycDocs.some((d) => d.status === 'REJECTED');
+    const kycHasPending  = kycDocs.some((d) => ['PENDING', 'SUBMITTED'].includes(d.status));
+    let kycStatus = 'NOT_SUBMITTED';
+    if (eligResult.checks.kycComplete)  kycStatus = 'VERIFIED';
+    else if (kycHasRejected)            kycStatus = 'REJECTED';
+    else if (kycHasPending)             kycStatus = 'PENDING';
+    else if (kycDocs.length > 0)        kycStatus = 'SUBMITTED';
+
+    let bankStatus = 'NOT_SUBMITTED';
+    if (eligResult.checks.bankVerified) bankStatus = 'VERIFIED';
+    else if (bankAccount)               bankStatus = 'PENDING';
+
+    const membershipStatus = membership?.status ?? 'NOT_SUBMITTED';
+
+    const setup = [
+      { key: 'KYC',          label: 'KYC Verification', status: kycStatus,       completed: eligResult.checks.kycComplete },
+      { key: 'BANK_ACCOUNT', label: 'Bank Account',     status: bankStatus,      completed: eligResult.checks.bankVerified },
+      { key: 'MEMBERSHIP',   label: 'Membership',       status: membershipStatus, completed: eligResult.checks.membershipActive },
+    ];
+
+    // ── Next action ────────────────────────────────────────────────────────────
+    let nextAction = 'REQUEST_ADVANCE';
+    let nextActionLabel = 'Request Advance';
+    if (!eligResult.checks.productEnabled) {
+      nextAction = 'CONTACT_ADMIN'; nextActionLabel = 'Contact Admin';
+    } else if (!eligResult.checks.kycComplete) {
+      nextAction = 'COMPLETE_KYC'; nextActionLabel = 'Complete KYC';
+    } else if (!eligResult.checks.bankVerified) {
+      nextAction = 'ADD_BANK_ACCOUNT'; nextActionLabel = 'Add Bank Account';
+    } else if (!eligResult.checks.membershipActive) {
+      nextAction = 'GET_MEMBERSHIP'; nextActionLabel = 'Get Membership';
+    } else if (!eligResult.checks.noActiveApplication) {
+      nextAction = 'VIEW_APPLICATION'; nextActionLabel = 'View Application';
+    }
+
+    // ── Limits ─────────────────────────────────────────────────────────────────
+    const salary = Number(employee.salaryInHand);
+    const usedLimit = Math.max(0, eligResult.maximumEligibleAmount - eligResult.availableAmount);
+
+    return {
+      eligible: eligResult.eligible,
+      reasons: eligResult.reason ? [{ code: 'INELIGIBLE', message: eligResult.reason }] : [],
+      nextAction,
+      nextActionLabel,
+      setup,
+      limits: {
+        salaryInHand: salary,
+        approvedLimit: eligResult.maximumEligibleAmount,
+        usedLimit,
+        availableAdvance: eligResult.availableAmount,
+        interestFreeThreshold: eligResult.interestFreeThreshold,
+      },
+      payroll: {
+        payrollDate: employee.employer?.payrollDate ?? null,
+        payrollCutoffDate: employee.employer?.payrollCutoffDate ?? null,
+      },
+      membershipRequiredAfterEmployerApproval: !eligResult.checks.membershipActive,
+      outstandingRepayment: scheduledRepayment
+        ? {
+            id: scheduledRepayment.id,
+            status: scheduledRepayment.status,
+            dueDate: scheduledRepayment.dueDate.toISOString(),
+            totalAmount: Number(scheduledRepayment.totalAmount),
+          }
+        : null,
+      activeRequest: activeApp ?? null,
+    };
   }
 
   // ── Employee: submit application ────────────────────────────────────────────
@@ -132,19 +253,26 @@ export class LoanApplicationsService {
     // 3. Pricing inputs
     const pricing = config.pricingRules as unknown as PricingRules;
     const rules = config.eligibilityRules as unknown as EligibilityRules;
-    const maxAdvancePercentage = employerConfig?.maximumAdvancePercentageOverride
-      ? Number(employerConfig.maximumAdvancePercentageOverride)
-      : rules.maximumAdvancePercentage;
+
+    // Platform cap = interest-free threshold (always platform-computed, never employer-overridden)
+    const salary = Number(employee.salaryInHand);
+    const platformAdvancePercentage = rules.platformAdvancePercentage ?? 10;
+    const platformMaxAdvanceAmount = rules.platformMaxAdvanceAmount ?? 5000;
+    const hardCeilingPercentage = rules.hardCeilingPercentage ?? 50;
+    const interestFreeThreshold = Math.min(
+      salary * (platformAdvancePercentage / 100),
+      platformMaxAdvanceAmount,
+    );
 
     // 4. Freeze snapshot
     const submissionDate = new Date();
     const snapshot = this.pricingService.computeSnapshot({
-      salaryInHand: Number(employee.salaryInHand),
+      salaryInHand: salary,
       annualInterestRate: pricing.annualInterestRate,
-      interestFreePercentage: pricing.interestFreePercentage,
+      interestFreeThreshold,
       processingFeeRate: pricing.processingFeeRate,
       gstRate: pricing.gstRate,
-      maxAdvancePercentage,
+      hardCeilingPercentage,
       submissionDate,
       payrollDate: employee.employer.payrollDate,
       payrollCutoffDate: employee.employer.payrollCutoffDate,
@@ -170,7 +298,7 @@ export class LoanApplicationsService {
         submittedAt: submissionDate,
         // Snapshot — frozen forever
         snapshotAnnualInterestRate: snapshot.snapshotAnnualInterestRate,
-        snapshotInterestFreePercentage: snapshot.snapshotInterestFreePercentage,
+        snapshotInterestFreeThreshold: snapshot.snapshotInterestFreeThreshold,
         snapshotProcessingFeeRate: snapshot.snapshotProcessingFeeRate,
         snapshotGstRate: snapshot.snapshotGstRate,
         snapshotMaxAdvancePercentage: snapshot.snapshotMaxAdvancePercentage,

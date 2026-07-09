@@ -7,7 +7,11 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { join } from 'path';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    // rawBody: true enables req.rawBody (Buffer) — required for Razorpay webhook
+    // signature verification (HMAC-SHA256 over the raw request body).
+    rawBody: true,
+  });
   const corsOrigins = (
     process.env.CORS_ORIGINS ??
     [

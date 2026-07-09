@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
+import { EligibilityRules } from '../loan-products/dto/create-loan-product-config.dto';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface EligibilityChecks {
-  hasLoanLimit: boolean;
+  /** Employee's employer has the SA product enabled */
+  productEnabled: boolean;
   kycComplete: boolean;
   bankVerified: boolean;
   membershipActive: boolean;
@@ -21,8 +23,14 @@ export interface EligibilityResult {
   checks: EligibilityChecks;
   /** Maximum amount the employee can request right now (0 if ineligible). */
   availableAmount: number;
-  /** Admin-set ceiling (0 if no limit assigned). */
+  /**
+   * Effective borrowing ceiling for this employee:
+   *   - employer override exists → min(override, salary × hardCeilingPercentage%)
+   *   - no override             → min(salary × platformAdvancePercentage%, platformMaxAdvanceAmount)
+   */
   maximumEligibleAmount: number;
+  /** Platform cap = interest-free threshold = min(salary × platformAdvancePercentage%, platformMaxAdvanceAmount) */
+  interestFreeThreshold: number;
 }
 
 // Active statuses — an application in any of these blocks a new submission.
@@ -44,8 +52,8 @@ export class EligibilityService {
   /**
    * Run all eligibility checks for an employee.
    *
-   * @param employeeId  Internal Employee.id
-   * @param requestedAmount  Optional — if provided, also validates amount ≤ available.
+   * @param employeeId      Internal Employee.id
+   * @param requestedAmount Optional — if provided, also validates amount ≤ available.
    */
   async check(
     employeeId: string,
@@ -55,7 +63,12 @@ export class EligibilityService {
       await Promise.all([
         this.prisma.employee.findUnique({
           where: { id: employeeId },
-          include: { loanLimit: true },
+          select: {
+            id: true,
+            userId: true,
+            employerId: true,
+            salaryInHand: true,
+          },
         }),
         this.prisma.kycDocument.findMany({ where: { employeeId } }),
         this.prisma.employeeBankAccount.findUnique({ where: { employeeId } }),
@@ -77,15 +90,50 @@ export class EligibilityService {
       ]);
 
     if (!employee) {
-      return this.deny('Employee not found', falseChecks(), 0);
+      return this.deny('Employee not found', falseChecks(), 0, 0);
     }
 
+    // ── Load product config + employer config in parallel ────────────────────
+    const [activeConfig, employerConfig] = await Promise.all([
+      this.prisma.loanProductConfig.findFirst({
+        where: { product: { productType: 'SA' }, isActive: true },
+      }),
+      this.prisma.employerProductConfig.findFirst({
+        where: { employerId: employee.employerId, product: { productType: 'SA' } },
+      }),
+    ]);
+
+    // ── Product enabled check ────────────────────────────────────────────────
+    const productEnabled = employerConfig?.isEnabled !== false;
+
+    // ── Compute limits ───────────────────────────────────────────────────────
+    const salary = Number(employee.salaryInHand);
+    const rules = (activeConfig?.eligibilityRules ?? {}) as Partial<EligibilityRules>;
+
+    const platformAdvancePercentage = rules.platformAdvancePercentage ?? 10;
+    const platformMaxAdvanceAmount = rules.platformMaxAdvanceAmount ?? 5000;
+    const hardCeilingPercentage = rules.hardCeilingPercentage ?? 50;
+
+    // Interest-free threshold = platform cap (always platform-computed, never employer-overridden)
+    const interestFreeThreshold = Math.min(
+      salary * (platformAdvancePercentage / 100),
+      platformMaxAdvanceAmount,
+    );
+
+    // Hard ceiling: salary × 50%
+    const hardCeiling = salary * (hardCeilingPercentage / 100);
+
+    // Effective borrowing limit
+    const employerOverride = employerConfig?.maximumAdvanceAmountOverride ?? null;
+    const maximumEligibleAmount = employerOverride !== null
+      ? Math.min(employerOverride, hardCeiling)
+      : interestFreeThreshold; // no override → platform cap is the limit
+
+    // ── Cycle / cooldown params ──────────────────────────────────────────────
+    const cooldownDays = rules.cooldownDays ?? 0;
+    const maxRequestsPerCycle = rules.maxRequestsPerCycle ?? 1;
+
     // ── Individual checks ────────────────────────────────────────────────────
-
-    const hasLoanLimit =
-      !!employee.loanLimit &&
-      Number(employee.loanLimit.maximumEligibleAmount) > 0;
-
     const kycComplete = REQUIRED_KYC_DOCUMENTS.every((type) =>
       kycDocuments.some(
         (d) => d.documentType === type && d.status === 'VERIFIED',
@@ -93,13 +141,10 @@ export class EligibilityService {
     );
 
     const bankVerified = !!bankAccount?.verified;
-
     const membershipActive = membership?.status === 'ACTIVE';
-
     const noActiveApplication = activeApps.length === 0;
 
     // Cooldown: days since last REPAID application
-    const cooldownDays = employee.loanLimit?.cooldownDays ?? 0;
     let cooldownMet = true;
     if (cooldownDays > 0 && recentRepaid.length > 0) {
       const daysSinceLast = Math.floor(
@@ -109,7 +154,6 @@ export class EligibilityService {
     }
 
     // Cycle limit: REPAID applications since start of current calendar month
-    const maxRequestsPerCycle = employee.loanLimit?.maxRequestsPerCycle ?? 1;
     const cycleStart = new Date();
     cycleStart.setDate(1);
     cycleStart.setHours(0, 0, 0, 0);
@@ -119,7 +163,7 @@ export class EligibilityService {
     const withinCycleLimit = repaidThisCycle < maxRequestsPerCycle;
 
     const checks: EligibilityChecks = {
-      hasLoanLimit,
+      productEnabled,
       kycComplete,
       bankVerified,
       membershipActive,
@@ -128,37 +172,33 @@ export class EligibilityService {
       withinCycleLimit,
     };
 
-    const maximumEligibleAmount = hasLoanLimit
-      ? Number(employee.loanLimit!.maximumEligibleAmount)
-      : 0;
-
     // ── Gate in priority order ───────────────────────────────────────────────
-
-    if (!hasLoanLimit)
-      return this.deny('Loan limit not assigned by admin', checks, maximumEligibleAmount);
+    if (!productEnabled)
+      return this.deny('Salary advance product not enabled for your employer', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!kycComplete)
-      return this.deny('KYC documents not fully verified', checks, maximumEligibleAmount);
+      return this.deny('KYC documents not fully verified', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!bankVerified)
-      return this.deny('Bank account not verified', checks, maximumEligibleAmount);
+      return this.deny('Bank account not verified', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!membershipActive)
-      return this.deny('Membership not active', checks, maximumEligibleAmount);
+      return this.deny('Membership not active', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!noActiveApplication)
-      return this.deny('Active loan application already exists', checks, maximumEligibleAmount);
+      return this.deny('Active loan application already exists', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!cooldownMet)
       return this.deny(
         `Cooldown of ${cooldownDays} days not yet met since last repayment`,
         checks,
         maximumEligibleAmount,
+        interestFreeThreshold,
       );
     if (!withinCycleLimit)
       return this.deny(
         `Maximum ${maxRequestsPerCycle} request(s) per cycle already reached`,
         checks,
         maximumEligibleAmount,
+        interestFreeThreshold,
       );
 
     // ── Available amount ─────────────────────────────────────────────────────
-
     const usedAmount = activeApps.reduce((sum, a) => {
       return (
         sum +
@@ -168,7 +208,7 @@ export class EligibilityService {
     const availableAmount = Math.max(0, maximumEligibleAmount - usedAmount);
 
     if (availableAmount <= 0) {
-      return this.deny('No available advance amount', checks, maximumEligibleAmount);
+      return this.deny('No available advance amount', checks, maximumEligibleAmount, interestFreeThreshold);
     }
 
     if (requestedAmount !== undefined && requestedAmount > availableAmount) {
@@ -176,6 +216,7 @@ export class EligibilityService {
         `Requested ₹${requestedAmount} exceeds available ₹${availableAmount}`,
         checks,
         maximumEligibleAmount,
+        interestFreeThreshold,
       );
     }
 
@@ -185,6 +226,7 @@ export class EligibilityService {
       checks,
       availableAmount,
       maximumEligibleAmount,
+      interestFreeThreshold,
     };
   }
 
@@ -194,14 +236,15 @@ export class EligibilityService {
     reason: string,
     checks: EligibilityChecks,
     maximumEligibleAmount: number,
+    interestFreeThreshold: number,
   ): EligibilityResult {
-    return { eligible: false, reason, checks, availableAmount: 0, maximumEligibleAmount };
+    return { eligible: false, reason, checks, availableAmount: 0, maximumEligibleAmount, interestFreeThreshold };
   }
 }
 
 function falseChecks(): EligibilityChecks {
   return {
-    hasLoanLimit: false,
+    productEnabled: false,
     kycComplete: false,
     bankVerified: false,
     membershipActive: false,

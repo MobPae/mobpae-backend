@@ -94,6 +94,7 @@ model Employee {
   membership       Membership?
   loanLimit        LoanLimit?
   loanApplications LoanApplication[]
+  paymentOrders    PaymentOrder[]
 
   @@unique([employerId, employeeCode])
   @@index([employerId])
@@ -204,8 +205,8 @@ model EmployerProductConfig {
   id                               String      @id @default(uuid())
   employerId                       String
   productId                        String
-  // When set, overrides LoanProductConfig.eligibilityRules.maximumAdvancePercentage
-  maximumAdvancePercentageOverride Decimal?    @db.Decimal(5, 2)
+  // When set, overrides the platform cap with an absolute ₹ amount per employer (same for all employees)
+  maximumAdvanceAmountOverride     Int?
   requiresEmployerApproval         Boolean     @default(true)
   isEnabled                        Boolean     @default(true)
   createdAt                        DateTime    @default(now())
@@ -268,7 +269,8 @@ model LoanApplication {
   // ── SNAPSHOT (frozen at submission time) ──────────────────
   // Rates from active LoanProductConfig.pricingRules at submission
   snapshotAnnualInterestRate     Decimal @db.Decimal(5, 2)
-  snapshotInterestFreePercentage Decimal @default(0) @db.Decimal(5, 2)
+  // Absolute ₹ threshold: min(salary × platformAdvancePercentage%, platformMaxAdvanceAmount)
+  snapshotInterestFreeThreshold  Decimal @default(0) @db.Decimal(12, 2)
   snapshotProcessingFeeRate      Decimal @default(0) @db.Decimal(5, 4)
   snapshotGstRate                Decimal @default(0) @db.Decimal(5, 4)
   // Effective advance % used (after employer override is applied)
@@ -395,25 +397,28 @@ model Repayment {
 // ============================================================
 
 model Membership {
-  id                String           @id @default(uuid())
-  employeeId        String           @unique
-  planKey           String           @map("plan_key")
-  planType          String           @default("MONTHLY") @map("plan_type")
-  planName          String
-  amount            Decimal          @db.Decimal(12, 2)
-  startDate         DateTime
-  endDate           DateTime
-  status            MembershipStatus @default(PENDING)
-  paymentReference  String?
-  paymentScreenshot String?
-  verifiedBy        String?
-  verifiedAt        DateTime?
-  remarks           String?
-  couponCode        String?
-  discountAmount    Decimal?         @db.Decimal(12, 2)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  employee          Employee         @relation(fields: [employeeId], references: [id])
+  id             String           @id @default(uuid())
+  employeeId     String           @unique
+  planKey        String           @map("plan_key")
+  planType       String           @default("MONTHLY") @map("plan_type")
+  planName       String
+  amount         Decimal          @db.Decimal(12, 2)
+  amountPaid     Decimal?         @db.Decimal(12, 2) @map("amount_paid")
+  startDate      DateTime
+  endDate        DateTime
+  status         MembershipStatus @default(PENDING)
+  couponCode     String?          @map("coupon_code")
+  discountAmount Decimal?         @db.Decimal(12, 2) @map("discount_amount")
+  // Payment link — null for admin-created memberships
+  paymentOrderId String?          @unique @map("payment_order_id")
+  // Admin override fields (manual activation by admin if needed)
+  verifiedBy     String?          @map("verified_by")
+  verifiedAt     DateTime?        @map("verified_at")
+  remarks        String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  employee       Employee         @relation(fields: [employeeId], references: [id])
+  paymentOrder   PaymentOrder?    @relation(fields: [paymentOrderId], references: [id])
 
   @@index([status])
   @@index([endDate])
@@ -425,20 +430,21 @@ model Membership {
 // ============================================================
 
 model MembershipPlanConfig {
-  id            String      @id @default(uuid())
-  productId     String      @map("product_id")
-  planKey       String      @unique @map("plan_key")
-  planName      String      @map("plan_name")
-  amount        Decimal     @db.Decimal(12, 2)
-  validityDays  Int         @map("validity_days")
-  billingLabel  String      @map("billing_label")
-  perMonthLabel String?     @map("per_month_label")
-  isPreferred   Boolean     @default(false) @map("is_preferred")
-  isActive      Boolean     @default(true) @map("is_active")
-  sortOrder     Int         @default(0) @map("sort_order")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
-  product       LoanProduct @relation(fields: [productId], references: [id])
+  id            String         @id @default(uuid())
+  productId     String         @map("product_id")
+  planKey       String         @unique @map("plan_key")
+  planName      String         @map("plan_name")
+  amount        Decimal        @db.Decimal(12, 2)
+  validityDays  Int            @map("validity_days")
+  billingLabel  String         @map("billing_label")
+  perMonthLabel String?        @map("per_month_label")
+  isPreferred   Boolean        @default(false) @map("is_preferred")
+  isActive      Boolean        @default(true) @map("is_active")
+  sortOrder     Int            @default(0) @map("sort_order")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  product       LoanProduct    @relation(fields: [productId], references: [id])
+  paymentOrders PaymentOrder[]
 
   @@map("membership_plan_configs")
 }
@@ -748,6 +754,83 @@ enum MembershipStatus {
   REJECTED
   EXPIRED
   CANCELLED
+}
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
+enum PaymentProvider {
+  RAZORPAY
+}
+
+enum PaymentOrderStatus {
+  CREATED   // Order created at provider, awaiting payment
+  ATTEMPTED // User opened the modal and attempted payment
+  CAPTURED  // Payment captured (money received) — membership activated
+  FAILED    // Payment failed after attempt
+  EXPIRED   // Order expired before payment (15-minute window)
+  REFUNDED  // Payment refunded
+}
+
+model PaymentOrder {
+  id              String             @id @default(uuid())
+  provider        PaymentProvider    @default(RAZORPAY)
+  providerOrderId String             @unique @map("provider_order_id")
+  // Amount in smallest currency unit (paise for INR)
+  amount          Int                // in paise (INR × 100)
+  currency        String             @default("INR")
+  // Who and what
+  employeeId      String             @map("employee_id")
+  planKey         String             @map("plan_key")
+  // Coupon applied at time of order creation
+  couponCode      String?            @map("coupon_code")
+  discountAmount  Int                @default(0) @map("discount_amount") // in paise
+  // Status
+  status          PaymentOrderStatus @default(CREATED)
+  // Result
+  notes           Json?
+  expiresAt       DateTime           @map("expires_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  // Relations
+  employee        Employee           @relation(fields: [employeeId], references: [id])
+  plan            MembershipPlanConfig @relation(fields: [planKey], references: [planKey])
+  membership      Membership?
+  events          PaymentEvent[]
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([providerOrderId])
+  @@map("payment_orders")
+}
+
+model PaymentEvent {
+  id                  String       @id @default(uuid())
+  orderId             String       @map("order_id")
+  // Provider payment IDs
+  providerPaymentId   String?      @map("provider_payment_id")
+  providerSignature   String?      @map("provider_signature") // razorpay_signature (audit trail)
+  // Event metadata
+  eventType           String       @map("event_type") // payment.captured, payment.failed, order.paid, etc.
+  source              String       // WEBHOOK | CLIENT | ADMIN
+  status              String       // captured, failed, refunded, etc.
+  // Payment method info
+  method              String?      // upi, card, netbanking, wallet
+  // Error info (for failed events)
+  errorCode           String?      @map("error_code")
+  errorDescription    String?      @map("error_description")
+  // Full raw payload from Razorpay (invaluable for debugging)
+  rawPayload          Json?        @map("raw_payload")
+  // Timestamps
+  capturedAt          DateTime?    @map("captured_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  // Relations
+  order               PaymentOrder @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([providerPaymentId])
+  @@map("payment_events")
 }
 
 enum KycStatus {

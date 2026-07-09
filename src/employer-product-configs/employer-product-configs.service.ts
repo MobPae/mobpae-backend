@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -11,8 +10,8 @@ export class EmployerProductConfigsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Lists all product configs for an employer.
-   * Used by admin and employer portal.
+   * Lists all product configs for an employer by employer ID.
+   * Used by admin.
    */
   async findByEmployer(employerId: string) {
     return this.prisma.employerProductConfig.findMany({
@@ -22,8 +21,25 @@ export class EmployerProductConfigsService {
   }
 
   /**
+   * Lists all product configs for the currently logged-in employer (by userId).
+   * Used by employer portal.
+   */
+  async findByUserId(userId: string) {
+    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+    if (!employer) throw new NotFoundException('Employer not found');
+    return this.prisma.employerProductConfig.findMany({
+      where: { employerId: employer.id },
+      include: { product: true },
+    });
+  }
+
+  /**
    * Upserts the product config for an employer + productType pair.
    * Called by Admin when onboarding or adjusting an employer's product access.
+   *
+   * maximumAdvanceAmountOverride is an absolute ₹ amount (same for all employees of this employer).
+   * The hard ceiling of salary × 50% per employee is enforced at application-submission time
+   * in EligibilityService — not here.
    */
   async upsert(
     employerId: string,
@@ -46,31 +62,12 @@ export class EmployerProductConfigsService {
       throw new NotFoundException(`Product '${productType}' not found`);
     }
 
-    // Validate that the override doesn't exceed the global config default
-    if (dto.maximumAdvancePercentageOverride !== undefined && dto.maximumAdvancePercentageOverride !== null) {
-      const activeConfig = await this.prisma.loanProductConfig.findFirst({
-        where: { productId: product.id, isActive: true },
-      });
-
-      if (activeConfig) {
-        const rules = activeConfig.eligibilityRules as { maximumAdvancePercentage?: number };
-        const globalMax = rules.maximumAdvancePercentage ?? 100;
-
-        if (dto.maximumAdvancePercentageOverride > globalMax) {
-          throw new BadRequestException(
-            `Employer override (${dto.maximumAdvancePercentageOverride}%) cannot exceed ` +
-              `the product config maximum (${globalMax}%)`,
-          );
-        }
-      }
-    }
-
     return this.prisma.employerProductConfig.upsert({
       where: { employerId_productId: { employerId, productId: product.id } },
       update: {
-        maximumAdvancePercentageOverride:
-          dto.maximumAdvancePercentageOverride !== undefined
-            ? dto.maximumAdvancePercentageOverride
+        maximumAdvanceAmountOverride:
+          dto.maximumAdvanceAmountOverride !== undefined
+            ? dto.maximumAdvanceAmountOverride
             : undefined,
         requiresEmployerApproval: dto.requiresEmployerApproval,
         isEnabled: dto.isEnabled,
@@ -78,8 +75,7 @@ export class EmployerProductConfigsService {
       create: {
         employerId,
         productId: product.id,
-        maximumAdvancePercentageOverride:
-          dto.maximumAdvancePercentageOverride ?? null,
+        maximumAdvanceAmountOverride: dto.maximumAdvanceAmountOverride ?? null,
         requiresEmployerApproval: dto.requiresEmployerApproval ?? true,
         isEnabled: dto.isEnabled ?? true,
       },
@@ -88,35 +84,16 @@ export class EmployerProductConfigsService {
   }
 
   /**
-   * Returns the effective advance percentage for a given employer + product.
-   * Priority: employer override → product config global → throw.
-   * Used by EligibilityService.
+   * Self-service upsert for the employer portal.
+   * Employer can only update their own override — cannot change isEnabled or requiresEmployerApproval.
    */
-  async getEffectiveAdvancePercentage(
-    employerId: string,
-    productId: string,
-  ): Promise<number> {
-    const empConfig = await this.prisma.employerProductConfig.findUnique({
-      where: { employerId_productId: { employerId, productId } },
-    });
-
-    if (empConfig?.maximumAdvancePercentageOverride != null) {
-      return Number(empConfig.maximumAdvancePercentageOverride);
-    }
-
-    // Fall back to global product config
-    const productConfig = await this.prisma.loanProductConfig.findFirst({
-      where: { productId, isActive: true },
-    });
-
-    if (!productConfig) {
-      throw new BadRequestException('No active product configuration found');
-    }
-
-    const rules = productConfig.eligibilityRules as {
-      maximumAdvancePercentage?: number;
-    };
-
-    return rules.maximumAdvancePercentage ?? 50;
+  async upsertByUserId(
+    userId: string,
+    productType: string,
+    dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvanceAmountOverride'>,
+  ) {
+    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+    if (!employer) throw new NotFoundException('Employer not found');
+    return this.upsert(employer.id, productType, dto);
   }
 }

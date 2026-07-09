@@ -18,7 +18,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 
-import { RequestMembershipDto } from './dto/request-membership.dto';
+import { InitiatePaymentDto } from './dto/initiate-payment.dto';
+import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { RejectMembershipDto } from './dto/reject-membership.dto';
 import { CreateMembershipCouponDto } from './dto/create-membership-coupon.dto';
 import { ValidateMembershipCouponDto } from './dto/validate-membership-coupon.dto';
@@ -33,69 +34,59 @@ import { UpdateMembershipPlanConfigDto } from './dto/update-membership-plan-conf
 export class MembershipController {
   constructor(private readonly membershipService: MembershipService) {}
 
-  /**
-   * Employee
-   * Get logged-in employee membership
-   */
+  // ─── Employee: membership status ─────────────────────────────────────────
+
   @Get('me')
   @Roles('EMPLOYEE')
-  @ApiOperation({
-    summary: 'Get my membership',
-  })
+  @ApiOperation({ summary: 'Get my membership status + available plans + payment config' })
   getMyMembership(@Req() req: any) {
     return this.membershipService.getMyMembership(req.user.userId);
   }
 
-  /**
-   * Employee
-   * Submit membership payment request
-   */
-  @Post('request')
-  @Roles('EMPLOYEE')
-  @ApiOperation({
-    summary: 'Submit membership request',
-  })
-  requestMembership(
-    @Req() req: any,
+  // ─── Employee: Razorpay payment flow ─────────────────────────────────────
 
-    @Body()
-    dto: RequestMembershipDto,
-  ) {
-    return this.membershipService.requestMembership(req.user.userId, dto);
+  /**
+   * Step 1: Create a Razorpay order.
+   * Returns { orderId, amount, currency, keyId, planName } needed to open the checkout modal.
+   */
+  @Post('initiate-payment')
+  @Roles('EMPLOYEE')
+  @ApiOperation({ summary: 'Initiate Razorpay membership payment — creates an order' })
+  initiatePayment(@Req() req: any, @Body() dto: InitiatePaymentDto) {
+    return this.membershipService.initiatePayment(req.user.userId, dto);
   }
+
+  /**
+   * Step 2: Verify payment after checkout modal closes.
+   * Validates HMAC signature and activates membership immediately.
+   */
+  @Post('verify-payment')
+  @Roles('EMPLOYEE')
+  @ApiOperation({ summary: 'Verify Razorpay payment signature and activate membership' })
+  verifyPayment(@Req() req: any, @Body() dto: VerifyPaymentDto) {
+    return this.membershipService.verifyPayment(req.user.userId, dto);
+  }
+
+  // ─── Employee: coupon ────────────────────────────────────────────────────
 
   @Post('coupons/validate')
   @Roles('EMPLOYEE')
-  @ApiOperation({
-    summary: 'Validate membership coupon',
-  })
-  validateCoupon(
-    @Body()
-    dto: ValidateMembershipCouponDto,
-  ) {
+  @ApiOperation({ summary: 'Validate a membership coupon code' })
+  validateCoupon(@Body() dto: ValidateMembershipCouponDto) {
     return this.membershipService.validateCoupon(dto.couponCode);
   }
 
-  /**
-   * Employee
-   * Membership configuration
-   */
+  // ─── Employee: config ────────────────────────────────────────────────────
 
   @Get('config')
   @Roles('EMPLOYEE')
-  @ApiOperation({
-    summary: 'Get membership configuration',
-  })
+  @ApiOperation({ summary: 'Get membership config: plans, benefits, Razorpay key' })
   getConfig() {
     return this.membershipService.getConfig();
   }
 
   // ─── Admin: Plan config management ───────────────────────────────────────
 
-  /**
-   * Admin
-   * List all membership plan configs (active + inactive)
-   */
   @Get('plans')
   @Roles('ADMIN')
   @ApiOperation({ summary: 'List all membership plan configurations' })
@@ -103,10 +94,6 @@ export class MembershipController {
     return this.membershipService.listPlanConfigs();
   }
 
-  /**
-   * Admin
-   * Create a new membership plan
-   */
   @Post('plans')
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Create a new membership plan' })
@@ -114,10 +101,6 @@ export class MembershipController {
     return this.membershipService.createPlanConfig(dto);
   }
 
-  /**
-   * Admin
-   * Update an existing membership plan (price, name, validity, labels, etc.)
-   */
   @Patch('plans/:planKey')
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Update a membership plan' })
@@ -128,10 +111,6 @@ export class MembershipController {
     return this.membershipService.updatePlanConfig(planKey, dto);
   }
 
-  /**
-   * Admin
-   * Toggle a plan active / inactive (soft-disable without deleting)
-   */
   @Patch('plans/:planKey/toggle')
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Toggle a membership plan active/inactive' })
@@ -139,151 +118,83 @@ export class MembershipController {
     return this.membershipService.togglePlanConfig(planKey);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Admin: Membership list / detail ─────────────────────────────────────
 
-  /**
-   * Admin
-   * View pending membership requests
-   */
   @Get('pending')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'List pending memberships with pagination and search',
-  })
+  @ApiOperation({ summary: 'List pending memberships' })
   findPending(@Query() query: MembershipListQueryDto) {
     return this.membershipService.findPending(query);
   }
 
-  /**
-
- * Admin
-
- * View all memberships
-
- */
-
   @Get()
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'List memberships with pagination, search, sorting, and filters',
-  })
+  @ApiOperation({ summary: 'List memberships with pagination, search, and filters' })
   findAll(@Query() query: MembershipListQueryDto) {
     return this.membershipService.findAll(query);
   }
 
-  /**
-   * Admin
-   * Membership summary
-   */
-
   @Get('summary')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get membership summary',
-  })
+  @ApiOperation({ summary: 'Get membership summary' })
   getSummary() {
     return this.membershipService.getSummary();
   }
-  /**
-   * Admin
-   * Create membership coupon
-   */
-  @Post('coupons')
-  @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Create membership coupon',
-  })
-  createCoupon(
-    @Body()
-    dto: CreateMembershipCouponDto,
-  ) {
-    return this.membershipService.createCoupon(dto);
-  }
 
-  /**
-   * Admin
-   * View all coupons
-   */
-  @Get('coupons')
-  @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get membership coupons',
-  })
-  findAllCoupons() {
-    return this.membershipService.findAllCoupons();
-  }
-
-  /**
-   * Admin
-   * Get membership details
-   */
   @Get('employer-summary')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get employer-wise membership summary',
-  })
+  @ApiOperation({ summary: 'Get employer-wise membership summary' })
   getEmployerSummary() {
     return this.membershipService.getEmployerSummary();
   }
 
   @Get('revenue-summary')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get revenue summary',
-  })
+  @ApiOperation({ summary: 'Get revenue summary' })
   getRevenueSummary() {
     return this.membershipService.getRevenueSummary();
   }
+
   @Get(':id')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Get membership details',
-  })
-  findOne(
-    @Param('id')
-    id: string,
-  ) {
+  @ApiOperation({ summary: 'Get membership details (includes PaymentOrder + events)' })
+  findOne(@Param('id') id: string) {
     return this.membershipService.findOne(id);
   }
 
-  /**
-   * Admin
-   * Approve membership
-   */
+  // ─── Admin: Manual override (edge cases only) ────────────────────────────
+
   @Post(':id/approve')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Approve membership',
-  })
-  approve(
-    @Param('id')
-    id: string,
-
-    @Req()
-    req: any,
-  ) {
+  @ApiOperation({ summary: 'Manually activate a membership (admin override)' })
+  approve(@Param('id') id: string, @Req() req: any) {
     return this.membershipService.approve(id, req.user.userId);
   }
 
-  /**
-   * Admin
-   * Reject membership
-   */
   @Post(':id/reject')
   @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Reject membership',
-  })
+  @ApiOperation({ summary: 'Cancel/reject a membership (admin override)' })
   reject(
-    @Param('id')
-    id: string,
-
-    @Body()
-    dto: RejectMembershipDto,
-
-    @Req()
-    req: any,
+    @Param('id') id: string,
+    @Body() dto: RejectMembershipDto,
+    @Req() req: any,
   ) {
     return this.membershipService.reject(id, dto.remarks, req.user.userId);
+  }
+
+  // ─── Admin: Coupon management ─────────────────────────────────────────────
+
+  @Post('coupons')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Create membership coupon' })
+  createCoupon(@Body() dto: CreateMembershipCouponDto) {
+    return this.membershipService.createCoupon(dto);
+  }
+
+  @Get('coupons')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'List all coupons' })
+  findAllCoupons() {
+    return this.membershipService.findAllCoupons();
   }
 }

@@ -5,6 +5,7 @@ import { MembershipService } from './membership.service';
 import { EmailModule } from '../email/email.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { RazorpayModule } from '../razorpay/razorpay.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
     EmailModule,
     NotificationsModule,
     AuditLogsModule,
+    RazorpayModule,
   ],
   controllers: [MembershipController],
   providers: [MembershipService],

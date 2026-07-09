@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Req,
@@ -56,6 +59,20 @@ export class LoanProductsController {
       productType.toUpperCase(),
       dto,
       req.user.userId,
+    );
+  }
+
+  @Delete(':productType/config/:id')
+  @Roles('ADMIN')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a non-active config version' })
+  deleteConfigVersion(
+    @Param('productType') productType: string,
+    @Param('id') id: string,
+  ) {
+    return this.loanProductsService.deleteConfigVersion(
+      productType.toUpperCase(),
+      id,
     );
   }
 }

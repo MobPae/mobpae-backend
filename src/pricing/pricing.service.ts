@@ -7,14 +7,18 @@ export interface SnapshotInput {
   salaryInHand: number;
   /** Annual interest rate as a percentage, e.g. 36 = 36% p.a. */
   annualInterestRate: number;
-  /** Portion of principal that is interest-free (%), e.g. 0 or 50 */
-  interestFreePercentage: number;
+  /**
+   * Absolute ₹ threshold below which no interest is charged.
+   * Computed at submission as: min(salary × platformAdvancePercentage%, platformMaxAdvanceAmount)
+   * This is the PLATFORM cap — never the employer override amount.
+   */
+  interestFreeThreshold: number;
   /** Processing fee as a decimal fraction, e.g. 0.02 = 2% */
   processingFeeRate: number;
   /** GST rate as a decimal fraction, e.g. 0.18 = 18% */
   gstRate: number;
-  /** Max salary advance as a percentage, e.g. 40 = 40% of salary */
-  maxAdvancePercentage: number;
+  /** Hard ceiling % used (for snapshot record-keeping only) */
+  hardCeilingPercentage: number;
   /** Date the loan application is submitted */
   submissionDate: Date;
   /** Employer payroll day-of-month (1–31) */
@@ -25,9 +29,11 @@ export interface SnapshotInput {
 
 export interface Snapshot {
   snapshotAnnualInterestRate: number;
-  snapshotInterestFreePercentage: number;
+  /** Absolute ₹ interest-free threshold frozen at submission */
+  snapshotInterestFreeThreshold: number;
   snapshotProcessingFeeRate: number;
   snapshotGstRate: number;
+  /** Hard ceiling % stored for reference */
   snapshotMaxAdvancePercentage: number;
   snapshotSalaryInHand: number;
   snapshotInterestDays: number;
@@ -62,10 +68,10 @@ export class PricingService {
 
     return {
       snapshotAnnualInterestRate: input.annualInterestRate,
-      snapshotInterestFreePercentage: input.interestFreePercentage,
+      snapshotInterestFreeThreshold: input.interestFreeThreshold,
       snapshotProcessingFeeRate: input.processingFeeRate,
       snapshotGstRate: input.gstRate,
-      snapshotMaxAdvancePercentage: input.maxAdvancePercentage,
+      snapshotMaxAdvancePercentage: input.hardCeilingPercentage,
       snapshotSalaryInHand: input.salaryInHand,
       snapshotInterestDays: interestDays,
       snapshotRecoveryDate: recoveryDate,
@@ -77,7 +83,7 @@ export class PricingService {
    * Called at disbursal time — reads snapshot columns from DB, not live config.
    *
    * Formula:
-   *   interestFreeAmount    = principal × interestFreePercentage%
+   *   interestFreeAmount    = min(principal, interestFreeThreshold)
    *   interestBearingAmount = principal − interestFreeAmount
    *   interestAmount        = interestBearingAmount × annualRate% × days/365
    *   processingFee         = principal × processingFeeRate
@@ -89,14 +95,14 @@ export class PricingService {
     snapshot: Pick<
       Snapshot,
       | 'snapshotAnnualInterestRate'
-      | 'snapshotInterestFreePercentage'
+      | 'snapshotInterestFreeThreshold'
       | 'snapshotProcessingFeeRate'
       | 'snapshotGstRate'
       | 'snapshotInterestDays'
     >,
   ): RepaymentBreakdown {
     const interestFreeAmount = r2(
-      disbursedAmount * (snapshot.snapshotInterestFreePercentage / 100),
+      Math.min(disbursedAmount, snapshot.snapshotInterestFreeThreshold),
     );
     const interestBearingAmount = r2(disbursedAmount - interestFreeAmount);
     const interestAmount = r2(

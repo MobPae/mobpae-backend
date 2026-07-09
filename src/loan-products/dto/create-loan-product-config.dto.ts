@@ -14,7 +14,12 @@ import {
 // ── Typed rule interfaces (matched by LoanProductConfig Json fields) ─────────
 
 export interface EligibilityRules {
-  maximumAdvancePercentage: number; // 0–100
+  /** Interest-free cap as % of salary, e.g. 10 = 10% (used to compute platform cap) */
+  platformAdvancePercentage: number;
+  /** Absolute ₹ ceiling for the platform cap, e.g. 5000 */
+  platformMaxAdvanceAmount: number;
+  /** MVP hard ceiling as % of salary — employee cannot borrow beyond this even with employer override */
+  hardCeilingPercentage: number;
   minimumAdvanceAmount: number;
   minimumSalaryInHand: number;
   minimumTenureMonths: number;
@@ -28,7 +33,6 @@ export interface EligibilityRules {
 
 export interface PricingRules {
   annualInterestRate: number; // e.g. 36 = 36% p.a.
-  interestFreePercentage: number; // 0–100
   processingFeeRate: number; // fraction e.g. 0.01 = 1%
   gstRate: number; // fraction e.g. 0.18 = 18%
 }
@@ -56,14 +60,16 @@ export class CreateLoanProductConfigDto {
   @ApiProperty({
     description: 'EligibilityRules — governs who can apply',
     example: {
-      maximumAdvancePercentage: 50,
+      platformAdvancePercentage: 10,
+      platformMaxAdvanceAmount: 5000,
+      hardCeilingPercentage: 50,
       minimumAdvanceAmount: 1000,
       minimumSalaryInHand: 10000,
       minimumTenureMonths: 3,
       requiresKyc: true,
       requiresMembership: true,
       requiresBankAccount: true,
-      requiresActiveSelfie: true,
+      requiresActiveSelfie: false,
       maxRequestsPerCycle: 1,
       cooldownDays: 0,
     },
@@ -75,7 +81,6 @@ export class CreateLoanProductConfigDto {
     description: 'PricingRules — pure-function inputs for PricingService',
     example: {
       annualInterestRate: 36,
-      interestFreePercentage: 0,
       processingFeeRate: 0,
       gstRate: 0,
     },

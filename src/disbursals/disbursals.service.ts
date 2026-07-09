@@ -184,7 +184,7 @@ export class DisbursalsService {
     const { interestFreeAmount, interestBearingAmount, interestAmount, processingFee, gstAmount, totalAmount } =
       this.pricingService.computeRepaymentBreakdown(disbursedAmount, {
         snapshotAnnualInterestRate: annualInterestRate,
-        snapshotInterestFreePercentage: Number(loanApplication.snapshotInterestFreePercentage),
+        snapshotInterestFreeThreshold: Number(loanApplication.snapshotInterestFreeThreshold),
         snapshotProcessingFeeRate: Number(loanApplication.snapshotProcessingFeeRate),
         snapshotGstRate: Number(loanApplication.snapshotGstRate),
         snapshotInterestDays: interestDays,

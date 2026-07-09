@@ -45,6 +45,8 @@ import { FilesModule } from './files/files.module';
 import { ReportsModule } from './reports/reports.module';
 import { BusinessJobsModule } from './business-jobs/business-jobs.module';
 import { AppInformationModule } from './app-information/app-information.module';
+import { RazorpayModule } from './razorpay/razorpay.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -75,6 +77,10 @@ import { AppInformationModule } from './app-information/app-information.module';
         R2_ACCESS_KEY_ID: Joi.string().required(),
         R2_SECRET_ACCESS_KEY: Joi.string().required(),
         R2_BUCKET_NAME: Joi.string().required(),
+        // Razorpay — required for membership payments
+        RAZORPAY_KEY_ID: Joi.string().required(),
+        RAZORPAY_KEY_SECRET: Joi.string().required(),
+        RAZORPAY_WEBHOOK_SECRET: Joi.string().required(),
       }),
     }),
 
@@ -140,6 +146,9 @@ import { AppInformationModule } from './app-information/app-information.module';
     BusinessJobsModule,
 
     AppInformationModule,
+
+    RazorpayModule,
+    WebhooksModule,
   ],
   controllers: [AppController],
   providers: [

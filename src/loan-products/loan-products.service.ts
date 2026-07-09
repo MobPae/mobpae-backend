@@ -147,6 +147,32 @@ export class LoanProductsService {
   }
 
   /**
+   * Deletes a non-active config version. Refuses to delete the currently active one.
+   */
+  async deleteConfigVersion(productType: string, configId: string) {
+    const product = await this.prisma.loanProduct.findUnique({
+      where: { productType: productType as any },
+    });
+    if (!product) {
+      throw new NotFoundException(`Product '${productType}' not found`);
+    }
+
+    const config = await this.prisma.loanProductConfig.findFirst({
+      where: { id: configId, productId: product.id },
+    });
+    if (!config) {
+      throw new NotFoundException('Config version not found');
+    }
+    if (config.isActive) {
+      throw new BadRequestException(
+        'Cannot delete the active config version. Publish a new version first.',
+      );
+    }
+
+    await this.prisma.loanProductConfig.delete({ where: { id: configId } });
+  }
+
+  /**
    * Looks up a LoanProduct by its enum type code (e.g. 'SA').
    * Used internally across service boundaries.
    */
