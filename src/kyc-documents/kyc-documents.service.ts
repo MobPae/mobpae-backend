@@ -50,6 +50,7 @@ export class KycDocumentsService {
         },
         data: {
           filePath: dto.filePath,
+          originalFileName: dto.originalFileName ?? existingDocument.originalFileName,
           status: 'PENDING',
           verifiedBy: null,
           verifiedAt: null,
@@ -74,6 +75,7 @@ export class KycDocumentsService {
         employeeId: employee.id,
         documentType: dto.documentType,
         filePath: dto.filePath,
+        originalFileName: dto.originalFileName,
         status: 'PENDING',
       },
     });
@@ -336,7 +338,7 @@ export class KycDocumentsService {
     return document;
   }
 
-  async reject(id: string, actorUserId?: string) {
+  async reject(id: string, actorUserId?: string, note?: string) {
     const existingDocument = await this.prisma.kycDocument.findUnique({
       where: { id },
       include: {
@@ -352,6 +354,7 @@ export class KycDocumentsService {
       where: { id },
       data: {
         status: 'REJECTED',
+        rejectionNote: note ?? null,
       },
     });
 

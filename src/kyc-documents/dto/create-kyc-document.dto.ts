@@ -1,4 +1,4 @@
-import { IsEnum, IsString, Matches, MaxLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 import { KycDocumentType } from '@prisma/client';
 
@@ -17,4 +17,10 @@ export class CreateKycDocumentDto {
       'filePath must be a valid R2 object key (alphanumeric, slashes, hyphens, dots only — no URLs)',
   })
   filePath: string;
+
+  /** Original filename from the user's device (e.g. "pan_card.jpg") */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  originalFileName?: string;
 }

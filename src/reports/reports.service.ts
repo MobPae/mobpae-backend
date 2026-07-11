@@ -78,7 +78,7 @@ export class ReportsService {
       }),
       this.prisma.disbursal.aggregate({
         where: {
-          status: 'DISBURSED',
+          status: 'SUCCESS',
         },
         _sum: {
           disbursedAmount: true,
@@ -104,7 +104,7 @@ export class ReportsService {
       }),
       this.prisma.employerSettlement.count({
         where: {
-          status: 'PENDING',
+          status: 'GENERATED',
         },
       }),
       this.prisma.membership.aggregate({
@@ -134,7 +134,7 @@ export class ReportsService {
       pendingLoanApplications,
       approvedLoanApplications,
       disbursedLoanApplications,
-      totalDisbursedAmount: this.toNumber(totalDisbursed._sum.disbursedAmount),
+      totalDisbursedAmount: this.toNumber(totalDisbursed._sum?.disbursedAmount),
       totalRecoveredAmount: this.toNumber(totalRecovered._sum.totalAmount),
       outstandingAmount: this.toNumber(outstanding._sum.totalAmount),
       pendingSettlements,

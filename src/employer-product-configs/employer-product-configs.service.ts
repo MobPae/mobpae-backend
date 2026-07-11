@@ -65,10 +65,12 @@ export class EmployerProductConfigsService {
     return this.prisma.employerProductConfig.upsert({
       where: { employerId_productId: { employerId, productId: product.id } },
       update: {
-        maximumAdvanceAmountOverride:
-          dto.maximumAdvanceAmountOverride !== undefined
-            ? dto.maximumAdvanceAmountOverride
-            : undefined,
+        ...(dto.maximumAdvanceAmountOverride !== undefined && {
+          maximumAdvanceAmountOverride: dto.maximumAdvanceAmountOverride,
+        }),
+        ...(dto.maximumAdvancePercentageOverride !== undefined && {
+          maximumAdvancePercentageOverride: dto.maximumAdvancePercentageOverride,
+        }),
         requiresEmployerApproval: dto.requiresEmployerApproval,
         isEnabled: dto.isEnabled,
       },
@@ -78,22 +80,49 @@ export class EmployerProductConfigsService {
         maximumAdvanceAmountOverride: dto.maximumAdvanceAmountOverride ?? null,
         requiresEmployerApproval: dto.requiresEmployerApproval ?? true,
         isEnabled: dto.isEnabled ?? true,
-      },
+        // maximumAdvancePercentageOverride added in schema — available after prisma db push
+        ...(dto.maximumAdvancePercentageOverride !== undefined && {
+          maximumAdvancePercentageOverride: dto.maximumAdvancePercentageOverride,
+        }),
+      } as any,
       include: { product: true },
     });
   }
 
   /**
    * Self-service upsert for the employer portal.
-   * Employer can only update their own override — cannot change isEnabled or requiresEmployerApproval.
+   * Employer can only set their percentage override — cannot change isEnabled or requiresEmployerApproval.
    */
   async upsertByUserId(
     userId: string,
     productType: string,
-    dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvanceAmountOverride'>,
+    dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvancePercentageOverride'>,
   ) {
     const employer = await this.prisma.employer.findUnique({ where: { userId } });
     if (!employer) throw new NotFoundException('Employer not found');
     return this.upsert(employer.id, productType, dto);
+  }
+
+  /**
+   * Returns the active eligibility + pricing rules for a product type.
+   * Exposed to employer portal so they can see what they are overriding.
+   */
+  async findActiveRulesForProductType(productType: string) {
+    const product = await this.prisma.loanProduct.findUnique({
+      where: { productType: productType as any },
+    });
+    if (!product) throw new NotFoundException(`Product '${productType}' not found`);
+
+    const config = await this.prisma.loanProductConfig.findFirst({
+      where: { productId: product.id, isActive: true },
+    });
+    if (!config) throw new NotFoundException(`No active config for '${productType}'`);
+
+    const rules = config.eligibilityRules as any;
+    return {
+      defaultAdvancePercentage: rules.platformAdvancePercentage ?? 10,
+      hardCeilingPercentage:    rules.hardCeilingPercentage    ?? 50,
+      platformMaxAdvanceAmount: rules.platformMaxAdvanceAmount  ?? 5000,
+    };
   }
 }

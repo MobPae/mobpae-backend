@@ -142,7 +142,7 @@ export class LoanApplicationsService {
                 interestDays: true, interestRate: true,
               },
             },
-            disbursal: { select: { status: true, disbursedAmount: true, disbursedAt: true } },
+            disbursal: { select: { status: true, disbursedAmount: true, completedAt: true } },
           },
           orderBy: { submittedAt: 'desc' },
         }),
@@ -166,7 +166,7 @@ export class LoanApplicationsService {
     else if (kycHasPending)             kycStatus = 'PENDING';
     else if (kycDocs.length > 0)        kycStatus = 'SUBMITTED';
 
-    let bankStatus = 'NOT_SUBMITTED';
+    let bankStatus = 'NOT_ADDED';
     if (eligResult.checks.bankVerified) bankStatus = 'VERIFIED';
     else if (bankAccount)               bankStatus = 'PENDING';
 
@@ -350,7 +350,7 @@ export class LoanApplicationsService {
       where: { employeeId: employee.id },
       include: {
         repayment: { select: { status: true, totalAmount: true, dueDate: true } },
-        disbursal: { select: { status: true, disbursedAmount: true, disbursedAt: true } },
+        disbursal: { select: { status: true, disbursedAmount: true, completedAt: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -438,45 +438,62 @@ export class LoanApplicationsService {
 
     const app = await this.prisma.loanApplication.findFirst({
       where: { id, employerId: employer.id },
-      include: { employee: { include: { membership: true } } },
+      include: { employee: { select: { id: true, userId: true, name: true } } },
     });
     if (!app) throw new NotFoundException('Application not found');
     if (app.status !== 'SUBMITTED') {
       throw new BadRequestException('Only SUBMITTED applications can be employer-approved');
     }
 
-    const membershipActive = app.employee.membership?.status === 'ACTIVE';
-    const newStatus: LoanApplicationStatus = membershipActive
-      ? 'EMPLOYER_APPROVED'
-      : 'AWAITING_MEMBERSHIP_PAYMENT';
+    // Security guard: employee must not already have an active advance in progress.
+    // Employer approving a second concurrent advance is blocked here.
+    const IN_PROGRESS_STATUSES: LoanApplicationStatus[] = [
+      'EMPLOYER_APPROVED',
+      'AWAITING_MEMBERSHIP_PAYMENT',
+      'READY_FOR_DISBURSAL',
+      'DISBURSED',
+      'REPAYMENT_SCHEDULED',
+    ];
+    const existingActive = await this.prisma.loanApplication.findFirst({
+      where: {
+        employeeId: app.employeeId,
+        status: { in: IN_PROGRESS_STATUSES },
+        id: { not: id },
+      },
+      select: { applicationNumber: true, status: true },
+    });
+    if (existingActive) {
+      throw new BadRequestException(
+        `Employee already has an active advance (${existingActive.applicationNumber} — ${existingActive.status}). Cannot approve a second concurrent advance.`,
+      );
+    }
 
     const updated = await this.prisma.loanApplication.update({
       where: { id },
       data: {
-        status: newStatus,
+        status: 'EMPLOYER_APPROVED',
         employerApprovedAmount: app.requestedAmount,
         employerApprovedBy: actorUserId,
         employerApprovedAt: new Date(),
         history: {
           create: {
             previousStatus: 'SUBMITTED',
-            newStatus,
+            newStatus: 'EMPLOYER_APPROVED',
             changedBy: actorUserId,
             actorRole: 'EMPLOYER',
-            remarks: membershipActive
-              ? 'Employer approved'
-              : 'Employer approved; awaiting membership payment',
+            remarks: 'Employer approved',
           },
         },
       },
     });
 
     if (app.employee.userId) {
-      const msg = membershipActive
-        ? 'Your loan application has been approved by your employer.'
-        : 'Your loan application is approved. Please complete your membership payment to proceed.';
       this.notificationsService
-        .createSystemNotification(app.employee.userId, 'Loan Application Approved', msg)
+        .createSystemNotification(
+          app.employee.userId,
+          'Loan Application Approved',
+          'Your salary advance has been approved by your employer and is now under MobPae review.',
+        )
         .catch(() => {});
     }
 

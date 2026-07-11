@@ -60,15 +60,22 @@ export class EmployerSelfProductConfigsController {
     return this.service.findByUserId(req.user.userId);
   }
 
+  @Get(':productType/rules')
+  @Roles('EMPLOYER')
+  @ApiOperation({ summary: 'Get active eligibility + pricing rules for a product type (employer view)' })
+  getActiveRules(@Param('productType') productType: string) {
+    return this.service.findActiveRulesForProductType(productType.toUpperCase());
+  }
+
   @Put(':productType')
   @Roles('EMPLOYER')
   @ApiOperation({
-    summary: 'Update advance amount override for the logged-in employer',
+    summary: 'Update advance percentage override for the logged-in employer',
   })
   upsertMine(
     @Req() req: any,
     @Param('productType') productType: string,
-    @Body() dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvanceAmountOverride'>,
+    @Body() dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvancePercentageOverride'>,
   ) {
     return this.service.upsertByUserId(req.user.userId, productType.toUpperCase(), dto);
   }

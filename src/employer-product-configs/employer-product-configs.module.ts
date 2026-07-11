@@ -5,7 +5,7 @@ import { EmployerProductConfigsService } from './employer-product-configs.servic
 
 @Module({
   imports: [PrismaModule],
-  controllers: [EmployerProductConfigsController, EmployerSelfProductConfigsController],
+  controllers: [EmployerSelfProductConfigsController, EmployerProductConfigsController],
   providers: [EmployerProductConfigsService],
   exports: [EmployerProductConfigsService],
 })

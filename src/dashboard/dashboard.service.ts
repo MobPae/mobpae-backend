@@ -104,7 +104,7 @@ export class DashboardService {
       }),
 
       this.prisma.employerSettlement.count({
-        where: { employerId, status: 'PENDING' },
+        where: { employerId, status: 'GENERATED' },
       }),
       this.prisma.employerSettlement.count({
         where: { employerId, status: 'OVERDUE' },
@@ -112,7 +112,7 @@ export class DashboardService {
       this.prisma.employerSettlement.aggregate({
         where: {
           employerId,
-          status: { in: ['PENDING', 'OVERDUE', 'PARTIALLY_PAID'] },
+          status: { in: ['GENERATED', 'OVERDUE', 'PARTIALLY_PAID'] },
         },
         _sum: { outstandingAmount: true },
       }),

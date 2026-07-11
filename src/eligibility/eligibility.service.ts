@@ -124,10 +124,18 @@ export class EligibilityService {
     const hardCeiling = salary * (hardCeilingPercentage / 100);
 
     // Effective borrowing limit
-    const employerOverride = employerConfig?.maximumAdvanceAmountOverride ?? null;
-    const maximumEligibleAmount = employerOverride !== null
-      ? Math.min(employerOverride, hardCeiling)
-      : interestFreeThreshold; // no override → platform cap is the limit
+    // Priority: percentage override → absolute ₹ override → platform default
+    const employerPctOverride = (employerConfig as any)?.maximumAdvancePercentageOverride != null
+      ? Number((employerConfig as any).maximumAdvancePercentageOverride)
+      : null;
+    const employerAmtOverride = employerConfig?.maximumAdvanceAmountOverride ?? null;
+
+    const maximumEligibleAmount =
+      employerPctOverride !== null
+        ? Math.min(salary * (employerPctOverride / 100), hardCeiling)
+        : employerAmtOverride !== null
+          ? Math.min(employerAmtOverride, hardCeiling)
+          : interestFreeThreshold; // no override → platform cap is the limit
 
     // ── Cycle / cooldown params ──────────────────────────────────────────────
     const cooldownDays = rules.cooldownDays ?? 0;

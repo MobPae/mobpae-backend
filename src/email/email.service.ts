@@ -285,17 +285,16 @@ export class EmailService {
   async sendSettlementReportEmail(data: {
     to: string;
     companyName: string;
-    payrollMonth: string;
+    settlementNumber: string;
     outstandingAmount: number;
     settlementId: string;
     recoveries?: Array<{
       employeeName: string;
       employeeCode?: string | null;
-      loanApplicationId: string;
+      loanApplicationNumber: string;
       principalAmount: number;
       interestAmount: number;
       totalAmount: number;
-      dueDate: Date;
     }>;
   }) {
     const recoveryRows = data.recoveries?.length
@@ -310,7 +309,7 @@ export class EmailService {
                   )}</span>
                 </td>
                 <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #6b7280;">${this.escapeHtml(
-                  recovery.loanApplicationId,
+                  recovery.loanApplicationNumber,
                 )}</td>
                 <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${this.formatCurrency(
                   recovery.principalAmount,
@@ -321,15 +320,12 @@ export class EmailService {
                 <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: right;"><strong>${this.formatCurrency(
                   recovery.totalAmount,
                 )}</strong></td>
-                <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb;">${this.formatDate(
-                  recovery.dueDate,
-                )}</td>
               </tr>`,
           )
           .join('')
       : `
               <tr>
-                <td colspan="6" style="padding: 12px 8px; color: #6b7280;">No employee-level recoveries linked to this settlement.</td>
+                <td colspan="5" style="padding: 12px 8px; color: #6b7280;">No salary deductions linked to this settlement.</td>
               </tr>`;
 
     return this.sendTemplateEmail(
@@ -339,7 +335,7 @@ export class EmailService {
       {
         title: 'Settlement Report',
         companyName: data.companyName,
-        payrollMonth: data.payrollMonth,
+        settlementNumber: data.settlementNumber,
         outstandingAmount: this.formatCurrency(data.outstandingAmount),
         settlementId: data.settlementId,
         recoveryRows,

@@ -70,8 +70,8 @@ export class DisbursalsService {
       );
     }
 
-    // Use adminApprovedAmount if set, otherwise requestedAmount
-    const disbursedAmount = Number(
+    const requestedAmount = Number(loanApplication.requestedAmount);
+    const approvedAmount = Number(
       loanApplication.adminApprovedAmount ?? loanApplication.requestedAmount,
     );
 
@@ -80,8 +80,10 @@ export class DisbursalsService {
       update: {},
       create: {
         loanApplicationId: loanApplication.id,
-        disbursedAmount,
-        fundingSource: 'MOBPAE',
+        requestedAmount,
+        approvedAmount,
+        disbursedAmount: approvedAmount,
+        initiatedBy: actorUserId,
       },
     });
 
@@ -132,13 +134,13 @@ export class DisbursalsService {
   }
 
   /**
-   * Marks a loan advance as disbursed.
+   * Marks a loan advance as disbursed (SUCCESS).
    *
    * Flow:
    * 1. Validate disbursal is PENDING.
    * 2. Validate employer is not BLOCKED.
-   * 3. Mark DISBURSED.
-   * 4. Create Repayment using SNAPSHOT rates + disbursedAmount (not live settings).
+   * 3. Mark SUCCESS + freeze bank account snapshot.
+   * 4. Create Repayment using SNAPSHOT rates + disbursedAmount.
    * 5. Transition LoanApplication → REPAYMENT_SCHEDULED.
    * 6. Notify employee.
    */
@@ -152,7 +154,7 @@ export class DisbursalsService {
     }
 
     if (existingDisbursal.status !== 'PENDING') {
-      if (existingDisbursal.status === 'DISBURSED') {
+      if (existingDisbursal.status === 'SUCCESS') {
         return existingDisbursal;
       }
       throw new BadRequestException('Disbursal is not pending');
@@ -160,7 +162,12 @@ export class DisbursalsService {
 
     const loanApplication = await this.prisma.loanApplication.findUnique({
       where: { id: existingDisbursal.loanApplicationId },
-      include: { employee: true, employer: true },
+      include: {
+        employee: {
+          include: { bankAccount: true },
+        },
+        employer: true,
+      },
     });
 
     if (!loanApplication) {
@@ -173,29 +180,49 @@ export class DisbursalsService {
       );
     }
 
-    const disbursedAmount = Number(existingDisbursal.disbursedAmount);
+    const disbursedAmount = Number(
+      existingDisbursal.disbursedAmount ?? existingDisbursal.approvedAmount,
+    );
 
     // ── Repayment calculation using SNAPSHOT rates ───────────────────────────
-    // Snapshot fields were frozen at submission time — never recalculated here.
     const annualInterestRate = Number(loanApplication.snapshotAnnualInterestRate);
     const interestDays = loanApplication.snapshotInterestDays ?? 0;
     const dueDate = loanApplication.snapshotRecoveryDate;
 
-    const { interestFreeAmount, interestBearingAmount, interestAmount, processingFee, gstAmount, totalAmount } =
-      this.pricingService.computeRepaymentBreakdown(disbursedAmount, {
-        snapshotAnnualInterestRate: annualInterestRate,
-        snapshotInterestFreeThreshold: Number(loanApplication.snapshotInterestFreeThreshold),
-        snapshotProcessingFeeRate: Number(loanApplication.snapshotProcessingFeeRate),
-        snapshotGstRate: Number(loanApplication.snapshotGstRate),
-        snapshotInterestDays: interestDays,
-      });
+    const {
+      interestFreeAmount,
+      interestBearingAmount,
+      interestAmount,
+      processingFee,
+      gstAmount,
+      totalAmount,
+    } = this.pricingService.computeRepaymentBreakdown(disbursedAmount, {
+      snapshotAnnualInterestRate: annualInterestRate,
+      snapshotInterestFreeThreshold: Number(loanApplication.snapshotInterestFreeThreshold),
+      snapshotProcessingFeeRate: Number(loanApplication.snapshotProcessingFeeRate),
+      snapshotGstRate: Number(loanApplication.snapshotGstRate),
+      snapshotInterestDays: interestDays,
+    });
     // ────────────────────────────────────────────────────────────────────────
+
+    // Freeze bank account at disbursal time
+    const bankAccount = loanApplication.employee.bankAccount;
 
     const { disbursal, repayment, repaymentCreated, transitioned } =
       await this.prisma.$transaction(async (tx) => {
         const claim = await tx.disbursal.updateMany({
           where: { id, status: 'PENDING' },
-          data: { status: 'DISBURSED', disbursedAt: new Date(), disbursedBy: actorUserId },
+          data: {
+            status: 'SUCCESS',
+            completedAt: new Date(),
+            disbursedBy: actorUserId,
+            disbursedAmount,
+            // Freeze bank account snapshot
+            disbursalAccountNumber: bankAccount?.accountNumber ?? null,
+            disbursalIfscCode: bankAccount?.ifscCode ?? null,
+            disbursalBankName: bankAccount?.bankName ?? null,
+            disbursalAccountHolderName: bankAccount?.accountHolderName ?? null,
+          },
         });
 
         if (claim.count === 0) {
@@ -284,7 +311,7 @@ export class DisbursalsService {
 
     await this.writeAuditLog({
       userId: actorUserId,
-      action: 'DISBURSAL_DISBURSED',
+      action: 'DISBURSAL_SUCCESS',
       entityType: 'DISBURSAL',
       entityId: disbursal!.id,
       oldValue: this.disbursalAuditValue(existingDisbursal),
@@ -296,7 +323,7 @@ export class DisbursalsService {
         to: loanApplication.employee.email,
         employeeName: loanApplication.employee.name,
         disbursedAmount,
-        disbursalDate: disbursal!.disbursedAt ?? new Date(),
+        disbursalDate: disbursal!.completedAt ?? new Date(),
         repaymentDate: repayment?.dueDate,
       });
     } catch (error) {
@@ -311,14 +338,14 @@ export class DisbursalsService {
     loanApplicationId: string;
     disbursedAmount: unknown;
     status: string;
-    disbursedAt?: Date | null;
+    completedAt?: Date | null;
   }) {
     return {
       id: disbursal.id,
       loanApplicationId: disbursal.loanApplicationId,
       disbursedAmount: Number(disbursal.disbursedAmount),
       status: disbursal.status,
-      disbursedAt: disbursal.disbursedAt?.toISOString() ?? null,
+      completedAt: disbursal.completedAt?.toISOString() ?? null,
     };
   }
 

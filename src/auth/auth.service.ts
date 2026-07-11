@@ -430,21 +430,13 @@ export class AuthService {
     newPassword: string,
     meta: RequestMeta = {},
   ) {
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-    });
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
 
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
 
-    const passwordMatches = await bcrypt.compare(
-      currentPassword,
-      user.password,
-    );
-
+    const passwordMatches = await bcrypt.compare(currentPassword, user.password);
     if (!passwordMatches) {
       throw new UnauthorizedException('Current password is incorrect');
     }
@@ -455,26 +447,21 @@ export class AuthService {
       );
     }
 
+    // Detect whether this is the forced first-time change (employer-set default password).
+    // We read the flag BEFORE the update so we know which path to take.
+    const isFirstChange = !user.passwordChanged;
+
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
+    // Step 1 — update password and invalidate all existing sessions.
     await this.prisma.$transaction([
       this.prisma.user.update({
-        where: {
-          id: user.id,
-        },
-        data: {
-          password: hashedPassword,
-          passwordChanged: true,
-        },
+        where: { id: user.id },
+        data: { password: hashedPassword, passwordChanged: true },
       }),
       this.prisma.userSession.updateMany({
-        where: {
-          userId: user.id,
-          isActive: true,
-        },
-        data: {
-          isActive: false,
-        },
+        where: { userId: user.id, isActive: true },
+        data: { isActive: false },
       }),
     ]);
 
@@ -484,9 +471,37 @@ export class AuthService {
       meta,
     });
 
+    // Step 2 — for first-time forced changes, create a brand-new session so the
+    // user lands directly in the app without having to sign in again.
+    if (isFirstChange) {
+      const authUser = await this.getAuthUser(userId);
+
+      const session = await this.prisma.userSession.create({
+        data: {
+          userId: user.id,
+          refreshToken: '',
+          deviceInfo: meta.deviceInfo,
+          ipAddress: meta.ipAddress,
+        },
+      });
+
+      const rawRefreshToken = this.buildRefreshToken(session.id);
+      await this.prisma.userSession.update({
+        where: { id: session.id },
+        data: { refreshToken: await bcrypt.hash(rawRefreshToken, 10) },
+      });
+
+      return {
+        success: true,
+        accessToken: await this.createAccessToken(authUser, session.id),
+        refreshToken: rawRefreshToken,
+      };
+    }
+
+    // Voluntary password change — all sessions invalidated, user must sign in again.
     return {
       success: true,
-      message: 'Password changed successfully. Please log in again.',
+      message: 'Password changed successfully. Please sign in again.',
     };
   }
 

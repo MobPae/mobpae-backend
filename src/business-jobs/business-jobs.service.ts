@@ -199,7 +199,7 @@ export class BusinessJobsService {
           lt: now,
         },
         status: {
-          notIn: ['PAID', 'OVERDUE'],
+          notIn: ['PAID', 'OVERDUE', 'DRAFT', 'CANCELLED'],
         },
       },
       include: {

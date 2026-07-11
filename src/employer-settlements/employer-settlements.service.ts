@@ -18,25 +18,6 @@ import {
 } from '../common/utils/pagination.util';
 import { EmployerSettlementListQueryDto } from './dto/employer-settlement-list-query.dto';
 
-/**
- * Derives the correct settlement status from persisted data.
- * Handles legacy rows where outstandingAmount=0 but status was never updated.
- *   - totalAmount = 0  → NO_DUES  (payroll ran, no advances due that month)
- *   - outstandingAmount = 0, totalAmount > 0  → PAID  (all dues collected)
- *   - otherwise → keep persisted status
- */
-function deriveStatus(s: {
-  status: string;
-  totalAmount: unknown;
-  outstandingAmount: unknown;
-}): string {
-  const total = Number(s.totalAmount);
-  const outstanding = Number(s.outstandingAmount);
-  if (total === 0) return 'NO_DUES';
-  if (outstanding === 0 && s.status !== 'PAID') return 'PAID';
-  return s.status;
-}
-
 @Injectable()
 export class EmployerSettlementsService {
   constructor(
@@ -47,12 +28,7 @@ export class EmployerSettlementsService {
   ) {}
 
   /**
-   * Admin
-   * View all employer settlements.
-   *
-   * Used by:
-   * - Admin Settlement Dashboard
-   * - Settlement Monitoring Screen
+   * Admin — list all employer settlements with pagination, search, sorting.
    */
   async findAll(query: EmployerSettlementListQueryDto = {}) {
     const { page, limit, skip, take } = getPagination(query);
@@ -62,12 +38,9 @@ export class EmployerSettlementsService {
       ...(hasSearch(query)
         ? {
             OR: [
-              { payrollMonth: containsSearch(query) },
-              { referenceNumber: containsSearch(query) },
+              { settlementNumber: containsSearch(query) },
               {
-                employer: {
-                  companyName: containsSearch(query),
-                },
+                employer: { companyName: containsSearch(query) },
               },
             ],
           }
@@ -77,13 +50,12 @@ export class EmployerSettlementsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.employerSettlement.findMany({
         where,
-        include: {
-          employer: true,
-        },
+        include: { employer: true },
         orderBy: getOrderBy(
           query,
           [
-            'payrollMonth',
+            'cycleDate',
+            'settlementNumber',
             'principalAmount',
             'totalAmount',
             'outstandingAmount',
@@ -96,40 +68,25 @@ export class EmployerSettlementsService {
         skip,
         take,
       }),
-      this.prisma.employerSettlement.count({
-        where,
-      }),
+      this.prisma.employerSettlement.count({ where }),
     ]);
 
-    const normalized = data.map((s) => ({ ...s, status: deriveStatus(s) as any }));
-    return paginate(normalized, total, page, limit);
+    return paginate(data, total, page, limit);
   }
 
   /**
-   * Admin
-   * View settlement details.
-   * Returns:
-   * - Settlement information
-   * - Employer information
+   * Admin — view settlement details including all line items.
    */
   async findOne(id: string) {
     const settlement = await this.prisma.employerSettlement.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
       include: {
         employer: true,
-        repayments: {
-          include: {
-            loanApplication: {
-              include: {
-                employee: true,
-              },
-            },
-          },
-          orderBy: {
-            dueDate: 'asc',
-          },
+        lineItems: {
+          orderBy: { employeeName: 'asc' },
+        },
+        payments: {
+          orderBy: { createdAt: 'desc' },
         },
       },
     });
@@ -138,47 +95,37 @@ export class EmployerSettlementsService {
       throw new NotFoundException('Settlement not found');
     }
 
-    return { ...settlement, status: deriveStatus(settlement) as any };
+    return settlement;
   }
 
   /**
-   * Employer
-   * View own settlements
+   * Employer — view own settlements.
    */
   async findByEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
+    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+    if (!employer) throw new BadRequestException('Employer not found');
+
+    return this.prisma.employerSettlement.findMany({
+      where: { employerId: employer.id },
+      include: {
+        lineItems: { select: { id: true, status: true } },
+        payments: { select: { id: true, amount: true, status: true } },
       },
+      orderBy: { cycleDate: 'desc' },
     });
-
-    if (!employer) {
-      throw new BadRequestException('Employer not found');
-    }
-
-    const settlements = await this.prisma.employerSettlement.findMany({
-      where: {
-        employerId: employer.id,
-      },
-      orderBy: {
-        payrollMonth: 'desc',
-      },
-    });
-
-    return settlements.map((s) => ({ ...s, status: deriveStatus(s) as any }));
   }
 
   /**
-   * Admin
-   * Mark settlement as paid
+   * Admin — record a payment against a settlement.
+   * When outstandingAmount reaches 0, mark as PAID and close linked repayments.
    */
   async markPaid(id: string, referenceNumber?: string, actorUserId?: string) {
     const settlement = await this.prisma.employerSettlement.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
       include: {
-        repayments: true,
+        lineItems: {
+          select: { repaymentId: true, loanApplicationId: true },
+        },
       },
     });
 
@@ -191,72 +138,44 @@ export class EmployerSettlementsService {
     }
 
     const paidDate = new Date();
-    const repaymentIds = settlement.repayments.map((repayment) => repayment.id);
-    const loanApplicationIds = settlement.repayments.map(
-      (repayment) => repayment.loanApplicationId,
-    );
+    const repaymentIds = settlement.lineItems.map((li) => li.repaymentId);
+    const loanApplicationIds = settlement.lineItems.map((li) => li.loanApplicationId);
 
     const { transition, updatedSettlement } = await this.prisma.$transaction(
       async (tx) => {
         const transition = await tx.employerSettlement.updateMany({
-          where: {
-            id,
-            status: {
-              not: 'PAID',
-            },
-          },
+          where: { id, status: { not: 'PAID' } },
           data: {
             status: 'PAID',
             paidDate,
             outstandingAmount: 0,
-            referenceNumber,
+            notes: referenceNumber
+              ? `Payment ref: ${referenceNumber}`
+              : undefined,
           },
         });
 
         if (transition.count > 0 && repaymentIds.length > 0) {
-          const salaryRequests = await tx.loanApplication.findMany({
-            where: {
-              id: {
-                in: loanApplicationIds,
-              },
-            },
-            select: {
-              id: true,
-              status: true,
-            },
+          const loanApps = await tx.loanApplication.findMany({
+            where: { id: { in: loanApplicationIds } },
+            select: { id: true, status: true },
           });
 
           await tx.repayment.updateMany({
-            where: {
-              id: {
-                in: repaymentIds,
-              },
-              status: {
-                not: 'PAID',
-              },
-            },
-            data: {
-              status: 'PAID',
-              paidDate,
-            },
+            where: { id: { in: repaymentIds }, status: { not: 'PAID' } },
+            data: { status: 'PAID', paidDate },
           });
 
           await tx.loanApplication.updateMany({
-            where: {
-              id: {
-                in: loanApplicationIds,
-              },
-            },
-            data: {
-              status: 'REPAID',
-            },
+            where: { id: { in: loanApplicationIds } },
+            data: { status: 'REPAID' },
           });
 
           await tx.loanApplicationHistory.createMany({
-            data: salaryRequests.map((request) => ({
-              loanApplicationId: request.id,
-              previousStatus: request.status,
-              newStatus: 'REPAID',
+            data: loanApps.map((app) => ({
+              loanApplicationId: app.id,
+              previousStatus: app.status,
+              newStatus: 'REPAID' as const,
               changedBy: actorUserId ?? null,
               actorRole: 'ADMIN',
               remarks: 'Employer settlement marked as paid',
@@ -268,10 +187,7 @@ export class EmployerSettlementsService {
           where: { id },
         });
 
-        return {
-          transition,
-          updatedSettlement,
-        };
+        return { transition, updatedSettlement };
       },
     );
 
@@ -294,13 +210,11 @@ export class EmployerSettlementsService {
         status: settlement.status,
         outstandingAmount: Number(settlement.outstandingAmount),
         paidDate: settlement.paidDate?.toISOString() ?? null,
-        referenceNumber: settlement.referenceNumber,
       },
       newValue: {
         status: updatedSettlement.status,
         outstandingAmount: Number(updatedSettlement.outstandingAmount),
         paidDate: updatedSettlement.paidDate?.toISOString() ?? null,
-        referenceNumber: updatedSettlement.referenceNumber,
         repaymentIds,
         loanApplicationIds,
       },
@@ -310,46 +224,27 @@ export class EmployerSettlementsService {
   }
 
   async getSummary(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (!employer) {
-      throw new BadRequestException('Employer not found');
-    }
+    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+    if (!employer) throw new BadRequestException('Employer not found');
 
     const settlements = await this.prisma.employerSettlement.findMany({
-      where: {
-        employerId: employer.id,
-      },
-      orderBy: {
-        dueDate: 'asc',
-      },
+      where: { employerId: employer.id },
+      orderBy: { dueDate: 'asc' },
     });
 
     const outstandingAmount = settlements
       .filter((s) => s.status !== 'PAID')
-      .reduce(
-        (sum, settlement) => sum + Number(settlement.outstandingAmount),
-        0,
-      );
+      .reduce((sum, s) => sum + Number(s.outstandingAmount), 0);
 
     const overdueAmount = settlements
       .filter((s) => s.status === 'OVERDUE')
-      .reduce(
-        (sum, settlement) => sum + Number(settlement.outstandingAmount),
-        0,
-      );
+      .reduce((sum, s) => sum + Number(s.outstandingAmount), 0);
 
     const pendingSettlements = settlements.filter(
-      (s) => s.status === 'PENDING',
+      (s) => s.status === 'GENERATED' || s.status === 'PARTIALLY_PAID',
     ).length;
 
-    const paidSettlements = settlements.filter(
-      (s) => s.status === 'PAID',
-    ).length;
+    const paidSettlements = settlements.filter((s) => s.status === 'PAID').length;
 
     const nextDueSettlement = settlements.find((s) => s.status !== 'PAID');
 
@@ -357,20 +252,14 @@ export class EmployerSettlementsService {
       await this.settingsPolicy.getEmployerSettlementPolicy();
 
     let daysRemaining: number | null = null;
-
     if (nextDueSettlement?.dueDate) {
       daysRemaining = Math.ceil(
-        (nextDueSettlement.dueDate.getTime() - Date.now()) /
-          (1000 * 60 * 60 * 24),
+        (nextDueSettlement.dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
       );
     }
 
     const estimatedLateFeeAmount = Number(
       (outstandingAmount * (lateFeePercentage / 100)).toFixed(2),
-    );
-
-    const amountPayableAfterGracePeriod = Number(
-      (outstandingAmount + estimatedLateFeeAmount).toFixed(2),
     );
 
     return {
@@ -383,21 +272,18 @@ export class EmployerSettlementsService {
       daysRemaining,
       lateFeePercentage,
       estimatedLateFeeAmount,
-      amountPayableAfterGracePeriod,
+      amountPayableAfterGracePeriod: Number(
+        (outstandingAmount + estimatedLateFeeAmount).toFixed(2),
+      ),
       riskStatus: employer.riskStatus,
     };
   }
 
   async updateEmployerRiskStatus(employerId: string) {
     const employer = await this.prisma.employer.findUnique({
-      where: {
-        id: employerId,
-      },
+      where: { id: employerId },
     });
-
-    if (!employer) {
-      throw new NotFoundException('Employer not found');
-    }
+    if (!employer) throw new NotFoundException('Employer not found');
 
     const { gracePeriodDays: graceDays } =
       await this.settingsPolicy.getEmployerSettlementPolicy();
@@ -407,9 +293,7 @@ export class EmployerSettlementsService {
     const settlements = await this.prisma.employerSettlement.findMany({
       where: {
         employerId,
-        status: {
-          in: ['PENDING', 'PARTIALLY_PAID', 'OVERDUE'],
-        },
+        status: { in: ['GENERATED', 'PARTIALLY_PAID', 'OVERDUE'] },
       },
     });
 
@@ -417,21 +301,14 @@ export class EmployerSettlementsService {
 
     for (const settlement of settlements) {
       const overdueDate = new Date(settlement.dueDate);
-
       overdueDate.setDate(overdueDate.getDate() + graceDays);
 
       if (today > overdueDate) {
         riskStatus = 'BLOCKED';
-
         await this.prisma.employerSettlement.update({
-          where: {
-            id: settlement.id,
-          },
-          data: {
-            status: 'OVERDUE',
-          },
+          where: { id: settlement.id },
+          data: { status: 'OVERDUE' },
         });
-
         break;
       }
 
@@ -441,39 +318,19 @@ export class EmployerSettlementsService {
     }
 
     await this.prisma.employer.update({
-      where: {
-        id: employerId,
-      },
-      data: {
-        riskStatus,
-      },
+      where: { id: employerId },
+      data: { riskStatus },
     });
 
-    return {
-      employerId,
-      riskStatus,
-    };
+    return { employerId, riskStatus };
   }
 
   async sendReport(id: string, actor?: { role?: string; userId?: string }) {
     const settlement = await this.prisma.employerSettlement.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
       include: {
         employer: true,
-        repayments: {
-          include: {
-            loanApplication: {
-              include: {
-                employee: true,
-              },
-            },
-          },
-          orderBy: {
-            dueDate: 'asc',
-          },
-        },
+        lineItems: { orderBy: { employeeName: 'asc' } },
       },
     });
 
@@ -494,17 +351,16 @@ export class EmployerSettlementsService {
       await this.emailService.sendSettlementReportEmail({
         to: settlement.employer.email,
         companyName: settlement.employer.companyName,
-        payrollMonth: settlement.payrollMonth,
+        settlementNumber: settlement.settlementNumber,
         outstandingAmount: Number(settlement.outstandingAmount),
         settlementId: settlement.id,
-        recoveries: settlement.repayments.map((repayment) => ({
-          employeeName: repayment.loanApplication.employee.name,
-          employeeCode: repayment.loanApplication.employee.employeeCode,
-          loanApplicationId: repayment.loanApplicationId,
-          principalAmount: Number(repayment.principalAmount),
-          interestAmount: Number(repayment.interestAmount),
-          totalAmount: Number(repayment.totalAmount),
-          dueDate: repayment.dueDate,
+        recoveries: settlement.lineItems.map((li) => ({
+          employeeName: li.employeeName,
+          employeeCode: li.employeeCode,
+          loanApplicationNumber: li.loanApplicationNumber,
+          principalAmount: Number(li.principalAmount),
+          interestAmount: Number(li.interestAmount),
+          totalAmount: Number(li.totalDeductionAmount),
         })),
       });
     } catch (error) {

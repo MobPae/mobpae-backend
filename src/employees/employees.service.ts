@@ -1303,48 +1303,26 @@ export class EmployeesService {
       },
     });
 
-    // Recent activity from peers — last 5 disbursed/repaid requests
-    const recentRequests = await this.prisma.loanApplication.findMany({
+    // Collect up to 5 distinct employees with active advances — initials only for privacy
+    const activeEmployees = await this.prisma.employee.findMany({
       where: {
         employerId,
-        employeeId: { not: myId },
-        status: { in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'] },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 5,
-      select: {
-        status: true,
-        updatedAt: true,
-        employee: {
-          select: { name: true },
+        id: { not: myId },
+        loanApplications: {
+          some: {
+            status: { in: ['DISBURSED', 'REPAYMENT_SCHEDULED', 'REPAID'] },
+          },
         },
       },
+      select: { name: true },
+      take: 5,
     });
 
-    const actionLabel: Record<string, string> = {
-      DISBURSED: 'received their first advance',
-      REPAYMENT_SCHEDULED: 'is on their repayment plan',
-      REPAID: 'completed their repayment',
-    };
-
-    const recentActivity = recentRequests.map((r) => {
-      const parts = (r.employee.name ?? '').trim().split(/\s+/);
-      const firstName = parts[0] ?? 'A colleague';
-      const lastInitial =
-        parts.length > 1 ? `${parts[parts.length - 1][0]}.` : '';
-      const displayName = lastInitial
-        ? `${firstName} ${lastInitial}`
-        : firstName;
-
-      const daysAgo = Math.floor(
-        (Date.now() - new Date(r.updatedAt).getTime()) / 86_400_000,
-      );
-
-      return {
-        displayName,
-        action: actionLabel[r.status] ?? 'used MobPae',
-        daysAgo,
-      };
+    const initials = activeEmployees.map((e) => {
+      const parts = (e.name ?? '').trim().split(/\s+/);
+      const first = parts[0]?.[0]?.toUpperCase() ?? '?';
+      const second = parts[1]?.[0]?.toUpperCase() ?? '';
+      return second ? `${first}${second}` : first;
     });
 
     return {
@@ -1354,7 +1332,7 @@ export class EmployeesService {
         totalEmployees > 0
           ? Math.round((activeUsers / totalEmployees) * 100)
           : 0,
-      recentActivity,
+      initials,
     };
   }
 

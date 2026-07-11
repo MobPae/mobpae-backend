@@ -1,16 +1,19 @@
 /**
  * Defines the type of document being uploaded.
- * Each type maps to a specific folder path in R2 (and local disk).
+ * Each type maps to a specific folder path in R2.
+ *
+ * All uploads use a deterministic key ("document.{ext}") so re-uploading
+ * the same document type overwrites the existing R2 object — no orphan files.
  *
  * Folder structure in R2:
- *   employees/{userId}/kyc/aadhar/
- *   employees/{userId}/kyc/pan/
- *   employees/{userId}/kyc/salary-slip/
- *   employees/{userId}/kyc/other/
- *   employees/{userId}/selfie/
- *   employees/{userId}/profile/
- *   membership/{userId}/screenshots/
- *   legal/                            ← manually uploaded static files, not via this enum
+ *   employees/{userId}/kyc/aadhar/document.{ext}
+ *   employees/{userId}/kyc/pan/document.{ext}
+ *   employees/{userId}/kyc/salary-slip/document.{ext}
+ *   employees/{userId}/kyc/other/document.{ext}
+ *   employees/{userId}/selfie/document.{ext}
+ *   employees/{userId}/profile/document.{ext}
+ *
+ * Note: membership payments are handled by Razorpay — no screenshot upload needed.
  */
 export enum UploadType {
   KYC_AADHAR = 'kyc_aadhar',
@@ -19,7 +22,6 @@ export enum UploadType {
   KYC_OTHER = 'kyc_other',
   SELFIE = 'selfie',
   PROFILE_PHOTO = 'profile_photo',
-  MEMBERSHIP_SCREENSHOT = 'membership_screenshot',
 }
 
 /** Maps an UploadType to its R2 subfolder path segment. */
@@ -30,5 +32,4 @@ export const UPLOAD_TYPE_FOLDER: Record<UploadType, string> = {
   [UploadType.KYC_OTHER]: 'kyc/other',
   [UploadType.SELFIE]: 'selfie',
   [UploadType.PROFILE_PHOTO]: 'profile',
-  [UploadType.MEMBERSHIP_SCREENSHOT]: 'membership/screenshots',
 };

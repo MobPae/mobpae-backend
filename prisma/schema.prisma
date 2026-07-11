@@ -1,5 +1,5 @@
 // ============================================================
-// MobPae Backend — Prisma Schema v3.1
+// MobPae Backend — Prisma Schema v4.0
 // Product-Based Lending Platform
 // ============================================================
 
@@ -47,8 +47,10 @@ model Employer {
   contactPerson          String
   email                  String                  @unique
   phone                  String
+  // Payroll calendar (day-of-month integers, e.g. payrollDate=28, cutoffDate=21)
   payrollDate            Int
   payrollCutoffDate      Int
+  cycleType              PayrollCycleType        @default(MONTHLY)
   status                 EmployerStatus          @default(PENDING)
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
@@ -125,6 +127,7 @@ model EmployeeBankAccount {
 
 // ============================================================
 // LOAN PRODUCT CATALOG
+// Metadata only — business rules live in LoanProductConfig.
 // Each product type (SA, PL, etc.) has exactly one row here.
 // ============================================================
 
@@ -133,7 +136,10 @@ model LoanProduct {
   productType      LoanProductType         @unique
   displayName      String
   description      String?
+  icon             String?                 // Icon name / URL for employee app
+  displayOrder     Int                     @default(0)
   isActive         Boolean                 @default(true)
+  comingSoon       Boolean                 @default(false)
   launchDate       DateTime?
   retirementDate   DateTime?
   createdAt        DateTime                @default(now())
@@ -153,17 +159,17 @@ model LoanProduct {
 // ============================================================
 
 model LoanProductConfig {
-  id                String   @id @default(uuid())
+  id                String    @id @default(uuid())
   productId         String
   versionNumber     Int
   versionName       String?
-  isActive          Boolean  @default(false)
+  isActive          Boolean   @default(false)
   effectiveFrom     DateTime
   effectiveTo       DateTime?
 
   // Self-referential: points to the version this supersedes.
   // @unique ensures at most one successor per version.
-  previousVersionId String?  @unique
+  previousVersionId String?   @unique
 
   // EligibilityRules — parsed by EligibilityService
   // Shape: { maximumAdvancePercentage, minimumAdvanceAmount,
@@ -183,7 +189,7 @@ model LoanProductConfig {
   operationalRules  Json
 
   createdBy         String?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   product          LoanProduct        @relation(fields: [productId], references: [id])
   previousVersion  LoanProductConfig? @relation("ConfigVersionChain", fields: [previousVersionId], references: [id])
@@ -196,23 +202,24 @@ model LoanProductConfig {
 }
 
 // ============================================================
-// EMPLOYER PRODUCT CONFIG (per-employer overrides)
-// Controls which products an employer enables and whether
-// they can override the advance percentage cap.
+// EMPLOYER PRODUCT CONFIG (per-employer overrides + feature flags)
+// Controls which products an employer enables and any overrides.
 // ============================================================
 
 model EmployerProductConfig {
-  id                               String      @id @default(uuid())
-  employerId                       String
-  productId                        String
-  // When set, overrides the platform cap with an absolute ₹ amount per employer (same for all employees)
+  id                              String      @id @default(uuid())
+  employerId                      String
+  productId                       String
+  // Absolute ₹ cap (set by admin for special cases)
   maximumAdvanceAmountOverride     Int?
+  // % of salary override set by employer (e.g. 20 = 20%). Must be ≤ hardCeilingPercentage.
+  maximumAdvancePercentageOverride Decimal?    @db.Decimal(5, 2)
   requiresEmployerApproval         Boolean     @default(true)
   isEnabled                        Boolean     @default(true)
-  createdAt                        DateTime    @default(now())
-  updatedAt                        DateTime    @updatedAt
-  employer                         Employer    @relation(fields: [employerId], references: [id])
-  product                          LoanProduct @relation(fields: [productId], references: [id])
+  createdAt                     DateTime    @default(now())
+  updatedAt                     DateTime    @updatedAt
+  employer                      Employer    @relation(fields: [employerId], references: [id])
+  product                       LoanProduct @relation(fields: [productId], references: [id])
 
   @@unique([employerId, productId])
   @@map("employer_product_configs")
@@ -237,6 +244,28 @@ model LoanLimit {
 }
 
 // ============================================================
+// FUNDING PARTNER
+// NULL fundingPartnerId on LoanApplication = MobPae self-funded.
+// Add NBFC / bank partners here when ready.
+// ============================================================
+
+model FundingPartner {
+  id               String               @id @default(uuid())
+  name             String
+  code             String               @unique  // e.g. MOBPAE_SELF, HDFC_NBFC
+  type             FundingPartnerType
+  status           FundingPartnerStatus @default(ACTIVE)
+  contactEmail     String?
+  contactPhone     String?
+  agreementDate    DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  loanApplications LoanApplication[]
+
+  @@map("funding_partners")
+}
+
+// ============================================================
 // LOAN APPLICATION (replaces SalaryRequest)
 // ============================================================
 
@@ -244,14 +273,18 @@ model LoanApplication {
   id                String @id @default(uuid())
 
   // Human-readable reference: MP-SA-2026-00001234
-  // Populated from PostgreSQL sequence `loan_application_seq` in service layer
   applicationNumber String @unique
 
-  employeeId String
-  employerId String
-  productId  String
+  employeeId       String
+  employerId       String
+  productId        String
   // Frozen config version at submission time — never updated
-  configId   String
+  configId         String
+  // Version number copied from LoanProductConfig for easy reporting
+  configVersion    Int?
+
+  // Optional funding partner (NULL = MobPae self-funded)
+  fundingPartnerId String?
 
   // Three distinct amounts representing three decision points
   requestedAmount        Decimal  @db.Decimal(12, 2)
@@ -268,18 +301,21 @@ model LoanApplication {
 
   // ── SNAPSHOT (frozen at submission time) ──────────────────
   // Rates from active LoanProductConfig.pricingRules at submission
-  snapshotAnnualInterestRate     Decimal @db.Decimal(5, 2)
+  snapshotAnnualInterestRate        Decimal                   @db.Decimal(5, 2)
+  snapshotInterestCalculationMethod InterestCalculationMethod @default(SIMPLE_DAILY)
   // Absolute ₹ threshold: min(salary × platformAdvancePercentage%, platformMaxAdvanceAmount)
-  snapshotInterestFreeThreshold  Decimal @default(0) @db.Decimal(12, 2)
-  snapshotProcessingFeeRate      Decimal @default(0) @db.Decimal(5, 4)
-  snapshotGstRate                Decimal @default(0) @db.Decimal(5, 4)
+  snapshotInterestFreeThreshold     Decimal                   @default(0) @db.Decimal(12, 2)
+  snapshotProcessingFeeRate         Decimal                   @default(0) @db.Decimal(5, 4)
+  snapshotGstRate                   Decimal                   @default(0) @db.Decimal(5, 4)
   // Effective advance % used (after employer override is applied)
-  snapshotMaxAdvancePercentage   Decimal @db.Decimal(5, 2)
+  snapshotMaxAdvancePercentage      Decimal                   @db.Decimal(5, 2)
   // Employee facts at the moment of submission
-  snapshotSalaryInHand           Decimal @db.Decimal(12, 2)
+  snapshotSalaryInHand              Decimal                   @db.Decimal(12, 2)
   // Pre-computed from employer's payroll dates — deterministic, frozen here
-  snapshotInterestDays           Int
-  snapshotRecoveryDate           DateTime
+  snapshotInterestDays              Int
+  snapshotRecoveryDate              DateTime
+  // First day of the payroll cycle month this advance will be recovered in (e.g. 2026-07-01)
+  snapshotPayrollCycle              DateTime?
   // ─────────────────────────────────────────────────────────
 
   // Approval tracking
@@ -295,13 +331,14 @@ model LoanApplication {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  employee  Employee               @relation(fields: [employeeId], references: [id])
-  employer  Employer               @relation(fields: [employerId], references: [id])
-  product   LoanProduct            @relation(fields: [productId], references: [id])
-  config    LoanProductConfig      @relation(fields: [configId], references: [id])
-  history   LoanApplicationHistory[]
-  disbursal Disbursal?
-  repayment Repayment?
+  employee       Employee               @relation(fields: [employeeId], references: [id])
+  employer       Employer               @relation(fields: [employerId], references: [id])
+  product        LoanProduct            @relation(fields: [productId], references: [id])
+  config         LoanProductConfig      @relation(fields: [configId], references: [id])
+  fundingPartner FundingPartner?        @relation(fields: [fundingPartnerId], references: [id])
+  history        LoanApplicationHistory[]
+  disbursal      Disbursal?
+  repayment      Repayment?
 
   @@index([employeeId])
   @@index([employerId])
@@ -312,7 +349,7 @@ model LoanApplication {
 }
 
 // ============================================================
-// LOAN APPLICATION HISTORY (replaces SalaryRequestHistory)
+// LOAN APPLICATION HISTORY
 // ============================================================
 
 model LoanApplicationHistory {
@@ -333,38 +370,68 @@ model LoanApplicationHistory {
 
 // ============================================================
 // DISBURSAL
+// Tracks the payout lifecycle from initiation to completion.
+// Bank account details are frozen here at disbursal time so
+// we always know where money was sent, even if employee later
+// changes their bank account.
 // ============================================================
 
 model Disbursal {
-  id                String          @id @default(uuid())
-  loanApplicationId String          @unique
-  disbursedAmount   Decimal         @db.Decimal(12, 2)
-  fundingSource     String?         // MOBPAE | EMPLOYER | PARTNER
-  disbursedBy       String?
-  disbursedAt       DateTime?
-  status            DisbursalStatus @default(PENDING)
-  remarks           String?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  loanApplication   LoanApplication @relation(fields: [loanApplicationId], references: [id])
+  id                String  @id @default(uuid())
+  loanApplicationId String  @unique
 
+  // Three-stage amounts
+  requestedAmount   Decimal  @db.Decimal(12, 2)
+  approvedAmount    Decimal  @db.Decimal(12, 2)
+  disbursedAmount   Decimal? @db.Decimal(12, 2)
+
+  // Payment provider details
+  paymentProvider     DisbursalProvider?
+  providerReference   String?            // Payout ID from provider (e.g. Razorpay pout_xxx)
+  providerStatus      String?            // Raw status string from provider
+  providerRawResponse Json?              // Full provider response for debugging
+
+  // Bank account snapshot — frozen at disbursal time
+  disbursalAccountNumber      String?
+  disbursalIfscCode           String?
+  disbursalBankName           String?
+  disbursalAccountHolderName  String?
+
+  // Lifecycle
+  status        DisbursalStatus @default(PENDING)
+  failureReason String?
+  retryCount    Int             @default(0)
+  initiatedAt   DateTime?
+  completedAt   DateTime?
+
+  // People
+  initiatedBy String?  // Admin who triggered the payout
+  disbursedBy String?  // Can be system or different admin on retry
+
+  remarks String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  loanApplication LoanApplication @relation(fields: [loanApplicationId], references: [id])
+
+  @@index([status])
   @@map("disbursals")
 }
 
 // ============================================================
 // REPAYMENT
-// Amounts are computed at disbursal time using snapshot rates
-// + actual disbursedAmount. The snapshot is the source of truth
-// for rates; Repayment is the source of truth for amounts.
+// Amounts are computed at disbursal time using snapshot rates.
+// Linked to SettlementLineItem (not directly to EmployerSettlement)
+// once included in a settlement.
 // ============================================================
 
 model Repayment {
-  id                String              @id @default(uuid())
-  loanApplicationId String              @unique
-  settlementId      String?
+  id                String          @id @default(uuid())
+  loanApplicationId String          @unique
   dueDate           DateTime
   paidDate          DateTime?
-  status            RepaymentStatus     @default(SCHEDULED)
+  status            RepaymentStatus @default(SCHEDULED)
   remarks           String?
 
   // Final computed amounts (calculated at disbursal with snapshot rates)
@@ -376,20 +443,135 @@ model Repayment {
   gstAmount             Decimal @default(0) @db.Decimal(12, 2)
   totalAmount           Decimal @db.Decimal(12, 2)
 
-  // Frozen rates copied from snapshot (makes repayment self-contained for display)
+  // Frozen rates (makes repayment self-contained for display)
   interestRate Decimal @default(36) @db.Decimal(5, 2)
   interestDays Int     @default(0)
 
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  loanApplication LoanApplication     @relation(fields: [loanApplicationId], references: [id])
-  settlement      EmployerSettlement? @relation(fields: [settlementId], references: [id])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  loanApplication LoanApplication @relation(fields: [loanApplicationId], references: [id])
 
-  @@index([settlementId])
+  // Reverse relation — FK lives on SettlementLineItem
+  settlementLineItem SettlementLineItem?
+
   @@index([status])
   @@index([dueDate])
   @@index([status, dueDate])
   @@map("repayments")
+}
+
+// ============================================================
+// EMPLOYER SETTLEMENT
+// One settlement per employer per payroll cycle.
+// All amounts are frozen at generation time (snapshot pattern).
+// ============================================================
+
+model EmployerSettlement {
+  id               String                   @id @default(uuid())
+  employerId       String
+  // Human-readable: MPS-LTIM-202607-0001
+  settlementNumber String                   @unique
+  // First day of the payroll recovery month (e.g. 2026-07-01)
+  cycleDate        DateTime
+
+  // Snapshot amounts — frozen at generation, never recalculated
+  principalAmount     Decimal @db.Decimal(12, 2)
+  interestAmount      Decimal @default(0) @db.Decimal(12, 2)
+  processingFeeAmount Decimal @default(0) @db.Decimal(12, 2)
+  gstAmount           Decimal @default(0) @db.Decimal(12, 2)
+  lateFeeAmount       Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount         Decimal @db.Decimal(12, 2)
+  // Decremented as payments are received
+  outstandingAmount   Decimal @db.Decimal(12, 2)
+  // Number of employees included in this settlement
+  employeeCount       Int     @default(0)
+
+  // Generation metadata
+  generatedAt DateTime?
+  generatedBy String?
+
+  dueDate  DateTime
+  paidDate DateTime?
+  status   EmployerSettlementStatus @default(DRAFT)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employer  Employer              @relation(fields: [employerId], references: [id])
+  lineItems SettlementLineItem[]
+  payments  SettlementPayment[]
+
+  @@unique([employerId, cycleDate])
+  @@index([employerId])
+  @@index([status])
+  @@map("employer_settlements")
+}
+
+// ============================================================
+// SETTLEMENT LINE ITEM
+// Invoice-line pattern: one row per employee per settlement.
+// All fields are frozen snapshots — never recalculated.
+// ============================================================
+
+model SettlementLineItem {
+  id                    String @id @default(uuid())
+  settlementId          String
+  repaymentId           String @unique  // 1-to-1: each repayment in at most one settlement
+  loanApplicationId     String
+  employeeId            String
+
+  // Frozen employee / application identifiers for display & export
+  employeeCode          String
+  employeeName          String
+  loanApplicationNumber String
+
+  // Frozen amounts
+  principalAmount      Decimal @db.Decimal(12, 2)
+  interestAmount       Decimal @default(0) @db.Decimal(12, 2)
+  processingFee        Decimal @default(0) @db.Decimal(12, 2)
+  gstAmount            Decimal @default(0) @db.Decimal(12, 2)
+  totalDeductionAmount Decimal @db.Decimal(12, 2)
+
+  status            SettlementLineItemStatus @default(INCLUDED)
+  remarks           String?
+  snapshotCreatedAt DateTime                 @default(now())
+
+  settlement EmployerSettlement @relation(fields: [settlementId], references: [id])
+  repayment  Repayment          @relation(fields: [repaymentId], references: [id])
+
+  @@index([settlementId])
+  @@map("settlement_line_items")
+}
+
+// ============================================================
+// SETTLEMENT PAYMENT
+// Tracks actual money received against a settlement.
+// One settlement can have multiple payments (partial payments).
+// ============================================================
+
+model SettlementPayment {
+  id               String                  @id @default(uuid())
+  settlementId     String
+  amount           Decimal                 @db.Decimal(12, 2)
+  paymentMethod    SettlementPaymentMethod
+  // Internal reference (MobPae-assigned)
+  paymentReference String?
+  // Bank UTR / NEFT reference from employer
+  bankReference    String?
+  transactionDate  DateTime
+  receivedDate     DateTime?
+  verifiedBy       String?
+  verifiedAt       DateTime?
+  status           SettlementPaymentStatus @default(PENDING)
+  remarks          String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  settlement EmployerSettlement @relation(fields: [settlementId], references: [id])
+
+  @@index([settlementId])
+  @@map("settlement_payments")
 }
 
 // ============================================================
@@ -411,7 +593,7 @@ model Membership {
   discountAmount Decimal?         @db.Decimal(12, 2) @map("discount_amount")
   // Payment link — null for admin-created memberships
   paymentOrderId String?          @unique @map("payment_order_id")
-  // Admin override fields (manual activation by admin if needed)
+  // Admin override fields
   verifiedBy     String?          @map("verified_by")
   verifiedAt     DateTime?        @map("verified_at")
   remarks        String?
@@ -468,35 +650,6 @@ model MembershipCoupon {
 }
 
 // ============================================================
-// EMPLOYER SETTLEMENT
-// ============================================================
-
-model EmployerSettlement {
-  id                String                   @id @default(uuid())
-  employerId        String
-  payrollMonth      String
-  principalAmount   Decimal                  @db.Decimal(12, 2)
-  interestAmount    Decimal                  @default(0) @db.Decimal(12, 2)
-  lateFeeAmount     Decimal                  @default(0) @db.Decimal(12, 2)
-  totalAmount       Decimal                  @db.Decimal(12, 2)
-  outstandingAmount Decimal                  @db.Decimal(12, 2)
-  dueDate           DateTime
-  paidDate          DateTime?
-  status            EmployerSettlementStatus @default(PENDING)
-  referenceNumber   String?
-  notes             String?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
-  employer          Employer                 @relation(fields: [employerId], references: [id])
-  repayments        Repayment[]
-
-  @@unique([employerId, payrollMonth])
-  @@index([employerId])
-  @@index([status])
-  @@map("employer_settlements")
-}
-
-// ============================================================
 // EMPLOYER ENQUIRY
 // ============================================================
 
@@ -524,16 +677,18 @@ model EmployerEnquiry {
 // ============================================================
 
 model KycDocument {
-  id           String          @id @default(uuid())
-  employeeId   String
-  documentType KycDocumentType
-  filePath     String
-  status       KycStatus       @default(PENDING)
-  verifiedBy   String?
-  verifiedAt   DateTime?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  employee     Employee        @relation(fields: [employeeId], references: [id])
+  id               String          @id @default(uuid())
+  employeeId       String
+  documentType     KycDocumentType
+  filePath         String
+  originalFileName String?
+  status           KycStatus       @default(PENDING)
+  rejectionNote    String?
+  verifiedBy       String?
+  verifiedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  employee         Employee        @relation(fields: [employeeId], references: [id])
 
   @@unique([employeeId, documentType])
   @@index([status])
@@ -542,8 +697,7 @@ model KycDocument {
 }
 
 // ============================================================
-// SETTINGS (global platform settings only — OTP, versioning,
-// notifications, maintenance mode. No lending rules here.)
+// SETTINGS
 // ============================================================
 
 model Setting {
@@ -658,6 +812,57 @@ model PasswordResetToken {
 }
 
 // ============================================================
+// PAYMENTS (Razorpay — membership collection)
+// ============================================================
+
+model PaymentOrder {
+  id              String             @id @default(uuid())
+  provider        PaymentProvider    @default(RAZORPAY)
+  providerOrderId String             @unique @map("provider_order_id")
+  amount          Int                // in paise (INR × 100)
+  currency        String             @default("INR")
+  employeeId      String             @map("employee_id")
+  planKey         String             @map("plan_key")
+  couponCode      String?            @map("coupon_code")
+  discountAmount  Int                @default(0) @map("discount_amount")
+  status          PaymentOrderStatus @default(CREATED)
+  notes           Json?
+  expiresAt       DateTime           @map("expires_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  employee        Employee           @relation(fields: [employeeId], references: [id])
+  plan            MembershipPlanConfig @relation(fields: [planKey], references: [planKey])
+  membership      Membership?
+  events          PaymentEvent[]
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([providerOrderId])
+  @@map("payment_orders")
+}
+
+model PaymentEvent {
+  id                  String       @id @default(uuid())
+  orderId             String       @map("order_id")
+  providerPaymentId   String?      @map("provider_payment_id")
+  providerSignature   String?      @map("provider_signature")
+  eventType           String       @map("event_type")
+  source              String
+  status              String
+  method              String?
+  errorCode           String?      @map("error_code")
+  errorDescription    String?      @map("error_description")
+  rawPayload          Json?        @map("raw_payload")
+  capturedAt          DateTime?    @map("captured_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  order               PaymentOrder @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([providerPaymentId])
+  @@map("payment_events")
+}
+
+// ============================================================
 // ENUMS
 // ============================================================
 
@@ -684,6 +889,12 @@ enum SelfieStatus {
   PENDING
   VERIFIED
   REJECTED
+}
+
+enum PayrollCycleType {
+  MONTHLY
+  BIWEEKLY
+  WEEKLY
 }
 
 // Product type codes — short, immutable, used in applicationNumber prefix
@@ -722,10 +933,27 @@ enum LoanApplicationStatus {
   EXPIRED
 }
 
+enum InterestCalculationMethod {
+  SIMPLE_DAILY
+  SIMPLE_MONTHLY
+  REDUCING
+  FLAT
+}
+
+enum DisbursalProvider {
+  RAZORPAY_PAYOUT
+  CASHFREE
+  BANK_TRANSFER
+  NACH
+  INTERNAL
+}
+
 enum DisbursalStatus {
   PENDING
-  DISBURSED
+  PROCESSING
+  SUCCESS
   FAILED
+  CANCELLED
 }
 
 enum RepaymentStatus {
@@ -735,11 +963,44 @@ enum RepaymentStatus {
 }
 
 enum EmployerSettlementStatus {
-  NO_DUES
-  PENDING
+  DRAFT
+  GENERATED
   PARTIALLY_PAID
   PAID
   OVERDUE
+  CANCELLED
+}
+
+enum SettlementLineItemStatus {
+  INCLUDED
+  EXCLUDED
+}
+
+enum SettlementPaymentMethod {
+  NEFT
+  RTGS
+  IMPS
+  UPI
+  NACH
+  CHEQUE
+  INTERNAL
+}
+
+enum SettlementPaymentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum FundingPartnerType {
+  SELF
+  NBFC
+  BANK
+}
+
+enum FundingPartnerStatus {
+  ACTIVE
+  INACTIVE
 }
 
 enum EmployerRiskStatus {
@@ -756,81 +1017,17 @@ enum MembershipStatus {
   CANCELLED
 }
 
-// ============================================================
-// PAYMENTS
-// ============================================================
-
 enum PaymentProvider {
   RAZORPAY
 }
 
 enum PaymentOrderStatus {
-  CREATED   // Order created at provider, awaiting payment
-  ATTEMPTED // User opened the modal and attempted payment
-  CAPTURED  // Payment captured (money received) — membership activated
-  FAILED    // Payment failed after attempt
-  EXPIRED   // Order expired before payment (15-minute window)
-  REFUNDED  // Payment refunded
-}
-
-model PaymentOrder {
-  id              String             @id @default(uuid())
-  provider        PaymentProvider    @default(RAZORPAY)
-  providerOrderId String             @unique @map("provider_order_id")
-  // Amount in smallest currency unit (paise for INR)
-  amount          Int                // in paise (INR × 100)
-  currency        String             @default("INR")
-  // Who and what
-  employeeId      String             @map("employee_id")
-  planKey         String             @map("plan_key")
-  // Coupon applied at time of order creation
-  couponCode      String?            @map("coupon_code")
-  discountAmount  Int                @default(0) @map("discount_amount") // in paise
-  // Status
-  status          PaymentOrderStatus @default(CREATED)
-  // Result
-  notes           Json?
-  expiresAt       DateTime           @map("expires_at")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
-  // Relations
-  employee        Employee           @relation(fields: [employeeId], references: [id])
-  plan            MembershipPlanConfig @relation(fields: [planKey], references: [planKey])
-  membership      Membership?
-  events          PaymentEvent[]
-
-  @@index([employeeId])
-  @@index([status])
-  @@index([providerOrderId])
-  @@map("payment_orders")
-}
-
-model PaymentEvent {
-  id                  String       @id @default(uuid())
-  orderId             String       @map("order_id")
-  // Provider payment IDs
-  providerPaymentId   String?      @map("provider_payment_id")
-  providerSignature   String?      @map("provider_signature") // razorpay_signature (audit trail)
-  // Event metadata
-  eventType           String       @map("event_type") // payment.captured, payment.failed, order.paid, etc.
-  source              String       // WEBHOOK | CLIENT | ADMIN
-  status              String       // captured, failed, refunded, etc.
-  // Payment method info
-  method              String?      // upi, card, netbanking, wallet
-  // Error info (for failed events)
-  errorCode           String?      @map("error_code")
-  errorDescription    String?      @map("error_description")
-  // Full raw payload from Razorpay (invaluable for debugging)
-  rawPayload          Json?        @map("raw_payload")
-  // Timestamps
-  capturedAt          DateTime?    @map("captured_at")
-  createdAt           DateTime     @default(now()) @map("created_at")
-  // Relations
-  order               PaymentOrder @relation(fields: [orderId], references: [id])
-
-  @@index([orderId])
-  @@index([providerPaymentId])
-  @@map("payment_events")
+  CREATED
+  ATTEMPTED
+  CAPTURED
+  FAILED
+  EXPIRED
+  REFUNDED
 }
 
 enum KycStatus {

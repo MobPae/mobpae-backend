@@ -6,7 +6,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadType, UPLOAD_TYPE_FOLDER } from './upload-type.enum';
-import { randomBytes } from 'crypto';
 import * as path from 'path';
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -34,10 +33,15 @@ export class FilesService {
    * Upload a file to R2 and return the object key.
    * The key (not a URL) is what gets stored in the database.
    *
-   * Key format examples:
-   *   employees/{userId}/kyc/aadhar/{timestamp}-{random}.pdf
-   *   employees/{userId}/selfie/{timestamp}-{random}.jpg
-   *   membership/{userId}/screenshots/{timestamp}-{random}.jpg
+   * All uploads use a deterministic key ("document.{ext}") so re-uploading
+   * the same document type naturally overwrites the existing R2 object.
+   * No orphan files, no manual cleanup needed.
+   *
+   * Key format: employees/{userId}/{subfolder}/document.{ext}
+   * Examples:
+   *   employees/{userId}/kyc/pan/document.pdf
+   *   employees/{userId}/selfie/document.jpg
+   *   employees/{userId}/profile/document.png
    */
   async saveUploadedFile(
     file: any,
@@ -51,14 +55,8 @@ export class FilesService {
     const safeUserId = userId.replace(/[^a-zA-Z0-9-]/g, '');
     const subfolder = UPLOAD_TYPE_FOLDER[type];
     const ext = path.extname(file.originalname ?? '') || this.mimeToExt(file.mimetype);
-    const filename = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`;
+    const key = `employees/${safeUserId}/${subfolder}/document${ext}`;
 
-    const folder =
-      type === UploadType.MEMBERSHIP_SCREENSHOT
-        ? `membership/${safeUserId}/screenshots`
-        : `employees/${safeUserId}/${subfolder}`;
-
-    const key = `${folder}/${filename}`;
     await this.storage.uploadFile(key, file.buffer, file.mimetype);
 
     return { key, mimeType: file.mimetype, size: file.size };

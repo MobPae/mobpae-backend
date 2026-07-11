@@ -90,7 +90,12 @@ export class KycDocumentsController {
   @Post(':id/reject')
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Reject a KYC document' })
-  reject(@Param('id') id: string, @Req() req: any) {
-    return this.kycDocumentsService.reject(id, req.user.userId);
+  reject(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Body() body: { note?: string } = {},
+  ) {
+    return this.kycDocumentsService.reject(id, req.user.userId, body.note);
   }
+
 }
