@@ -16,6 +16,7 @@ import {
   paginate,
 } from '../common/utils/pagination.util';
 import { EmployerListQueryDto } from './dto/employer-list-query.dto';
+import { normalizeEmail } from '../common/utils/email.util';
 
 @Injectable()
 export class EmployersService {
@@ -142,10 +143,6 @@ export class EmployersService {
     return {
       ...updatedEmployer,
       emailDelivered,
-      temporaryPassword:
-        activationPassword && emailDelivered === false
-          ? activationPassword
-          : null,
     };
   }
 
@@ -202,7 +199,7 @@ export class EmployersService {
       data: {
         companyName: dto.companyName,
         contactPerson: dto.contactPerson,
-        email: dto.email,
+        email: normalizeEmail(dto.email),
         phone: dto.phone,
       },
     });
@@ -215,11 +212,16 @@ export class EmployersService {
       throw new BadRequestException('Email is required');
     }
 
+    const normalizedDto = {
+      ...dto,
+      email: normalizeEmail(dto.email),
+    };
+
     const initialTemporaryPassword = this.generateTemporaryPassword();
 
     const hashedPassword = await bcrypt.hash(initialTemporaryPassword, 10);
 
-    const { user, employer, temporaryPassword, created } =
+    const { user, employer } =
       await this.prisma.$transaction(async (tx) => {
         let enquiry: Awaited<
           ReturnType<typeof tx.employerEnquiry.findUnique>
@@ -247,15 +249,13 @@ export class EmployersService {
               return {
                 user: null,
                 employer: linkedEmployer,
-                temporaryPassword: null,
-                created: false,
               };
             }
           }
 
           const existingEmployer = await tx.employer.findUnique({
             where: {
-              email: enquiry.email,
+              email: normalizeEmail(enquiry.email),
             },
           });
 
@@ -290,15 +290,13 @@ export class EmployersService {
             return {
               user: null,
               employer: existingEmployer,
-              temporaryPassword: null,
-              created: false,
             };
           }
         }
 
         const existingUser = await tx.user.findUnique({
           where: {
-            email: dto.email,
+            email: normalizedDto.email,
           },
         });
 
@@ -311,7 +309,7 @@ export class EmployersService {
          */
         const user = await tx.user.create({
           data: {
-            email: dto.email,
+            email: normalizedDto.email,
             password: hashedPassword,
             role: 'EMPLOYER',
             isActive: true,
@@ -333,7 +331,7 @@ export class EmployersService {
             companyCode: dto.companyCode,
 
             contactPerson: dto.contactPerson,
-            email: dto.email,
+            email: normalizedDto.email,
             phone: dto.phone,
 
             status: 'PENDING',
@@ -393,15 +391,12 @@ export class EmployersService {
         return {
           user,
           employer,
-          temporaryPassword: initialTemporaryPassword,
-          created: true,
         };
       });
 
     return {
       employerId: employer.id,
       loginEmail: user?.email ?? employer.email,
-      temporaryPassword,
       status: employer.status,
     };
   }
@@ -440,6 +435,11 @@ export class EmployersService {
   }
 
   private generateTemporaryPassword() {
-    return `MobPae-${randomBytes(8).toString('hex')}!1`;
+    // bcrypt stores its own per-password salt; this extra random segment raises
+    // temporary credential entropy before the password is hashed and emailed.
+    const entropy = randomBytes(12).toString('base64url');
+    const saltSegment = randomBytes(6).toString('base64url');
+
+    return `MobPae-${entropy}-${saltSegment}!1`;
   }
 }

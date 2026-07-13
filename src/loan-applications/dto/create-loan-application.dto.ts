@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { LoanPurposeCategory } from '@prisma/client';
 import {
   IsEnum,
@@ -10,14 +11,24 @@ import {
 } from 'class-validator';
 
 export class CreateLoanApplicationDto {
-  @ApiProperty({ example: 15000, description: 'Requested amount in INR (whole rupees)' })
+  @ApiProperty({
+    example: 15000,
+    description: 'Requested amount in INR (whole rupees)',
+  })
+  @Type(() => Number)
   @IsInt()
   @Min(1000)
   amount: number;
 
-  @ApiProperty({ enum: LoanPurposeCategory, example: LoanPurposeCategory.EMERGENCY })
+  @ApiPropertyOptional({
+    enum: LoanPurposeCategory,
+    example: LoanPurposeCategory.OTHER,
+    default: LoanPurposeCategory.OTHER,
+    description: 'Defaults to OTHER when not provided (salary advance flow)',
+  })
+  @IsOptional()
   @IsEnum(LoanPurposeCategory)
-  purposeCategory: LoanPurposeCategory;
+  purposeCategory: LoanPurposeCategory = LoanPurposeCategory.OTHER;
 
   @ApiPropertyOptional({ example: 'Medical emergency for family member' })
   @IsOptional()

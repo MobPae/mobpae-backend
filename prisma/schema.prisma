@@ -62,6 +62,7 @@ model Employer {
   user                   User                    @relation(fields: [userId], references: [id])
   loanApplications       LoanApplication[]
   employerProductConfigs EmployerProductConfig[]
+  loanApplicationFees    LoanApplicationFee[]
 
   @@map("employers")
 }
@@ -71,32 +72,33 @@ model Employer {
 // ============================================================
 
 model Employee {
-  id               String               @id @default(uuid())
-  userId           String?              @unique
-  employerId       String
-  employeeCode     String
-  name             String
-  email            String
-  phone            String
-  salaryInHand     Decimal              @db.Decimal(12, 2)
-  profilePhotoUrl  String?
-  selfieUrl        String?
-  selfieStatus     SelfieStatus         @default(PENDING)
-  selfieVerifiedAt DateTime?
-  selfieVerifiedBy String?
-  joiningDate      DateTime?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  appActivated     Boolean              @default(false)
-  employmentStatus EmployeeStatus       @default(ACTIVE)
-  bankAccount      EmployeeBankAccount?
-  employer         Employer             @relation(fields: [employerId], references: [id])
-  user             User?                @relation(fields: [userId], references: [id])
-  kycDocuments     KycDocument[]
-  membership       Membership?
-  loanLimit        LoanLimit?
-  loanApplications LoanApplication[]
-  paymentOrders    PaymentOrder[]
+  id                  String               @id @default(uuid())
+  userId              String?              @unique
+  employerId          String
+  employeeCode        String
+  name                String
+  email               String
+  phone               String
+  salaryInHand        Decimal              @db.Decimal(12, 2)
+  profilePhotoUrl     String?
+  selfieUrl           String?
+  selfieStatus        SelfieStatus         @default(PENDING)
+  selfieVerifiedAt    DateTime?
+  selfieVerifiedBy    String?
+  joiningDate         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  appActivated        Boolean              @default(false)
+  employmentStatus    EmployeeStatus       @default(ACTIVE)
+  bankAccount         EmployeeBankAccount?
+  employer            Employer             @relation(fields: [employerId], references: [id])
+  user                User?                @relation(fields: [userId], references: [id])
+  kycDocuments        KycDocument[]
+  membership          Membership?
+  loanLimit           LoanLimit?
+  loanApplications    LoanApplication[]
+  paymentOrders       PaymentOrder[]
+  loanApplicationFees LoanApplicationFee[]
 
   @@unique([employerId, employeeCode])
   @@index([employerId])
@@ -136,7 +138,7 @@ model LoanProduct {
   productType      LoanProductType         @unique
   displayName      String
   description      String?
-  icon             String?                 // Icon name / URL for employee app
+  icon             String? // Icon name / URL for employee app
   displayOrder     Int                     @default(0)
   isActive         Boolean                 @default(true)
   comingSoon       Boolean                 @default(false)
@@ -159,37 +161,37 @@ model LoanProduct {
 // ============================================================
 
 model LoanProductConfig {
-  id                String    @id @default(uuid())
-  productId         String
-  versionNumber     Int
-  versionName       String?
-  isActive          Boolean   @default(false)
-  effectiveFrom     DateTime
-  effectiveTo       DateTime?
+  id            String    @id @default(uuid())
+  productId     String
+  versionNumber Int
+  versionName   String?
+  isActive      Boolean   @default(false)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
 
   // Self-referential: points to the version this supersedes.
   // @unique ensures at most one successor per version.
-  previousVersionId String?   @unique
+  previousVersionId String? @unique
 
   // EligibilityRules — parsed by EligibilityService
   // Shape: { maximumAdvancePercentage, minimumAdvanceAmount,
   //          minimumSalaryInHand, minimumTenureMonths,
   //          requiresKyc, requiresMembership, requiresBankAccount,
   //          requiresActiveSelfie, maxRequestsPerCycle, cooldownDays }
-  eligibilityRules  Json
+  eligibilityRules Json
 
   // PricingRules — consumed by PricingService (pure function, no I/O)
   // Shape: { annualInterestRate, interestFreePercentage,
   //          processingFeeRate, gstRate }
-  pricingRules      Json
+  pricingRules Json
 
   // OperationalRules — consumed by LoanApplicationsService
   // Shape: { requiresEmployerApproval, requiresAdminApproval,
   //          minDisbursalDays, maxDisbursalDays, defaultFundingSource }
-  operationalRules  Json
+  operationalRules Json
 
-  createdBy         String?
-  createdAt         DateTime  @default(now())
+  createdBy String?
+  createdAt DateTime @default(now())
 
   product          LoanProduct        @relation(fields: [productId], references: [id])
   previousVersion  LoanProductConfig? @relation("ConfigVersionChain", fields: [previousVersionId], references: [id])
@@ -207,19 +209,19 @@ model LoanProductConfig {
 // ============================================================
 
 model EmployerProductConfig {
-  id                              String      @id @default(uuid())
-  employerId                      String
-  productId                       String
+  id                               String      @id @default(uuid())
+  employerId                       String
+  productId                        String
   // Absolute ₹ cap (set by admin for special cases)
   maximumAdvanceAmountOverride     Int?
   // % of salary override set by employer (e.g. 20 = 20%). Must be ≤ hardCeilingPercentage.
   maximumAdvancePercentageOverride Decimal?    @db.Decimal(5, 2)
   requiresEmployerApproval         Boolean     @default(true)
   isEnabled                        Boolean     @default(true)
-  createdAt                     DateTime    @default(now())
-  updatedAt                     DateTime    @updatedAt
-  employer                      Employer    @relation(fields: [employerId], references: [id])
-  product                       LoanProduct @relation(fields: [productId], references: [id])
+  createdAt                        DateTime    @default(now())
+  updatedAt                        DateTime    @updatedAt
+  employer                         Employer    @relation(fields: [employerId], references: [id])
+  product                          LoanProduct @relation(fields: [productId], references: [id])
 
   @@unique([employerId, productId])
   @@map("employer_product_configs")
@@ -252,7 +254,7 @@ model LoanLimit {
 model FundingPartner {
   id               String               @id @default(uuid())
   name             String
-  code             String               @unique  // e.g. MOBPAE_SELF, HDFC_NBFC
+  code             String               @unique // e.g. MOBPAE_SELF, HDFC_NBFC
   type             FundingPartnerType
   status           FundingPartnerStatus @default(ACTIVE)
   contactEmail     String?
@@ -270,18 +272,18 @@ model FundingPartner {
 // ============================================================
 
 model LoanApplication {
-  id                String @id @default(uuid())
+  id String @id @default(uuid())
 
   // Human-readable reference: MP-SA-2026-00001234
   applicationNumber String @unique
 
-  employeeId       String
-  employerId       String
-  productId        String
+  employeeId    String
+  employerId    String
+  productId     String
   // Frozen config version at submission time — never updated
-  configId         String
+  configId      String
   // Version number copied from LoanProductConfig for easy reporting
-  configVersion    Int?
+  configVersion Int?
 
   // Optional funding partner (NULL = MobPae self-funded)
   fundingPartnerId String?
@@ -331,14 +333,15 @@ model LoanApplication {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  employee       Employee               @relation(fields: [employeeId], references: [id])
-  employer       Employer               @relation(fields: [employerId], references: [id])
-  product        LoanProduct            @relation(fields: [productId], references: [id])
-  config         LoanProductConfig      @relation(fields: [configId], references: [id])
-  fundingPartner FundingPartner?        @relation(fields: [fundingPartnerId], references: [id])
+  employee       Employee                 @relation(fields: [employeeId], references: [id])
+  employer       Employer                 @relation(fields: [employerId], references: [id])
+  product        LoanProduct              @relation(fields: [productId], references: [id])
+  config         LoanProductConfig        @relation(fields: [configId], references: [id])
+  fundingPartner FundingPartner?          @relation(fields: [fundingPartnerId], references: [id])
   history        LoanApplicationHistory[]
   disbursal      Disbursal?
   repayment      Repayment?
+  platformFee    LoanApplicationFee?
 
   @@index([employeeId])
   @@index([employerId])
@@ -377,25 +380,25 @@ model LoanApplicationHistory {
 // ============================================================
 
 model Disbursal {
-  id                String  @id @default(uuid())
-  loanApplicationId String  @unique
+  id                String @id @default(uuid())
+  loanApplicationId String @unique
 
   // Three-stage amounts
-  requestedAmount   Decimal  @db.Decimal(12, 2)
-  approvedAmount    Decimal  @db.Decimal(12, 2)
-  disbursedAmount   Decimal? @db.Decimal(12, 2)
+  requestedAmount Decimal  @db.Decimal(12, 2)
+  approvedAmount  Decimal  @db.Decimal(12, 2)
+  disbursedAmount Decimal? @db.Decimal(12, 2)
 
   // Payment provider details
   paymentProvider     DisbursalProvider?
-  providerReference   String?            // Payout ID from provider (e.g. Razorpay pout_xxx)
-  providerStatus      String?            // Raw status string from provider
-  providerRawResponse Json?              // Full provider response for debugging
+  providerReference   String? // Payout ID from provider (e.g. Razorpay pout_xxx)
+  providerStatus      String? // Raw status string from provider
+  providerRawResponse Json? // Full provider response for debugging
 
   // Bank account snapshot — frozen at disbursal time
-  disbursalAccountNumber      String?
-  disbursalIfscCode           String?
-  disbursalBankName           String?
-  disbursalAccountHolderName  String?
+  disbursalAccountNumber     String?
+  disbursalIfscCode          String?
+  disbursalBankName          String?
+  disbursalAccountHolderName String?
 
   // Lifecycle
   status        DisbursalStatus @default(PENDING)
@@ -405,8 +408,8 @@ model Disbursal {
   completedAt   DateTime?
 
   // People
-  initiatedBy String?  // Admin who triggered the payout
-  disbursedBy String?  // Can be system or different admin on retry
+  initiatedBy String? // Admin who triggered the payout
+  disbursedBy String? // Can be system or different admin on retry
 
   remarks String?
 
@@ -467,10 +470,10 @@ model Repayment {
 // ============================================================
 
 model EmployerSettlement {
-  id               String                   @id @default(uuid())
+  id               String   @id @default(uuid())
   employerId       String
   // Human-readable: MPS-LTIM-202607-0001
-  settlementNumber String                   @unique
+  settlementNumber String   @unique
   // First day of the payroll recovery month (e.g. 2026-07-01)
   cycleDate        DateTime
 
@@ -498,7 +501,7 @@ model EmployerSettlement {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  employer  Employer              @relation(fields: [employerId], references: [id])
+  employer  Employer             @relation(fields: [employerId], references: [id])
   lineItems SettlementLineItem[]
   payments  SettlementPayment[]
 
@@ -515,11 +518,11 @@ model EmployerSettlement {
 // ============================================================
 
 model SettlementLineItem {
-  id                    String @id @default(uuid())
-  settlementId          String
-  repaymentId           String @unique  // 1-to-1: each repayment in at most one settlement
-  loanApplicationId     String
-  employeeId            String
+  id                String @id @default(uuid())
+  settlementId      String
+  repaymentId       String @unique // 1-to-1: each repayment in at most one settlement
+  loanApplicationId String
+  employeeId        String
 
   // Frozen employee / application identifiers for display & export
   employeeCode          String
@@ -585,12 +588,12 @@ model Membership {
   planType       String           @default("MONTHLY") @map("plan_type")
   planName       String
   amount         Decimal          @db.Decimal(12, 2)
-  amountPaid     Decimal?         @db.Decimal(12, 2) @map("amount_paid")
+  amountPaid     Decimal?         @map("amount_paid") @db.Decimal(12, 2)
   startDate      DateTime
   endDate        DateTime
   status         MembershipStatus @default(PENDING)
   couponCode     String?          @map("coupon_code")
-  discountAmount Decimal?         @db.Decimal(12, 2) @map("discount_amount")
+  discountAmount Decimal?         @map("discount_amount") @db.Decimal(12, 2)
   // Payment link — null for admin-created memberships
   paymentOrderId String?          @unique @map("payment_order_id")
   // Admin override fields
@@ -816,46 +819,87 @@ model PasswordResetToken {
 // ============================================================
 
 model PaymentOrder {
-  id              String             @id @default(uuid())
-  provider        PaymentProvider    @default(RAZORPAY)
-  providerOrderId String             @unique @map("provider_order_id")
-  amount          Int                // in paise (INR × 100)
-  currency        String             @default("INR")
-  employeeId      String             @map("employee_id")
-  planKey         String             @map("plan_key")
-  couponCode      String?            @map("coupon_code")
-  discountAmount  Int                @default(0) @map("discount_amount")
-  status          PaymentOrderStatus @default(CREATED)
-  notes           Json?
-  expiresAt       DateTime           @map("expires_at")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
-  employee        Employee           @relation(fields: [employeeId], references: [id])
-  plan            MembershipPlanConfig @relation(fields: [planKey], references: [planKey])
-  membership      Membership?
-  events          PaymentEvent[]
+  id                   String                @id @default(uuid())
+  provider             PaymentProvider       @default(RAZORPAY)
+  providerOrderId      String                @unique @map("provider_order_id")
+  amount               Int // in paise (INR × 100)
+  currency             String                @default("INR")
+  employeeId           String                @map("employee_id")
+  purpose              PaymentOrderPurpose   @default(MEMBERSHIP)
+  planKey              String?               @map("plan_key")
+  loanApplicationFeeId String?               @map("loan_application_fee_id")
+  couponCode           String?               @map("coupon_code")
+  discountAmount       Int                   @default(0) @map("discount_amount")
+  status               PaymentOrderStatus    @default(CREATED)
+  notes                Json?
+  expiresAt            DateTime              @map("expires_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  employee             Employee              @relation(fields: [employeeId], references: [id])
+  plan                 MembershipPlanConfig? @relation(fields: [planKey], references: [planKey])
+  platformFee          LoanApplicationFee?   @relation(fields: [loanApplicationFeeId], references: [id])
+  membership           Membership?
+  events               PaymentEvent[]
 
   @@index([employeeId])
   @@index([status])
+  @@index([purpose, status])
   @@index([providerOrderId])
+  @@index([loanApplicationFeeId])
   @@map("payment_orders")
 }
 
+// Request-scoped commercial charge for salary advances.
+// This intentionally lives outside Membership so future products can keep
+// their own pricing models without coupling them to salary-advance approval.
+model LoanApplicationFee {
+  id                String                   @id @default(uuid())
+  loanApplicationId String                   @unique @map("loan_application_id")
+  employeeId        String                   @map("employee_id")
+  employerId        String                   @map("employer_id")
+  feeType           LoanApplicationFeeType   @default(PLATFORM_FEE) @map("fee_type")
+  amount            Decimal                  @db.Decimal(12, 2)
+  currency          String                   @default("INR")
+  status            LoanApplicationFeeStatus @default(PENDING_PAYMENT)
+  provider          PaymentProvider?         @default(RAZORPAY)
+  providerOrderId   String?                  @map("provider_order_id")
+  providerPaymentId String?                  @map("provider_payment_id")
+  providerSignature String?                  @map("provider_signature")
+  paidAt            DateTime?                @map("paid_at")
+  waivedAt          DateTime?                @map("waived_at")
+  waivedBy          String?                  @map("waived_by")
+  remarks           String?
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+
+  loanApplication LoanApplication @relation(fields: [loanApplicationId], references: [id])
+  employee        Employee        @relation(fields: [employeeId], references: [id])
+  employer        Employer        @relation(fields: [employerId], references: [id])
+  paymentOrders   PaymentOrder[]
+
+  @@unique([loanApplicationId, feeType])
+  @@index([employeeId, status])
+  @@index([employerId, status])
+  @@index([status, createdAt])
+  @@index([providerOrderId])
+  @@map("loan_application_fees")
+}
+
 model PaymentEvent {
-  id                  String       @id @default(uuid())
-  orderId             String       @map("order_id")
-  providerPaymentId   String?      @map("provider_payment_id")
-  providerSignature   String?      @map("provider_signature")
-  eventType           String       @map("event_type")
-  source              String
-  status              String
-  method              String?
-  errorCode           String?      @map("error_code")
-  errorDescription    String?      @map("error_description")
-  rawPayload          Json?        @map("raw_payload")
-  capturedAt          DateTime?    @map("captured_at")
-  createdAt           DateTime     @default(now()) @map("created_at")
-  order               PaymentOrder @relation(fields: [orderId], references: [id])
+  id                String       @id @default(uuid())
+  orderId           String       @map("order_id")
+  providerPaymentId String?      @map("provider_payment_id")
+  providerSignature String?      @map("provider_signature")
+  eventType         String       @map("event_type")
+  source            String
+  status            String
+  method            String?
+  errorCode         String?      @map("error_code")
+  errorDescription  String?      @map("error_description")
+  rawPayload        Json?        @map("raw_payload")
+  capturedAt        DateTime?    @map("captured_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  order             PaymentOrder @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@index([providerPaymentId])
@@ -924,6 +968,7 @@ enum LoanApplicationStatus {
   EMPLOYER_APPROVED
   EMPLOYER_REJECTED
   AWAITING_MEMBERSHIP_PAYMENT
+  AWAITING_PLATFORM_FEE_PAYMENT
   READY_FOR_DISBURSAL
   ADMIN_REJECTED
   DISBURSED
@@ -1021,6 +1066,11 @@ enum PaymentProvider {
   RAZORPAY
 }
 
+enum PaymentOrderPurpose {
+  MEMBERSHIP
+  PLATFORM_FEE
+}
+
 enum PaymentOrderStatus {
   CREATED
   ATTEMPTED
@@ -1028,6 +1078,19 @@ enum PaymentOrderStatus {
   FAILED
   EXPIRED
   REFUNDED
+}
+
+enum LoanApplicationFeeType {
+  PLATFORM_FEE
+}
+
+enum LoanApplicationFeeStatus {
+  PENDING_PAYMENT
+  PAID
+  FAILED
+  EXPIRED
+  REFUNDED
+  WAIVED
 }
 
 enum KycStatus {

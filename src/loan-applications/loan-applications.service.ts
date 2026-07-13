@@ -10,13 +10,14 @@ import { LoanApplicationStatus } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PlatformFeesService } from '../platform-fees/platform-fees.service';
 import { PricingService } from '../pricing/pricing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   EligibilityRules,
   PricingRules,
 } from '../loan-products/dto/create-loan-product-config.dto';
-import { paginate } from '../common/utils/pagination.util';
+import { getOrderBy, paginate } from '../common/utils/pagination.util';
 
 import { BulkLoanApplicationActionDto } from './dto/bulk-loan-application-action.dto';
 import { CreateLoanApplicationDto } from './dto/create-loan-application.dto';
@@ -26,6 +27,7 @@ import { RejectLoanApplicationDto } from './dto/reject-loan-application.dto';
 // Statuses that block a new submission
 const ACTIVE_STATUSES: LoanApplicationStatus[] = [
   'SUBMITTED',
+  'AWAITING_PLATFORM_FEE_PAYMENT',
   'EMPLOYER_APPROVED',
   'AWAITING_MEMBERSHIP_PAYMENT',
   'READY_FOR_DISBURSAL',
@@ -35,12 +37,28 @@ const ACTIVE_STATUSES: LoanApplicationStatus[] = [
 
 // Full relation include used for detail views
 const DETAIL_INCLUDE = {
-  employee: { select: { id: true, name: true, email: true, employeeCode: true, profilePhotoUrl: true } },
+  employee: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      employeeCode: true,
+      profilePhotoUrl: true,
+    },
+  },
   employer: { select: { id: true, companyName: true } },
   config: { select: { versionNumber: true, versionName: true } },
   history: { orderBy: { createdAt: 'asc' as const } },
   disbursal: true,
   repayment: true,
+  platformFee: {
+    include: {
+      paymentOrders: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 1,
+      },
+    },
+  },
 } as const;
 
 @Injectable()
@@ -51,11 +69,16 @@ export class LoanApplicationsService {
     private readonly eligibilityService: EligibilityService,
     private readonly notificationsService: NotificationsService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly platformFeesService: PlatformFeesService,
   ) {}
 
   // ── Employee: preview repayment for a given amount ─────────────────────────
 
   async preview(userId: string, amount: number) {
+    if (!Number.isFinite(amount) || amount < 1000) {
+      throw new BadRequestException('Amount must be at least ₹1,000');
+    }
+
     const employee = await this.prisma.employee.findUnique({
       where: { userId },
       include: {
@@ -65,9 +88,6 @@ export class LoanApplicationsService {
     if (!employee?.employer) throw new NotFoundException('Employee not found');
 
     const config = await this.getActiveConfig();
-    const employerConfig = await this.prisma.employerProductConfig.findUnique({
-      where: { employerId_productId: { employerId: employee.employerId, productId: config.productId } },
-    });
 
     const pricing = config.pricingRules as unknown as PricingRules;
     const eligibility = config.eligibilityRules as unknown as EligibilityRules;
@@ -94,13 +114,18 @@ export class LoanApplicationsService {
       payrollCutoffDate: employee.employer.payrollCutoffDate,
     });
 
-    const breakdown = this.pricingService.computeRepaymentBreakdown(amount, snapshot);
+    const breakdown = this.pricingService.computeRepaymentBreakdown(
+      amount,
+      snapshot,
+    );
+    const platformFee = await this.platformFeesService.getConfig();
 
     return {
       requestedAmount: amount,
       annualInterestRate: snapshot.snapshotAnnualInterestRate,
       interestDays: snapshot.snapshotInterestDays,
       recoveryDate: snapshot.snapshotRecoveryDate,
+      platformFee,
       ...breakdown,
     };
   }
@@ -117,89 +142,128 @@ export class LoanApplicationsService {
     if (!employee) throw new NotFoundException('Employee not found');
 
     // Run eligibility check and extra queries in parallel
-    const [eligResult, kycDocs, bankAccount, membership, activeApp, scheduledRepayment, employerConfig] =
-      await Promise.all([
-        this.eligibilityService.check(employee.id),
-        this.prisma.kycDocument.findMany({
-          where: { employeeId: employee.id },
-          select: { documentType: true, status: true },
-        }),
-        this.prisma.employeeBankAccount.findUnique({
-          where: { employeeId: employee.id },
-          select: { verified: true },
-        }),
-        this.prisma.membership.findUnique({
-          where: { employeeId: employee.id },
-          select: { status: true },
-        }),
-        this.prisma.loanApplication.findFirst({
-          where: { employeeId: employee.id, status: { in: ACTIVE_STATUSES } },
-          include: {
-            repayment: {
-              select: {
-                status: true, totalAmount: true, dueDate: true,
-                interestAmount: true, principalAmount: true,
-                interestDays: true, interestRate: true,
-              },
+    const [
+      eligResult,
+      kycDocs,
+      bankAccount,
+      activeApp,
+      scheduledRepayment,
+      employerConfig,
+      platformFee,
+    ] = await Promise.all([
+      this.eligibilityService.check(employee.id),
+      this.prisma.kycDocument.findMany({
+        where: { employeeId: employee.id },
+        select: { documentType: true, status: true },
+      }),
+      this.prisma.employeeBankAccount.findUnique({
+        where: { employeeId: employee.id },
+        select: { verified: true },
+      }),
+      this.prisma.loanApplication.findFirst({
+        where: { employeeId: employee.id, status: { in: ACTIVE_STATUSES } },
+        include: {
+          platformFee: true,
+          repayment: {
+            select: {
+              status: true,
+              totalAmount: true,
+              dueDate: true,
+              interestAmount: true,
+              principalAmount: true,
+              interestDays: true,
+              interestRate: true,
             },
-            disbursal: { select: { status: true, disbursedAmount: true, completedAt: true } },
           },
-          orderBy: { submittedAt: 'desc' },
-        }),
-        this.prisma.repayment.findFirst({
-          where: { status: 'SCHEDULED', loanApplication: { employeeId: employee.id } },
-          select: { id: true, status: true, dueDate: true, totalAmount: true },
-          orderBy: { dueDate: 'asc' },
-        }),
-        this.prisma.employerProductConfig.findFirst({
-          where: { employerId: employee.employerId, product: { productType: 'SA' } },
-          select: { requiresEmployerApproval: true },
-        }),
-      ]);
+          disbursal: {
+            select: { status: true, disbursedAmount: true, completedAt: true },
+          },
+        },
+        orderBy: { submittedAt: 'desc' },
+      }),
+      this.prisma.repayment.findFirst({
+        where: {
+          status: 'SCHEDULED',
+          loanApplication: { employeeId: employee.id },
+        },
+        select: { id: true, status: true, dueDate: true, totalAmount: true },
+        orderBy: { dueDate: 'asc' },
+      }),
+      this.prisma.employerProductConfig.findFirst({
+        where: {
+          employerId: employee.employerId,
+          product: { productType: 'SA' },
+        },
+        select: { requiresEmployerApproval: true },
+      }),
+      this.platformFeesService.getConfig(),
+    ]);
 
     // ── Setup items ────────────────────────────────────────────────────────────
     const kycHasRejected = kycDocs.some((d) => d.status === 'REJECTED');
-    const kycHasPending  = kycDocs.some((d) => ['PENDING', 'SUBMITTED'].includes(d.status));
+    const kycHasPending = kycDocs.some((d) =>
+      ['PENDING', 'SUBMITTED'].includes(d.status),
+    );
     let kycStatus = 'NOT_SUBMITTED';
-    if (eligResult.checks.kycComplete)  kycStatus = 'VERIFIED';
-    else if (kycHasRejected)            kycStatus = 'REJECTED';
-    else if (kycHasPending)             kycStatus = 'PENDING';
-    else if (kycDocs.length > 0)        kycStatus = 'SUBMITTED';
+    if (eligResult.checks.kycComplete) kycStatus = 'VERIFIED';
+    else if (kycHasRejected) kycStatus = 'REJECTED';
+    else if (kycHasPending) kycStatus = 'PENDING';
+    else if (kycDocs.length > 0) kycStatus = 'SUBMITTED';
 
     let bankStatus = 'NOT_ADDED';
     if (eligResult.checks.bankVerified) bankStatus = 'VERIFIED';
-    else if (bankAccount)               bankStatus = 'PENDING';
-
-    const membershipStatus = membership?.status ?? 'NOT_SUBMITTED';
+    else if (bankAccount) bankStatus = 'PENDING';
 
     const setup = [
-      { key: 'KYC',          label: 'KYC Verification', status: kycStatus,       completed: eligResult.checks.kycComplete },
-      { key: 'BANK_ACCOUNT', label: 'Bank Account',     status: bankStatus,      completed: eligResult.checks.bankVerified },
-      { key: 'MEMBERSHIP',   label: 'Membership',       status: membershipStatus, completed: eligResult.checks.membershipActive },
+      {
+        key: 'KYC',
+        label: 'KYC Verification',
+        status: kycStatus,
+        completed: eligResult.checks.kycComplete,
+      },
+      {
+        key: 'BANK_ACCOUNT',
+        label: 'Bank Account',
+        status: bankStatus,
+        completed: eligResult.checks.bankVerified,
+      },
     ];
 
     // ── Next action ────────────────────────────────────────────────────────────
     let nextAction = 'REQUEST_ADVANCE';
     let nextActionLabel = 'Request Advance';
     if (!eligResult.checks.productEnabled) {
-      nextAction = 'CONTACT_ADMIN'; nextActionLabel = 'Contact Admin';
+      nextAction = 'CONTACT_ADMIN';
+      nextActionLabel = 'Contact Admin';
     } else if (!eligResult.checks.kycComplete) {
-      nextAction = 'COMPLETE_KYC'; nextActionLabel = 'Complete KYC';
+      nextAction = 'COMPLETE_KYC';
+      nextActionLabel = 'Complete KYC';
     } else if (!eligResult.checks.bankVerified) {
-      nextAction = 'ADD_BANK_ACCOUNT'; nextActionLabel = 'Add Bank Account';
-    } else if (!eligResult.checks.membershipActive) {
-      nextAction = 'GET_MEMBERSHIP'; nextActionLabel = 'Get Membership';
+      nextAction = 'ADD_BANK_ACCOUNT';
+      nextActionLabel = 'Add Bank Account';
     } else if (!eligResult.checks.noActiveApplication) {
-      nextAction = 'VIEW_APPLICATION'; nextActionLabel = 'View Application';
+      nextAction =
+        activeApp?.status === 'AWAITING_PLATFORM_FEE_PAYMENT'
+          ? 'PAY_PLATFORM_FEE'
+          : 'VIEW_APPLICATION';
+      nextActionLabel =
+        activeApp?.status === 'AWAITING_PLATFORM_FEE_PAYMENT'
+          ? 'Pay Platform Fee'
+          : 'View Application';
     }
 
     // ── Limits ─────────────────────────────────────────────────────────────────
     const salary = Number(employee.salaryInHand);
-    const usedLimit = Math.max(0, eligResult.maximumEligibleAmount - eligResult.availableAmount);
+    const usedLimit = Math.max(
+      0,
+      eligResult.maximumEligibleAmount - eligResult.availableAmount,
+    );
 
     return {
       eligible: eligResult.eligible,
-      reasons: eligResult.reason ? [{ code: 'INELIGIBLE', message: eligResult.reason }] : [],
+      reasons: eligResult.reason
+        ? [{ code: 'INELIGIBLE', message: eligResult.reason }]
+        : [],
       nextAction,
       nextActionLabel,
       setup,
@@ -214,7 +278,9 @@ export class LoanApplicationsService {
         payrollDate: employee.employer?.payrollDate ?? null,
         payrollCutoffDate: employee.employer?.payrollCutoffDate ?? null,
       },
-      membershipRequiredAfterEmployerApproval: !eligResult.checks.membershipActive,
+      membershipRequiredAfterEmployerApproval: false,
+      platformFeeRequiredAfterEmployerApproval: true,
+      platformFee,
       outstandingRepayment: scheduledRepayment
         ? {
             id: scheduledRepayment.id,
@@ -233,21 +299,39 @@ export class LoanApplicationsService {
     const employee = await this.prisma.employee.findUnique({
       where: { userId },
       include: {
-        employer: { select: { id: true, userId: true, payrollDate: true, payrollCutoffDate: true } },
+        employer: {
+          select: {
+            id: true,
+            userId: true,
+            payrollDate: true,
+            payrollCutoffDate: true,
+          },
+        },
       },
     });
-    if (!employee?.employer) throw new NotFoundException('Employee or employer not found');
+    if (!employee?.employer)
+      throw new NotFoundException('Employee or employer not found');
 
     // 1. Eligibility
-    const eligibility = await this.eligibilityService.check(employee.id, dto.amount);
+    const eligibility = await this.eligibilityService.check(
+      employee.id,
+      dto.amount,
+    );
     if (!eligibility.eligible) {
-      throw new BadRequestException(eligibility.reason ?? 'Not eligible for a loan application');
+      throw new BadRequestException(
+        eligibility.reason ?? 'Not eligible for a loan application',
+      );
     }
 
     // 2. Active product config
     const config = await this.getActiveConfig();
     const employerConfig = await this.prisma.employerProductConfig.findUnique({
-      where: { employerId_productId: { employerId: employee.employerId, productId: config.productId } },
+      where: {
+        employerId_productId: {
+          employerId: employee.employerId,
+          productId: config.productId,
+        },
+      },
     });
 
     // 3. Pricing inputs
@@ -280,43 +364,68 @@ export class LoanApplicationsService {
 
     // 5. Application number from PostgreSQL sequence
     const productType = await this.getProductType(config.productId);
-    const applicationNumber = await this.generateApplicationNumber(productType);
 
-    // 6. Persist
-    const application = await this.prisma.loanApplication.create({
-      data: {
-        applicationNumber,
-        employeeId: employee.id,
-        employerId: employee.employerId,
-        productId: config.productId,
-        configId: config.id,
-        status: 'SUBMITTED',
-        requestedAmount: dto.amount,
-        purposeCategory: dto.purposeCategory,
-        purposeNote: dto.purposeNote ?? null,
-        remarks: dto.remarks ?? null,
-        submittedAt: submissionDate,
-        // Snapshot — frozen forever
-        snapshotAnnualInterestRate: snapshot.snapshotAnnualInterestRate,
-        snapshotInterestFreeThreshold: snapshot.snapshotInterestFreeThreshold,
-        snapshotProcessingFeeRate: snapshot.snapshotProcessingFeeRate,
-        snapshotGstRate: snapshot.snapshotGstRate,
-        snapshotMaxAdvancePercentage: snapshot.snapshotMaxAdvancePercentage,
-        snapshotSalaryInHand: snapshot.snapshotSalaryInHand,
-        snapshotInterestDays: snapshot.snapshotInterestDays,
-        snapshotRecoveryDate: snapshot.snapshotRecoveryDate,
-        history: {
-          create: {
-            previousStatus: null,
-            newStatus: 'SUBMITTED',
-            changedBy: userId,
-            actorRole: 'EMPLOYEE',
-            remarks: 'Application submitted by employee',
+    // Keep the DB sequence ahead of existing records. This is mainly needed
+    // after local seed imports or dev resets, but it also makes manual data
+    // repair safer in production.
+    await this.syncApplicationNumberSequence();
+
+    // 6. Persist — retry on applicationNumber collision. In normal operation
+    //    nextval() is concurrency-safe; retries cover stale local sequences or
+    //    an extremely rare manual-data/import edge case.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let application: any;
+    let applicationNumber = '';
+    let appNumAttempts = 0;
+    while (true) {
+      applicationNumber = await this.generateApplicationNumber(productType);
+      try {
+        application = await this.prisma.loanApplication.create({
+          data: {
+            applicationNumber,
+            employeeId: employee.id,
+            employerId: employee.employerId,
+            productId: config.productId,
+            configId: config.id,
+            status: 'SUBMITTED',
+            requestedAmount: dto.amount,
+            purposeCategory: dto.purposeCategory,
+            purposeNote: dto.purposeNote ?? null,
+            remarks: dto.remarks ?? null,
+            submittedAt: submissionDate,
+            // Snapshot — frozen forever
+            snapshotAnnualInterestRate: snapshot.snapshotAnnualInterestRate,
+            snapshotInterestFreeThreshold: snapshot.snapshotInterestFreeThreshold,
+            snapshotProcessingFeeRate: snapshot.snapshotProcessingFeeRate,
+            snapshotGstRate: snapshot.snapshotGstRate,
+            snapshotMaxAdvancePercentage: snapshot.snapshotMaxAdvancePercentage,
+            snapshotSalaryInHand: snapshot.snapshotSalaryInHand,
+            snapshotInterestDays: snapshot.snapshotInterestDays,
+            snapshotRecoveryDate: snapshot.snapshotRecoveryDate,
+            history: {
+              create: {
+                previousStatus: null,
+                newStatus: 'SUBMITTED',
+                changedBy: userId,
+                actorRole: 'EMPLOYEE',
+                remarks: 'Application submitted by employee',
+              },
+            },
           },
-        },
-      },
-      include: DETAIL_INCLUDE,
-    });
+          include: DETAIL_INCLUDE,
+        });
+        break; // success — exit retry loop
+      } catch (err: any) {
+        if (
+          this.isApplicationNumberCollision(err) &&
+          ++appNumAttempts < 5
+        ) {
+          await this.syncApplicationNumberSequence();
+          continue;
+        }
+        throw err;
+      }
+    }
 
     // 7. Notify employer
     if (employee.employer.userId) {
@@ -334,7 +443,11 @@ export class LoanApplicationsService {
       action: 'LOAN_APPLICATION_SUBMITTED',
       entityType: 'LOAN_APPLICATION',
       entityId: application.id,
-      newValue: { applicationNumber, requestedAmount: dto.amount, status: 'SUBMITTED' },
+      newValue: {
+        applicationNumber,
+        requestedAmount: dto.amount,
+        status: 'SUBMITTED',
+      },
     });
 
     return application;
@@ -343,14 +456,29 @@ export class LoanApplicationsService {
   // ── Employee: view own applications ────────────────────────────────────────
 
   async findByUserId(userId: string) {
-    const employee = await this.prisma.employee.findUnique({ where: { userId } });
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId },
+    });
     if (!employee) throw new NotFoundException('Employee not found');
 
     return this.prisma.loanApplication.findMany({
       where: { employeeId: employee.id },
       include: {
-        repayment: { select: { status: true, totalAmount: true, dueDate: true } },
-        disbursal: { select: { status: true, disbursedAmount: true, completedAt: true } },
+        repayment: {
+          select: {
+            status: true,
+            totalAmount: true,
+            dueDate: true,
+            interestAmount: true,
+            principalAmount: true,
+            interestDays: true,
+            interestRate: true,
+          },
+        },
+        disbursal: {
+          select: { status: true, disbursedAmount: true, completedAt: true },
+        },
+        platformFee: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -359,7 +487,9 @@ export class LoanApplicationsService {
   // ── Employee: view one own application ─────────────────────────────────────
 
   async findMyOne(id: string, userId: string) {
-    const employee = await this.prisma.employee.findUnique({ where: { userId } });
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId },
+    });
     if (!employee) throw new NotFoundException('Employee not found');
 
     const app = await this.prisma.loanApplication.findFirst({
@@ -373,7 +503,9 @@ export class LoanApplicationsService {
   // ── Employee: cancel ────────────────────────────────────────────────────────
 
   async cancel(id: string, userId: string, remarks?: string) {
-    const employee = await this.prisma.employee.findUnique({ where: { userId } });
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId },
+    });
     if (!employee) throw new NotFoundException('Employee not found');
 
     const app = await this.prisma.loanApplication.findFirst({
@@ -381,7 +513,9 @@ export class LoanApplicationsService {
     });
     if (!app) throw new NotFoundException('Application not found');
     if (app.status !== 'SUBMITTED') {
-      throw new BadRequestException('Only SUBMITTED applications can be cancelled');
+      throw new BadRequestException(
+        'Only SUBMITTED applications can be cancelled',
+      );
     }
 
     return this.prisma.loanApplication.update({
@@ -404,27 +538,49 @@ export class LoanApplicationsService {
   // ── Employer: view company applications ─────────────────────────────────────
 
   async findAllForEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+    const employer = await this.prisma.employer.findUnique({
+      where: { userId },
+    });
     if (!employer) throw new NotFoundException('Employer not found');
 
     return this.prisma.loanApplication.findMany({
       where: { employerId: employer.id },
       include: {
         employee: { select: { id: true, name: true, employeeCode: true } },
-        repayment: { select: { status: true, totalAmount: true, dueDate: true } },
+        repayment: {
+          select: {
+            status: true,
+            totalAmount: true,
+            dueDate: true,
+            interestAmount: true,
+            principalAmount: true,
+            interestDays: true,
+            interestRate: true,
+          },
+        },
+        platformFee: true,
       },
       orderBy: { submittedAt: 'desc' },
     });
   }
 
   async findPendingByEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+    const employer = await this.prisma.employer.findUnique({
+      where: { userId },
+    });
     if (!employer) throw new NotFoundException('Employer not found');
 
     return this.prisma.loanApplication.findMany({
       where: { employerId: employer.id, status: 'SUBMITTED' },
       include: {
-        employee: { select: { id: true, name: true, employeeCode: true, salaryInHand: true } },
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            employeeCode: true,
+            salaryInHand: true,
+          },
+        },
       },
       orderBy: { submittedAt: 'asc' },
     });
@@ -433,7 +589,9 @@ export class LoanApplicationsService {
   // ── Employer: approve ───────────────────────────────────────────────────────
 
   async employerApprove(id: string, actorUserId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId: actorUserId } });
+    const employer = await this.prisma.employer.findUnique({
+      where: { userId: actorUserId },
+    });
     if (!employer) throw new ForbiddenException('Not an employer');
 
     const app = await this.prisma.loanApplication.findFirst({
@@ -442,13 +600,16 @@ export class LoanApplicationsService {
     });
     if (!app) throw new NotFoundException('Application not found');
     if (app.status !== 'SUBMITTED') {
-      throw new BadRequestException('Only SUBMITTED applications can be employer-approved');
+      throw new BadRequestException(
+        'Only SUBMITTED applications can be employer-approved',
+      );
     }
 
     // Security guard: employee must not already have an active advance in progress.
     // Employer approving a second concurrent advance is blocked here.
     const IN_PROGRESS_STATUSES: LoanApplicationStatus[] = [
       'EMPLOYER_APPROVED',
+      'AWAITING_PLATFORM_FEE_PAYMENT',
       'AWAITING_MEMBERSHIP_PAYMENT',
       'READY_FOR_DISBURSAL',
       'DISBURSED',
@@ -468,31 +629,42 @@ export class LoanApplicationsService {
       );
     }
 
-    const updated = await this.prisma.loanApplication.update({
-      where: { id },
-      data: {
-        status: 'EMPLOYER_APPROVED',
-        employerApprovedAmount: app.requestedAmount,
-        employerApprovedBy: actorUserId,
-        employerApprovedAt: new Date(),
-        history: {
-          create: {
-            previousStatus: 'SUBMITTED',
-            newStatus: 'EMPLOYER_APPROVED',
-            changedBy: actorUserId,
-            actorRole: 'EMPLOYER',
-            remarks: 'Employer approved',
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const application = await tx.loanApplication.update({
+        where: { id },
+        data: {
+          status: 'AWAITING_PLATFORM_FEE_PAYMENT',
+          employerApprovedAmount: app.requestedAmount,
+          employerApprovedBy: actorUserId,
+          employerApprovedAt: new Date(),
+          history: {
+            create: {
+              previousStatus: 'SUBMITTED',
+              newStatus: 'AWAITING_PLATFORM_FEE_PAYMENT',
+              changedBy: actorUserId,
+              actorRole: 'EMPLOYER',
+              remarks: 'Employer approved; platform fee payment pending',
+            },
           },
         },
-      },
+      });
+
+      // Create a request-scoped fee only after employer approval. This avoids
+      // charging employees for requests their employer may reject.
+      await this.platformFeesService.ensureFeeForApplication(tx, application);
+
+      return tx.loanApplication.findUniqueOrThrow({
+        where: { id },
+        include: DETAIL_INCLUDE,
+      });
     });
 
     if (app.employee.userId) {
       this.notificationsService
         .createSystemNotification(
           app.employee.userId,
-          'Loan Application Approved',
-          'Your salary advance has been approved by your employer and is now under MobPae review.',
+          'Employer Approved Your Advance',
+          'Your employer approved the request. Pay the platform fee to continue to MobPae review.',
         )
         .catch(() => {});
     }
@@ -502,8 +674,14 @@ export class LoanApplicationsService {
 
   // ── Employer: reject ────────────────────────────────────────────────────────
 
-  async employerReject(id: string, dto: RejectLoanApplicationDto, actorUserId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId: actorUserId } });
+  async employerReject(
+    id: string,
+    dto: RejectLoanApplicationDto,
+    actorUserId: string,
+  ) {
+    const employer = await this.prisma.employer.findUnique({
+      where: { userId: actorUserId },
+    });
     if (!employer) throw new ForbiddenException('Not an employer');
 
     const app = await this.prisma.loanApplication.findFirst({
@@ -512,7 +690,9 @@ export class LoanApplicationsService {
     });
     if (!app) throw new NotFoundException('Application not found');
     if (app.status !== 'SUBMITTED') {
-      throw new BadRequestException('Only SUBMITTED applications can be employer-rejected');
+      throw new BadRequestException(
+        'Only SUBMITTED applications can be employer-rejected',
+      );
     }
 
     const updated = await this.prisma.loanApplication.update({
@@ -521,14 +701,14 @@ export class LoanApplicationsService {
         status: 'EMPLOYER_REJECTED',
         rejectedBy: actorUserId,
         rejectedAt: new Date(),
-        rejectionReason: dto.reason,
+        rejectionReason: dto.remarks,
         history: {
           create: {
             previousStatus: 'SUBMITTED',
             newStatus: 'EMPLOYER_REJECTED',
             changedBy: actorUserId,
             actorRole: 'EMPLOYER',
-            remarks: dto.reason,
+            remarks: dto.remarks,
           },
         },
       },
@@ -539,7 +719,7 @@ export class LoanApplicationsService {
         .createSystemNotification(
           app.employee.userId,
           'Loan Application Rejected',
-          `Your loan application has been rejected. Reason: ${dto.reason}`,
+          `Your loan application has been rejected. Reason: ${dto.remarks}`,
         )
         .catch(() => {});
     }
@@ -554,7 +734,11 @@ export class LoanApplicationsService {
       dto.ids.map((id) =>
         dto.action === 'APPROVE'
           ? this.employerApprove(id, actorUserId)
-          : this.employerReject(id, { reason: dto.reason ?? 'Bulk rejected' }, actorUserId),
+          : this.employerReject(
+              id,
+              { remarks: dto.remarks ?? 'Bulk rejected' },
+              actorUserId,
+            ),
       ),
     );
 
@@ -565,7 +749,10 @@ export class LoanApplicationsService {
       if (result.status === 'fulfilled') {
         succeeded.push(dto.ids[i]);
       } else {
-        failed.push({ id: dto.ids[i], message: (result.reason as Error)?.message ?? 'Unknown error' });
+        failed.push({
+          id: dto.ids[i],
+          message: (result.reason as Error)?.message ?? 'Unknown error',
+        });
       }
     });
 
@@ -602,9 +789,31 @@ export class LoanApplicationsService {
           employee: { select: { id: true, name: true, employeeCode: true } },
           employer: { select: { id: true, companyName: true } },
           disbursal: { select: { status: true, disbursedAmount: true } },
-          repayment: { select: { status: true, totalAmount: true, dueDate: true } },
+          platformFee: true,
+          repayment: {
+            select: {
+              status: true,
+              totalAmount: true,
+              dueDate: true,
+              interestAmount: true,
+              principalAmount: true,
+              interestDays: true,
+              interestRate: true,
+            },
+          },
         },
-        orderBy: { [query.sortBy ?? 'submittedAt']: query.sortOrder ?? 'desc' },
+        orderBy: getOrderBy(
+          query,
+          [
+            'applicationNumber',
+            'requestedAmount',
+            'status',
+            'submittedAt',
+            'createdAt',
+            'updatedAt',
+          ],
+          'submittedAt',
+        ),
         skip,
         take: limit,
       }),
@@ -621,8 +830,19 @@ export class LoanApplicationsService {
       where: { employeeId },
       include: {
         disbursal: { select: { status: true, disbursedAmount: true } },
-        repayment: { select: { status: true, totalAmount: true, dueDate: true } },
+        repayment: {
+          select: {
+            status: true,
+            totalAmount: true,
+            dueDate: true,
+            interestAmount: true,
+            principalAmount: true,
+            interestDays: true,
+            interestRate: true,
+          },
+        },
         history: { orderBy: { createdAt: 'asc' } },
+        platformFee: true,
       },
       orderBy: { submittedAt: 'desc' },
     });
@@ -639,7 +859,9 @@ export class LoanApplicationsService {
 
     // Employer can only see their own company's applications
     if (user.role === 'EMPLOYER') {
-      const employer = await this.prisma.employer.findUnique({ where: { userId: user.userId } });
+      const employer = await this.prisma.employer.findUnique({
+        where: { userId: user.userId },
+      });
       if (!employer || employer.id !== app.employerId) {
         throw new ForbiddenException('Access denied');
       }
@@ -659,6 +881,12 @@ export class LoanApplicationsService {
     if (app.status !== 'EMPLOYER_APPROVED') {
       throw new BadRequestException(
         `Only EMPLOYER_APPROVED applications can be admin-approved (current: ${app.status})`,
+      );
+    }
+    const feeCleared = await this.platformFeesService.isFeeCleared(id);
+    if (!feeCleared) {
+      throw new BadRequestException(
+        'Platform fee must be paid before admin approval.',
       );
     }
 
@@ -696,7 +924,11 @@ export class LoanApplicationsService {
 
   // ── Admin: reject ───────────────────────────────────────────────────────────
 
-  async adminReject(id: string, dto: RejectLoanApplicationDto, actorUserId: string) {
+  async adminReject(
+    id: string,
+    dto: RejectLoanApplicationDto,
+    actorUserId: string,
+  ) {
     const app = await this.prisma.loanApplication.findUnique({
       where: { id },
       include: { employee: true },
@@ -705,12 +937,15 @@ export class LoanApplicationsService {
 
     const rejectableStatuses: LoanApplicationStatus[] = [
       'SUBMITTED',
+      'AWAITING_PLATFORM_FEE_PAYMENT',
       'EMPLOYER_APPROVED',
       'AWAITING_MEMBERSHIP_PAYMENT',
       'READY_FOR_DISBURSAL',
     ];
     if (!rejectableStatuses.includes(app.status)) {
-      throw new BadRequestException(`Cannot reject application in status: ${app.status}`);
+      throw new BadRequestException(
+        `Cannot reject application in status: ${app.status}`,
+      );
     }
 
     const updated = await this.prisma.loanApplication.update({
@@ -719,14 +954,14 @@ export class LoanApplicationsService {
         status: 'ADMIN_REJECTED',
         rejectedBy: actorUserId,
         rejectedAt: new Date(),
-        rejectionReason: dto.reason,
+        rejectionReason: dto.remarks,
         history: {
           create: {
             previousStatus: app.status,
             newStatus: 'ADMIN_REJECTED',
             changedBy: actorUserId,
             actorRole: 'ADMIN',
-            remarks: dto.reason,
+            remarks: dto.remarks,
           },
         },
       },
@@ -737,7 +972,7 @@ export class LoanApplicationsService {
         .createSystemNotification(
           app.employee.userId,
           'Loan Application Rejected',
-          `Your loan application has been rejected by admin. Reason: ${dto.reason}`,
+          `Your loan application has been rejected by admin. Reason: ${dto.remarks}`,
         )
         .catch(() => {});
     }
@@ -767,12 +1002,58 @@ export class LoanApplicationsService {
     return product?.productType ?? 'SA';
   }
 
-  private async generateApplicationNumber(productType: string): Promise<string> {
+  private async generateApplicationNumber(
+    productType: string,
+  ): Promise<string> {
     const result = await this.prisma.$queryRaw<[{ nextval: bigint }]>`
       SELECT nextval('loan_application_seq')
     `;
     const seq = Number(result[0].nextval);
     const year = new Date().getFullYear();
     return `MP-${productType}-${year}-${String(seq).padStart(8, '0')}`;
+  }
+
+  private isApplicationNumberCollision(error: unknown): boolean {
+    const prismaError = error as {
+      code?: string;
+      meta?: { target?: string | string[] };
+    };
+    const target = prismaError.meta?.target;
+
+    return (
+      prismaError.code === 'P2002' &&
+      (target === 'applicationNumber' ||
+        (Array.isArray(target) && target.includes('applicationNumber')))
+    );
+  }
+
+  private async syncApplicationNumberSequence(): Promise<void> {
+    const [existing] = await this.prisma.$queryRaw<
+      { maxSeq: bigint | null }[]
+    >`
+      SELECT COALESCE(
+        MAX((substring("applicationNumber" from '[0-9]{8}$'))::BIGINT),
+        0
+      ) AS "maxSeq"
+      FROM "loan_applications"
+      WHERE "applicationNumber" ~ '^MP-[A-Za-z0-9_]+-[0-9]{4}-[0-9]{8}$'
+    `;
+
+    const maxSeq = Number(existing?.maxSeq ?? 0);
+    if (maxSeq <= 0) return;
+
+    const [sequence] = await this.prisma.$queryRaw<
+      { lastValue: bigint }[]
+    >`
+      SELECT last_value AS "lastValue"
+      FROM "loan_application_seq"
+    `;
+
+    const lastValue = Number(sequence?.lastValue ?? 0);
+    if (lastValue >= maxSeq) return;
+
+    await this.prisma.$queryRaw`
+      SELECT setval('loan_application_seq', ${maxSeq}, true)
+    `;
   }
 }

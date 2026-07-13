@@ -110,8 +110,12 @@ export class PricingService {
         (snapshot.snapshotAnnualInterestRate / 100) *
         (snapshot.snapshotInterestDays / 365),
     );
-    const processingFee = r2(disbursedAmount * snapshot.snapshotProcessingFeeRate);
-    const gstAmount = r2((interestAmount + processingFee) * snapshot.snapshotGstRate);
+    const processingFee = r2(
+      disbursedAmount * snapshot.snapshotProcessingFeeRate,
+    );
+    const gstAmount = r2(
+      (interestAmount + processingFee) * snapshot.snapshotGstRate,
+    );
     const totalAmount = r2(
       disbursedAmount + interestAmount + processingFee + gstAmount,
     );
@@ -130,8 +134,8 @@ export class PricingService {
    * Resolve the payroll date on which the advance will be recovered.
    *
    * Rule:
-   *   submissionDay <= cutoffDay  → recover on THIS month's payrollDay
-   *   submissionDay > cutoffDay   → recover on NEXT month's payrollDay
+   *   submissionDay < cutoffDay  → recover on THIS month's payrollDay
+   *   submissionDay >= cutoffDay → recover on NEXT month's payrollDay
    */
   resolveRecoveryDate(
     submissionDate: Date,
@@ -142,7 +146,7 @@ export class PricingService {
     const month = submissionDate.getMonth(); // 0-based
     const day = submissionDate.getDate();
 
-    if (day <= cutoffDay) {
+    if (day < cutoffDay) {
       return new Date(year, month, payrollDay);
     }
     return new Date(year, month + 1, payrollDay);

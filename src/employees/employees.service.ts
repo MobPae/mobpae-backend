@@ -24,6 +24,8 @@ import {
 } from '../common/utils/pagination.util';
 import { EmployeeListQueryDto } from './dto/employee-list-query.dto';
 import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
+import { PlatformFeesService } from '../platform-fees/platform-fees.service';
+import { normalizeEmail } from '../common/utils/email.util';
 
 @Injectable()
 export class EmployeesService {
@@ -33,9 +35,15 @@ export class EmployeesService {
     private readonly filesService: FilesService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly platformFeesService: PlatformFeesService,
   ) {}
 
   async create(dto: CreateEmployeeDto, userId: string) {
+    const normalizedDto = {
+      ...dto,
+      email: normalizeEmail(dto.email),
+    };
+
     const employer = await this.prisma.employer.findUnique({
       where: {
         userId,
@@ -48,7 +56,7 @@ export class EmployeesService {
 
     const existingUser = await this.prisma.user.findUnique({
       where: {
-        email: dto.email,
+        email: normalizedDto.email,
       },
     });
 
@@ -77,7 +85,7 @@ export class EmployeesService {
     const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
     const employee = await this.createEmployeeInTransaction(
-      dto,
+      normalizedDto,
       userId,
       employer.id,
       hashedPassword,
@@ -86,23 +94,19 @@ export class EmployeesService {
     this.logTemporaryEmployeePassword({
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
-      email: dto.email,
+      email: normalizedDto.email,
       password: temporaryPassword,
     });
 
     await this.sendEmployeeCreatedEmail(
-      dto.email,
-      dto.name,
+      normalizedDto.email,
+      normalizedDto.name,
       employer.companyName,
       temporaryPassword,
     );
 
     return {
       employee,
-      credentials: {
-        email: dto.email,
-        password: temporaryPassword,
-      },
     };
   }
 
@@ -114,6 +118,11 @@ export class EmployeesService {
   ) {
     try {
       return await this.prisma.$transaction(async (tx) => {
+        const employmentStatus = dto.employmentStatus ?? 'ACTIVE';
+        // Inactive employees should never receive app access at creation time.
+        const appActivated =
+          employmentStatus === 'INACTIVE' ? false : (dto.appActivated ?? false);
+
         const user = await tx.user.create({
           data: {
             email: dto.email,
@@ -133,6 +142,8 @@ export class EmployeesService {
             email: dto.email,
             phone: dto.phone,
             salaryInHand: dto.salaryInHand,
+            employmentStatus,
+            appActivated,
           },
         });
 
@@ -413,7 +424,8 @@ export class EmployeesService {
     };
   }
 
-  // Bulk Create employees with error handling and login id/password generation
+  // Bulk Create employees with row-level error handling. Temporary passwords are
+  // delivered through email and development console logs only, never API payloads.
   async bulkCreate(userId: string, employees: CreateEmployeeDto[]) {
     const employer = await this.prisma.employer.findUnique({
       where: {
@@ -429,7 +441,6 @@ export class EmployeesService {
       employeeCode: string;
       name: string;
       email: string;
-      password: string;
     }[] = [];
 
     const errors: {
@@ -440,7 +451,10 @@ export class EmployeesService {
     }[] = [];
 
     for (let index = 0; index < employees.length; index++) {
-      const employee = employees[index];
+      const employee = {
+        ...employees[index],
+        email: normalizeEmail(employees[index].email),
+      };
 
       try {
         const salaryInHand = Number(employee.salaryInHand);
@@ -546,7 +560,6 @@ export class EmployeesService {
           employeeCode: employee.employeeCode,
           name: employee.name,
           email: employee.email,
-          password: temporaryPassword,
         });
 
         this.logTemporaryEmployeePassword({
@@ -624,6 +637,7 @@ export class EmployeesService {
           in: [
             'SUBMITTED',
             'EMPLOYER_APPROVED',
+            'AWAITING_PLATFORM_FEE_PAYMENT',
             'AWAITING_MEMBERSHIP_PAYMENT',
             'READY_FOR_DISBURSAL',
             'DISBURSED',
@@ -642,7 +656,10 @@ export class EmployeesService {
         total + Number(request.adminApprovedAmount ?? request.requestedAmount),
       0,
     );
-    const availableAdvance = Math.max(0, maximumEligibleAmount - activeRequestAmount);
+    const availableAdvance = Math.max(
+      0,
+      maximumEligibleAmount - activeRequestAmount,
+    );
 
     /**
      * KYC Status
@@ -735,6 +752,7 @@ export class EmployeesService {
           in: [
             'SUBMITTED',
             'EMPLOYER_APPROVED',
+            'AWAITING_PLATFORM_FEE_PAYMENT',
             'AWAITING_MEMBERSHIP_PAYMENT',
             'READY_FOR_DISBURSAL',
             'DISBURSED',
@@ -745,6 +763,14 @@ export class EmployeesService {
       include: {
         repayment: true,
         disbursal: true,
+        platformFee: {
+          include: {
+            paymentOrders: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+          },
+        },
         history: {
           orderBy: {
             createdAt: 'asc',
@@ -758,6 +784,9 @@ export class EmployeesService {
     const notificationCount =
       await this.notificationsService.countUnread(userId);
 
+    // Salary advance setup is intentionally limited to KYC + bank.
+    // The request-scoped platform fee is payable only after employer approval,
+    // so employees are never charged for requests their employer rejects.
     const setup = [
       {
         key: 'KYC',
@@ -771,14 +800,9 @@ export class EmployeesService {
         status: profile.bankAccountStatus,
         completed: profile.bankAccountStatus === 'VERIFIED',
       },
-      {
-        key: 'MEMBERSHIP',
-        label: 'Membership',
-        status: profile.membershipActive ? 'ACTIVE' : 'NOT_ACTIVE',
-        completed: profile.membershipActive,
-      },
     ];
     const completedSetup = setup.filter((item) => item.completed).length;
+    const platformFeeConfig = await this.platformFeesService.getConfig();
 
     return {
       profile: {
@@ -805,6 +829,7 @@ export class EmployeesService {
         total: setup.length,
         percentage: Math.round((completedSetup / setup.length) * 100),
       },
+      platformFee: platformFeeConfig,
       salaryAdvance: {
         salaryInHand: profile.salaryInHand,
         maximumEligibleAmount: profile.maximumEligibleAmount,
@@ -822,6 +847,18 @@ export class EmployeesService {
                 : Number(currentRequest.adminApprovedAmount),
             status: currentRequest.status,
             submittedAt: currentRequest.submittedAt,
+            platformFee: currentRequest.platformFee
+              ? {
+                  id: currentRequest.platformFee.id,
+                  amount: Number(currentRequest.platformFee.amount),
+                  currency: currentRequest.platformFee.currency,
+                  status: currentRequest.platformFee.status,
+                  providerOrderId: currentRequest.platformFee.providerOrderId,
+                  paidAt: currentRequest.platformFee.paidAt,
+                  latestPaymentOrder:
+                    currentRequest.platformFee.paymentOrders?.[0] ?? null,
+                }
+              : null,
             repaymentDate: currentRequest.repayment?.dueDate ?? null,
             totalPayable:
               currentRequest.repayment?.totalAmount === undefined ||
@@ -1231,10 +1268,17 @@ export class EmployeesService {
     currentRequestStatus: string | null;
     availableAdvance: number;
   }) {
+    if (currentRequestStatus === 'AWAITING_PLATFORM_FEE_PAYMENT') {
+      return {
+        code: 'PAY_PLATFORM_FEE',
+        label: 'Pay platform fee',
+      };
+    }
+
     if (currentRequestStatus === 'AWAITING_MEMBERSHIP_PAYMENT') {
       return {
-        code: 'PAY_MEMBERSHIP',
-        label: 'Activate membership',
+        code: 'PAY_PLATFORM_FEE',
+        label: 'Pay platform fee',
       };
     }
 
@@ -1370,7 +1414,12 @@ export class EmployeesService {
   }
 
   private generateTemporaryPassword() {
-    return `MobPae-${randomBytes(8).toString('hex')}!1`;
+    // bcrypt stores its own per-password salt; this extra random segment raises
+    // temporary credential entropy before the password is hashed and emailed.
+    const entropy = randomBytes(12).toString('base64url');
+    const saltSegment = randomBytes(6).toString('base64url');
+
+    return `MobPae-${entropy}-${saltSegment}!1`;
   }
 
   private logTemporaryEmployeePassword(data: {

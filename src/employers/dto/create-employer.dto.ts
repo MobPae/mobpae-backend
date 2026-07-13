@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
   IsOptional,
@@ -7,6 +7,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { normalizeEmailInput } from '../../common/utils/email.util';
 
 export class CreateEmployerDto {
   @IsString()
@@ -18,6 +19,7 @@ export class CreateEmployerDto {
   @IsString()
   contactPerson: string;
 
+  @Transform(({ value }) => normalizeEmailInput(value))
   @IsEmail()
   email: string;
 

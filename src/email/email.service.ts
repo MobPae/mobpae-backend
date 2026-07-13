@@ -235,7 +235,7 @@ export class EmailService {
     );
   }
 
-  async sendAwaitingMembershipPaymentEmail(data: {
+  async sendAwaitingPlatformFeePaymentEmail(data: {
     to: string;
     employeeName: string;
     amount: number;
@@ -243,15 +243,15 @@ export class EmailService {
   }) {
     return this.sendTemplateEmail(
       data.to,
-      'Action Required: Complete Your MobPae Membership',
+      'Action Required: Pay Your MobPae Platform Fee',
       'salary-request-approved',
       {
-        title: 'Action Required: Membership Payment',
+        title: 'Action Required: Platform Fee',
         employeeName: data.employeeName,
         amount: this.formatCurrency(data.amount),
         approvedDate: this.formatDate(data.approvedDate),
         message:
-          'Your salary advance request has been approved by your employer. To proceed with disbursal, please complete your MobPae membership payment through the app.',
+          'Your salary advance request has been approved by your employer. To proceed to MobPae review, please pay the one-time platform fee through the app.',
       },
     );
   }

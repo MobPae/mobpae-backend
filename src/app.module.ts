@@ -47,6 +47,7 @@ import { BusinessJobsModule } from './business-jobs/business-jobs.module';
 import { AppInformationModule } from './app-information/app-information.module';
 import { RazorpayModule } from './razorpay/razorpay.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { PlatformFeesModule } from './platform-fees/platform-fees.module';
 
 @Module({
   imports: [
@@ -72,12 +73,16 @@ import { WebhooksModule } from './webhooks/webhooks.module';
           .truthy('true')
           .falsy('false')
           .default(false),
+        ENABLE_LOCAL_UPLOADS: Joi.boolean()
+          .truthy('true')
+          .falsy('false')
+          .default(false),
         // Cloudflare R2 — required; bucket is private, no public URL needed
         R2_ACCOUNT_ID: Joi.string().required(),
         R2_ACCESS_KEY_ID: Joi.string().required(),
         R2_SECRET_ACCESS_KEY: Joi.string().required(),
         R2_BUCKET_NAME: Joi.string().required(),
-        // Razorpay — required for membership payments
+        // Razorpay — required for membership and request-scoped platform fees.
         RAZORPAY_KEY_ID: Joi.string().required(),
         RAZORPAY_KEY_SECRET: Joi.string().required(),
         RAZORPAY_WEBHOOK_SECRET: Joi.string().required(),
@@ -148,6 +153,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     AppInformationModule,
 
     RazorpayModule,
+    PlatformFeesModule,
     WebhooksModule,
   ],
   controllers: [AppController],

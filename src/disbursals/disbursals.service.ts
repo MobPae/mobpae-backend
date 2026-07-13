@@ -10,6 +10,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { DisbursalListQueryDto } from './dto/disbursal-list-query.dto';
+import { PlatformFeesService } from '../platform-fees/platform-fees.service';
 
 @Injectable()
 export class DisbursalsService {
@@ -19,6 +20,7 @@ export class DisbursalsService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly platformFeesService: PlatformFeesService,
   ) {}
 
   async create(dto: CreateDisbursalDto, actorUserId: string) {
@@ -58,15 +60,15 @@ export class DisbursalsService {
       );
     }
 
-    // Guard: employee must have an active membership
-    const membership = await this.prisma.membership.findUnique({
-      where: { employeeId: loanApplication.employeeId },
-    });
-    const membershipActive =
-      membership?.status === 'ACTIVE' && membership.endDate > new Date();
-    if (!membershipActive) {
+    // Guard: salary advance requires the request-specific platform fee to be
+    // cleared after employer approval. Memberships remain available for future
+    // products but no longer gate salary advance disbursal.
+    const feeCleared = await this.platformFeesService.isFeeCleared(
+      loanApplication.id,
+    );
+    if (!feeCleared) {
       throw new BadRequestException(
-        'Employee does not have an active membership. Disbursal cannot proceed.',
+        'Platform fee must be paid before disbursal.',
       );
     }
 
@@ -180,12 +182,23 @@ export class DisbursalsService {
       );
     }
 
+    const feeCleared = await this.platformFeesService.isFeeCleared(
+      loanApplication.id,
+    );
+    if (!feeCleared) {
+      throw new BadRequestException(
+        'Platform fee must be paid before disbursal.',
+      );
+    }
+
     const disbursedAmount = Number(
       existingDisbursal.disbursedAmount ?? existingDisbursal.approvedAmount,
     );
 
     // ── Repayment calculation using SNAPSHOT rates ───────────────────────────
-    const annualInterestRate = Number(loanApplication.snapshotAnnualInterestRate);
+    const annualInterestRate = Number(
+      loanApplication.snapshotAnnualInterestRate,
+    );
     const interestDays = loanApplication.snapshotInterestDays ?? 0;
     const dueDate = loanApplication.snapshotRecoveryDate;
 
@@ -198,8 +211,12 @@ export class DisbursalsService {
       totalAmount,
     } = this.pricingService.computeRepaymentBreakdown(disbursedAmount, {
       snapshotAnnualInterestRate: annualInterestRate,
-      snapshotInterestFreeThreshold: Number(loanApplication.snapshotInterestFreeThreshold),
-      snapshotProcessingFeeRate: Number(loanApplication.snapshotProcessingFeeRate),
+      snapshotInterestFreeThreshold: Number(
+        loanApplication.snapshotInterestFreeThreshold,
+      ),
+      snapshotProcessingFeeRate: Number(
+        loanApplication.snapshotProcessingFeeRate,
+      ),
       snapshotGstRate: Number(loanApplication.snapshotGstRate),
       snapshotInterestDays: interestDays,
     });
@@ -207,6 +224,11 @@ export class DisbursalsService {
 
     // Freeze bank account at disbursal time
     const bankAccount = loanApplication.employee.bankAccount;
+    if (!bankAccount?.verified) {
+      throw new BadRequestException(
+        'Verified bank account is required before disbursal',
+      );
+    }
 
     const { disbursal, repayment, repaymentCreated, transitioned } =
       await this.prisma.$transaction(async (tx) => {
@@ -235,7 +257,12 @@ export class DisbursalsService {
 
           if (!disbursal) throw new NotFoundException('Disbursal not found');
 
-          return { disbursal, repayment, repaymentCreated: false, transitioned: false };
+          return {
+            disbursal,
+            repayment,
+            repaymentCreated: false,
+            transitioned: false,
+          };
         }
 
         let repayment = await tx.repayment.findUnique({

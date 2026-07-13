@@ -38,7 +38,9 @@ export class MembershipController {
 
   @Get('me')
   @Roles('EMPLOYEE')
-  @ApiOperation({ summary: 'Get my membership status + available plans + payment config' })
+  @ApiOperation({
+    summary: 'Get my membership status + available plans + payment config',
+  })
   getMyMembership(@Req() req: any) {
     return this.membershipService.getMyMembership(req.user.userId);
   }
@@ -51,7 +53,9 @@ export class MembershipController {
    */
   @Post('initiate-payment')
   @Roles('EMPLOYEE')
-  @ApiOperation({ summary: 'Initiate Razorpay membership payment — creates an order' })
+  @ApiOperation({
+    summary: 'Initiate Razorpay membership payment — creates an order',
+  })
   initiatePayment(@Req() req: any, @Body() dto: InitiatePaymentDto) {
     return this.membershipService.initiatePayment(req.user.userId, dto);
   }
@@ -62,7 +66,9 @@ export class MembershipController {
    */
   @Post('verify-payment')
   @Roles('EMPLOYEE')
-  @ApiOperation({ summary: 'Verify Razorpay payment signature and activate membership' })
+  @ApiOperation({
+    summary: 'Verify Razorpay payment signature and activate membership',
+  })
   verifyPayment(@Req() req: any, @Body() dto: VerifyPaymentDto) {
     return this.membershipService.verifyPayment(req.user.userId, dto);
   }
@@ -80,7 +86,9 @@ export class MembershipController {
 
   @Get('config')
   @Roles('EMPLOYEE')
-  @ApiOperation({ summary: 'Get membership config: plans, benefits, Razorpay key' })
+  @ApiOperation({
+    summary: 'Get membership config: plans, benefits, Razorpay key',
+  })
   getConfig() {
     return this.membershipService.getConfig();
   }
@@ -129,7 +137,9 @@ export class MembershipController {
 
   @Get()
   @Roles('ADMIN')
-  @ApiOperation({ summary: 'List memberships with pagination, search, and filters' })
+  @ApiOperation({
+    summary: 'List memberships with pagination, search, and filters',
+  })
   findAll(@Query() query: MembershipListQueryDto) {
     return this.membershipService.findAll(query);
   }
@@ -155,9 +165,27 @@ export class MembershipController {
     return this.membershipService.getRevenueSummary();
   }
 
+  // ─── Admin: Coupon management ─────────────────────────────────────────────
+
+  @Post('coupons')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Create membership coupon' })
+  createCoupon(@Body() dto: CreateMembershipCouponDto) {
+    return this.membershipService.createCoupon(dto);
+  }
+
+  @Get('coupons')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'List all coupons' })
+  findAllCoupons() {
+    return this.membershipService.findAllCoupons();
+  }
+
   @Get(':id')
   @Roles('ADMIN')
-  @ApiOperation({ summary: 'Get membership details (includes PaymentOrder + events)' })
+  @ApiOperation({
+    summary: 'Get membership details (includes PaymentOrder + events)',
+  })
   findOne(@Param('id') id: string) {
     return this.membershipService.findOne(id);
   }
@@ -180,21 +208,5 @@ export class MembershipController {
     @Req() req: any,
   ) {
     return this.membershipService.reject(id, dto.remarks, req.user.userId);
-  }
-
-  // ─── Admin: Coupon management ─────────────────────────────────────────────
-
-  @Post('coupons')
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'Create membership coupon' })
-  createCoupon(@Body() dto: CreateMembershipCouponDto) {
-    return this.membershipService.createCoupon(dto);
-  }
-
-  @Get('coupons')
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'List all coupons' })
-  findAllCoupons() {
-    return this.membershipService.findAllCoupons();
   }
 }

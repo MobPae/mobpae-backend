@@ -1,9 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class BulkLoanApplicationActionDto {
   @ApiProperty({ type: [String], example: ['id-1', 'id-2'] })
   @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(50)
   @IsString({ each: true })
   ids: string[];
 
@@ -14,5 +23,5 @@ export class BulkLoanApplicationActionDto {
   @ApiPropertyOptional({ example: 'Batch approved for payroll cycle' })
   @IsOptional()
   @IsString()
-  reason?: string;
+  remarks?: string;
 }

@@ -206,7 +206,7 @@ describe('Backend stabilization fixes', () => {
     );
   });
 
-  it('returns fallback employer credentials when activation email fails', async () => {
+  it('does not expose employer credentials when activation email fails', async () => {
     const prisma = {
       employer: {
         findUnique: jest.fn().mockResolvedValue({
@@ -249,9 +249,9 @@ describe('Backend stabilization fixes', () => {
       expect.objectContaining({
         status: 'ACTIVE',
         emailDelivered: false,
-        temporaryPassword: expect.stringMatching(/^MobPae-.+!1$/),
       }),
     );
+    expect(result).not.toHaveProperty('temporaryPassword');
     consoleError.mockRestore();
   });
 

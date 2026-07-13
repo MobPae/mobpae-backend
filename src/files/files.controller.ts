@@ -94,8 +94,16 @@ export class FilesController {
       'Returns a temporary pre-signed URL (15 minutes) for the given object key. ' +
       'Only accessible by the file owner, their employer, or an admin.',
   })
-  @ApiQuery({ name: 'key', required: true, description: 'R2 object key returned from /files/upload' })
-  @ApiQuery({ name: 'expiresIn', required: false, description: 'URL lifetime in seconds (default 900)' })
+  @ApiQuery({
+    name: 'key',
+    required: true,
+    description: 'R2 object key returned from /files/upload',
+  })
+  @ApiQuery({
+    name: 'expiresIn',
+    required: false,
+    description: 'URL lifetime in seconds (default 900)',
+  })
   async signedUrl(
     @Query('key') key: string,
     @Query('expiresIn') expiresInStr: string | undefined,
@@ -116,9 +124,10 @@ export class FilesController {
       throw new ForbiddenException('You do not have access to this file');
     }
 
-    // Cap expiry: max 1 hour regardless of what the caller asks for
+    // Keep signed URLs short-lived. Very small/very large caller values are normalized.
     const requested = expiresInStr ? parseInt(expiresInStr, 10) : 900;
-    const expiresIn = Math.min(isNaN(requested) ? 900 : requested, 3600);
+    const normalized = isNaN(requested) ? 900 : requested;
+    const expiresIn = Math.min(Math.max(normalized, 60), 3600);
 
     const url = await this.filesService.getSignedUrl(key, expiresIn);
     return { url, expiresIn };

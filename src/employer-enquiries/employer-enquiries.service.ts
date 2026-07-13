@@ -13,6 +13,7 @@ import {
   paginate,
 } from '../common/utils/pagination.util';
 import { EmployerEnquiryListQueryDto } from './dto/employer-enquiry-list-query.dto';
+import { normalizeEmail } from '../common/utils/email.util';
 
 @Injectable()
 export class EmployerEnquiriesService {
@@ -23,11 +24,12 @@ export class EmployerEnquiriesService {
   ) {}
 
   async create(dto: CreateEmployerEnquiryDto) {
+    const email = normalizeEmail(dto.email);
     const enquiry = await this.prisma.employerEnquiry.create({
       data: {
         companyName: dto.companyName,
         contactPerson: dto.contactPerson,
-        email: dto.email,
+        email,
         phone: dto.phone,
         employeeCount: dto.employeeCount,
       },

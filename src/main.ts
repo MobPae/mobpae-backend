@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import helmet from 'helmet';
 import { join } from 'path';
 
 async function bootstrap() {
@@ -31,20 +32,36 @@ async function bootstrap() {
     credentials: true,
   });
 
+  app.use(
+    helmet({
+      // The API serves private signed file URLs to browser clients on allowed
+      // origins, so keep resource policy compatible with those frontend flows.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
+
   // Global request DTO validation and transformation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
+      forbidNonWhitelisted: true,
       transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
 
   // Global API request/response logging
   app.useGlobalInterceptors(new LoggingInterceptor());
 
-  app.useStaticAssets(join(process.cwd(), 'uploads'), {
-    prefix: '/uploads/',
-  });
+  if (process.env.ENABLE_LOCAL_UPLOADS === 'true') {
+    // Local uploads are for dev-only compatibility. Production file access must
+    // go through private storage + signed URLs.
+    app.useStaticAssets(join(process.cwd(), 'uploads'), {
+      prefix: '/uploads/',
+    });
+  }
 
   if (
     process.env.NODE_ENV !== 'production' ||

@@ -14,8 +14,8 @@
  * 7. PostgreSQL sequence: loan_application_seq
  * 8. Demo employer + 10 employees + KYC + bank accounts
  * 9. EmployerProductConfig for demo employer
- * 10. LoanLimits, Memberships (with planKey)
- * 11. Demo LoanApplications + Disbursals + Repayments
+ * 10. LoanLimits, legacy Membership rows (profile/future-product demo)
+ * 11. Demo LoanApplications + Platform Fees + Disbursals + Repayments
  * 12. Demo EmployerSettlements + Notifications
  */
 
@@ -28,8 +28,12 @@ import {
   KycDocumentType,
   KycStatus,
   LoanApplicationStatus,
+  LoanApplicationFeeStatus,
+  LoanApplicationFeeType,
   MembershipStatus,
   NotificationType,
+  PaymentOrderPurpose,
+  PaymentOrderStatus,
   Prisma,
   PrismaClient,
   RepaymentStatus,
@@ -37,6 +41,7 @@ import {
   SelfieStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { normalizeEmail } from '../src/common/utils/email.util';
 
 const prisma = new PrismaClient();
 
@@ -59,8 +64,9 @@ function isoMonth(offset = 0) {
 }
 
 async function upsertUser(email: string, role: Role, password: string) {
+  const normalizedEmail = normalizeEmail(email);
   return prisma.user.upsert({
-    where: { email },
+    where: { email: normalizedEmail },
     update: {
       role,
       isActive: true,
@@ -68,7 +74,7 @@ async function upsertUser(email: string, role: Role, password: string) {
       passwordChanged: true,
     },
     create: {
-      email,
+      email: normalizedEmail,
       role,
       isActive: true,
       password: await bcrypt.hash(password, 10),
@@ -154,7 +160,7 @@ async function seedLendingCatalog() {
           minimumSalaryInHand: 10000,
           minimumTenureMonths: 3,
           requiresKyc: true,
-          requiresMembership: true,
+          requiresMembership: false,
           requiresBankAccount: true,
           requiresActiveSelfie: false,
           maxRequestsPerCycle: 1,
@@ -164,6 +170,8 @@ async function seedLendingCatalog() {
           annualInterestRate: 36,
           processingFeeRate: 0,
           gstRate: 0,
+          platformFeeAmount: 175,
+          platformFeeCurrency: 'INR',
         },
         operationalRules: {
           requiresEmployerApproval: true,
@@ -780,7 +788,7 @@ async function seedLoanApplicationWorkflows(
       applicationNumber: 'MP-SA-2026-00000002',
       employeeCode: 'EMP003',
       requestedAmount: 4200,
-      status: LoanApplicationStatus.EMPLOYER_APPROVED,
+      status: LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT,
       submittedAt: addDays(-3),
       employerApprovedAt: addDays(-2),
     },
@@ -853,7 +861,17 @@ async function seedLoanApplicationWorkflows(
 
     const loanApp = await prisma.loanApplication.upsert({
       where: { id: item.applicationId },
-      update: { status: item.status },
+      update: {
+        status: item.status,
+        employerApprovedAmount: isEmployerApproved ? item.requestedAmount : null,
+        adminApprovedAmount: isAdminApproved ? item.requestedAmount : null,
+        employerApprovedBy: isEmployerApproved ? employerUserId : null,
+        employerApprovedAt: item.employerApprovedAt ?? null,
+        adminApprovedBy: isAdminApproved ? adminUserId : null,
+        adminApprovedAt: item.adminApprovedAt ?? null,
+        snapshotInterestDays: interestDays,
+        snapshotRecoveryDate: recoveryDate,
+      },
       create: {
         id: item.applicationId,
         applicationNumber: item.applicationNumber,
@@ -900,6 +918,18 @@ async function seedLoanApplicationWorkflows(
       },
     });
 
+    if (isEmployerApproved) {
+      await seedPlatformFee(
+        loanApp.id,
+        emp.id,
+        employerId,
+        item.status === LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT
+          ? LoanApplicationFeeStatus.PENDING_PAYMENT
+          : LoanApplicationFeeStatus.PAID,
+        item.submittedAt,
+      );
+    }
+
     // Disbursal + Repayment for applicable statuses
     if (isAdminApproved && item.status !== LoanApplicationStatus.READY_FOR_DISBURSAL) {
       await seedDisbursalAndRepayment(
@@ -915,6 +945,101 @@ async function seedLoanApplicationWorkflows(
   }
 
   console.log(`  ✓ ${workflow.length} demo LoanApplications`);
+}
+
+async function seedPlatformFee(
+  loanApplicationId: string,
+  employeeId: string,
+  employerId: string,
+  status: LoanApplicationFeeStatus,
+  submittedAt: Date,
+) {
+  const isPaid = status === LoanApplicationFeeStatus.PAID;
+  const paidAt = isPaid ? new Date(submittedAt.getTime() + 2 * day) : null;
+  const providerOrderId = isPaid
+    ? `order_demo_pf_${loanApplicationId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)}`
+    : null;
+  const providerPaymentId = isPaid
+    ? `pay_demo_${loanApplicationId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 18)}`
+    : null;
+
+  const fee = await prisma.loanApplicationFee.upsert({
+    where: {
+      loanApplicationId_feeType: {
+        loanApplicationId,
+        feeType: LoanApplicationFeeType.PLATFORM_FEE,
+      },
+    },
+    update: {
+      employeeId,
+      employerId,
+      amount: 175,
+      currency: 'INR',
+      status,
+      providerOrderId,
+      providerPaymentId,
+      paidAt,
+      waivedAt: null,
+      waivedBy: null,
+      remarks: isPaid ? 'Demo platform fee paid through Razorpay' : null,
+    },
+    create: {
+      loanApplicationId,
+      employeeId,
+      employerId,
+      feeType: LoanApplicationFeeType.PLATFORM_FEE,
+      amount: 175,
+      currency: 'INR',
+      status,
+      providerOrderId,
+      providerPaymentId,
+      paidAt,
+      remarks: isPaid ? 'Demo platform fee paid through Razorpay' : null,
+    },
+  });
+
+  if (!isPaid || !providerOrderId) return;
+
+  const order = await prisma.paymentOrder.upsert({
+    where: { providerOrderId },
+    update: {
+      purpose: PaymentOrderPurpose.PLATFORM_FEE,
+      loanApplicationFeeId: fee.id,
+      employeeId,
+      amount: 17500,
+      currency: 'INR',
+      status: PaymentOrderStatus.CAPTURED,
+      expiresAt: new Date(submittedAt.getTime() + day),
+      notes: { loanApplicationId, platformFeeId: fee.id },
+    },
+    create: {
+      providerOrderId,
+      purpose: PaymentOrderPurpose.PLATFORM_FEE,
+      loanApplicationFeeId: fee.id,
+      employeeId,
+      amount: 17500,
+      currency: 'INR',
+      status: PaymentOrderStatus.CAPTURED,
+      expiresAt: new Date(submittedAt.getTime() + day),
+      notes: { loanApplicationId, platformFeeId: fee.id },
+    },
+  });
+
+  await prisma.paymentEvent.upsert({
+    where: { id: `event-${providerOrderId}` },
+    update: {},
+    create: {
+      id: `event-${providerOrderId}`,
+      orderId: order.id,
+      providerPaymentId,
+      eventType: 'payment.captured',
+      source: 'SEED',
+      status: 'CAPTURED',
+      method: 'upi',
+      capturedAt: paidAt,
+      rawPayload: { seeded: true, purpose: PaymentOrderPurpose.PLATFORM_FEE },
+    },
+  });
 }
 
 async function seedDisbursalAndRepayment(
@@ -1110,13 +1235,13 @@ async function seedAppInformation() {
       type: 'TERMS_CONDITIONS' as const,
       title: 'Terms & Conditions',
       version: '1.0.0',
-      content: `Last updated: July 2026\n\nBy using MobPae you agree to these Terms. Salary advances are limited to your employer-approved percentage of salary. Repayment is deducted automatically from your next payroll. An active MobPae membership is required to access advances.`,
+      content: `Last updated: July 2026\n\nBy using MobPae you agree to these Terms. Salary advances are limited to your employer-approved percentage of salary. Repayment is deducted automatically from your next payroll. A request-specific platform fee may be payable after employer approval and before MobPae review/disbursal.`,
     },
     {
       type: 'HOW_IT_WORKS' as const,
       title: 'How It Works',
       version: '1.0.0',
-      content: `1. Sign Up — Log in with credentials sent by your employer.\n2. Complete KYC — Upload Aadhaar, PAN, salary slip.\n3. Add Bank Account — Link where you want the advance credited.\n4. Activate Membership — Unlock salary advances.\n5. Request Advance — Submit the amount needed.\n6. Receive Money — Advance is credited once approved.\n7. Auto-Repayment — Deducted from your next salary.`,
+      content: `1. Sign Up — Log in with credentials sent by your employer.\n2. Complete KYC — Upload Aadhaar, PAN, salary slip.\n3. Add Bank Account — Link where you want the advance credited.\n4. Request Advance — Submit the amount needed.\n5. Employer Approval — Your employer verifies the request.\n6. Pay Platform Fee — Pay the request-specific fee only after employer approval.\n7. Receive Money — Advance is credited after MobPae review.\n8. Auto-Repayment — Deducted from your next salary.`,
     },
     {
       type: 'FAQ' as const,

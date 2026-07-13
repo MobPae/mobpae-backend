@@ -6,5 +6,5 @@ export class RejectLoanApplicationDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(500)
-  reason: string;
+  remarks: string;
 }

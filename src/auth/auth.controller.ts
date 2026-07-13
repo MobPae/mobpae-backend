@@ -6,9 +6,6 @@ import { LogoutDto } from './dto/logout.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { Role } from '../common/enums/role.enum';
-import { Roles } from './decorators/roles.decorator';
-import { RolesGuard } from './guards/roles.guard';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -161,15 +158,6 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   getProfile(@Req() req: any) {
     return req.user;
-  }
-
-  @Get('admin-test')
-  @Roles(Role.ADMIN)
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  adminTest() {
-    return {
-      message: 'Admin access granted',
-    };
   }
 
   private getMeta(req: any) {

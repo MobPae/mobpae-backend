@@ -38,6 +38,7 @@ const ACTIVE_STATUSES = [
   'SUBMITTED',
   'EMPLOYER_APPROVED',
   'AWAITING_MEMBERSHIP_PAYMENT',
+  'AWAITING_PLATFORM_FEE_PAYMENT',
   'READY_FOR_DISBURSAL',
   'DISBURSED',
   'REPAYMENT_SCHEDULED',
@@ -187,8 +188,9 @@ export class EligibilityService {
       return this.deny('KYC documents not fully verified', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!bankVerified)
       return this.deny('Bank account not verified', checks, maximumEligibleAmount, interestFreeThreshold);
-    if (!membershipActive)
-      return this.deny('Membership not active', checks, maximumEligibleAmount, interestFreeThreshold);
+    // Membership is NOT a salary-advance submission gate. Salary advances now use
+    // a request-scoped platform fee after employer approval.
+    // membershipActive is still exposed in `checks` so the frontend can surface it as informational.
     if (!noActiveApplication)
       return this.deny('Active loan application already exists', checks, maximumEligibleAmount, interestFreeThreshold);
     if (!cooldownMet)

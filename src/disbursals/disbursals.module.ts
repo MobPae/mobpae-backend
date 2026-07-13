@@ -6,6 +6,7 @@ import { DisbursalsService } from './disbursals.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailModule } from '../email/email.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { PlatformFeesModule } from '../platform-fees/platform-fees.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
     NotificationsModule,
     EmailModule,
     AuditLogsModule,
+    PlatformFeesModule,
   ],
   controllers: [DisbursalsController],
   providers: [DisbursalsService],

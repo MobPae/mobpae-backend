@@ -1,4 +1,6 @@
 import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { normalizeEmailInput } from '../../common/utils/email.util';
 
 export class UpdateEmployerProfileDto {
   @IsString()
@@ -9,6 +11,7 @@ export class UpdateEmployerProfileDto {
   @IsNotEmpty()
   contactPerson: string;
 
+  @Transform(({ value }) => normalizeEmailInput(value))
   @IsEmail()
   email: string;
 

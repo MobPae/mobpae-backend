@@ -5,6 +5,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { FilesModule } from '../files/files.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailModule } from '../email/email.module';
+import { PlatformFeesModule } from '../platform-fees/platform-fees.module';
 
 import { EmployeesService } from './employees.service';
 import { EmployeesController } from './employees.controller';
@@ -16,6 +17,7 @@ import { EmployeesController } from './employees.controller';
     FilesModule,
     NotificationsModule,
     EmailModule,
+    PlatformFeesModule,
   ],
   providers: [EmployeesService],
   controllers: [EmployeesController],

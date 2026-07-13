@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { normalizeEmail } from '../common/utils/email.util';
 
 type RequestMeta = {
   ipAddress?: string;
@@ -27,11 +28,12 @@ export class AuthService {
   ) {}
 
   async login(email: string, password: string, meta: RequestMeta = {}) {
-    const user = await this.usersService.findByEmail(email);
+    const normalizedEmail = normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalizedEmail);
 
     if (!user) {
       await this.writeAuthAudit('LOGIN_FAILED', {
-        email,
+        email: normalizedEmail,
         meta,
         details: {
           reason: 'USER_NOT_FOUND',
@@ -178,18 +180,27 @@ export class AuthService {
 
     const authUser = await this.getAuthUser(session.userId);
     const newRefreshToken = this.buildRefreshToken(session.id);
+    const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
 
-    await this.prisma.userSession.update({
+    // Rotate using the currently stored token hash as a compare-and-swap guard.
+    // If two refresh calls race, only one can replace this exact hash.
+    const rotation = await this.prisma.userSession.updateMany({
       where: {
         id: session.id,
+        isActive: true,
+        refreshToken: session.refreshToken,
       },
       data: {
-        refreshToken: await bcrypt.hash(newRefreshToken, 10),
+        refreshToken: newRefreshTokenHash,
         deviceInfo: meta.deviceInfo ?? session.deviceInfo,
         ipAddress: meta.ipAddress ?? session.ipAddress,
         isActive: true,
       },
     });
+
+    if (rotation.count !== 1) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
 
     await this.writeAuthAudit('TOKEN_REFRESH', {
       userId: session.userId,
@@ -264,16 +275,17 @@ export class AuthService {
   }
 
   async forgotPassword(email: string, meta: RequestMeta = {}) {
+    const normalizedEmail = normalizeEmail(email);
     const user = await this.prisma.user.findUnique({
       where: {
-        email,
+        email: normalizedEmail,
       },
     });
 
     if (!user || !user.isActive) {
       await this.writeAuthAudit('LOGIN_FAILED', {
         userId: user?.id,
-        email,
+        email: normalizedEmail,
         meta,
         details: {
           reason: 'PASSWORD_RESET_USER_NOT_FOUND',
@@ -436,7 +448,10 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    const passwordMatches = await bcrypt.compare(currentPassword, user.password);
+    const passwordMatches = await bcrypt.compare(
+      currentPassword,
+      user.password,
+    );
     if (!passwordMatches) {
       throw new UnauthorizedException('Current password is incorrect');
     }

@@ -20,8 +20,36 @@ export class BankAccountsService {
     private readonly emailService: EmailService,
   ) {}
 
-  private maskAccountNumber(accountNumber: string) {
+  private maskAccountNumber(accountNumber: string): string;
+  private maskAccountNumber(accountNumber?: string | null): string | null;
+  private maskAccountNumber(accountNumber?: string | null) {
+    if (!accountNumber) return null;
     return '********' + accountNumber.slice(-4);
+  }
+
+  private toSafeAccountResponse<T extends Record<string, any>>(
+    account: T | null,
+  ) {
+    if (!account) return null;
+
+    return {
+      ...account,
+      accountNumber: this.maskAccountNumber(account.accountNumber),
+    };
+  }
+
+  private toSafeAuditValue(value?: Record<string, unknown> | null) {
+    const safeValue = this.toSafeAccountResponse(
+      value as Record<string, any> | null,
+    );
+
+    if (!safeValue) return null;
+
+    return {
+      ...safeValue,
+      // UPI can be personally identifying; audit snapshots only need to show it changed.
+      upiId: safeValue.upiId ? '[REDACTED]' : safeValue.upiId,
+    };
   }
 
   async create(userId: string, dto: CreateBankAccountDto) {
@@ -78,10 +106,7 @@ export class BankAccountsService {
       newValue: account,
     });
 
-    return {
-      ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
-    };
+    return this.toSafeAccountResponse(account);
   }
 
   private didBankDetailsChange(
@@ -112,10 +137,7 @@ export class BankAccountsService {
       return null;
     }
 
-    return {
-      ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
-    };
+    return this.toSafeAccountResponse(account);
   }
 
   async updateUpi(employeeId: string, upiId?: string) {
@@ -128,10 +150,7 @@ export class BankAccountsService {
       },
     });
 
-    return {
-      ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
-    };
+    return this.toSafeAccountResponse(account);
   }
 
   async verify(id: string, actorUserId?: string) {
@@ -185,10 +204,7 @@ export class BankAccountsService {
       console.error('Failed to send bank account verified email', err);
     }
 
-    return {
-      ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
-    };
+    return this.toSafeAccountResponse(account);
   }
 
   async reject(id: string, actorUserId?: string) {
@@ -240,14 +256,11 @@ export class BankAccountsService {
       console.error('Failed to send bank account rejected email', err);
     }
 
-    return {
-      ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
-    };
+    return this.toSafeAccountResponse(account);
   }
 
   async findAllForAdmin(verified?: boolean) {
-    return this.prisma.employeeBankAccount.findMany({
+    const accounts = await this.prisma.employeeBankAccount.findMany({
       where: verified === undefined ? undefined : { verified },
       include: {
         employee: {
@@ -260,6 +273,8 @@ export class BankAccountsService {
         createdAt: 'desc',
       },
     });
+
+    return accounts.map((account) => this.toSafeAccountResponse(account));
   }
 
   async findPendingByEmployer() {
@@ -323,10 +338,7 @@ export class BankAccountsService {
       },
     });
 
-    return accounts.map((account) => ({
-      ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
-    }));
+    return accounts.map((account) => this.toSafeAccountResponse(account));
   }
 
   async findByUserId(userId: string) {
@@ -355,8 +367,8 @@ export class BankAccountsService {
       action: data.action,
       entityType: 'BANK_ACCOUNT',
       entityId: data.entityId,
-      oldValue: data.oldValue,
-      newValue: data.newValue,
+      oldValue: this.toSafeAuditValue(data.oldValue),
+      newValue: this.toSafeAuditValue(data.newValue),
     });
   }
 }

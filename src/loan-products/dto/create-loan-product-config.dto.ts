@@ -35,6 +35,9 @@ export interface PricingRules {
   annualInterestRate: number; // e.g. 36 = 36% p.a.
   processingFeeRate: number; // fraction e.g. 0.01 = 1%
   gstRate: number; // fraction e.g. 0.18 = 18%
+  /** Employee-paid per-transaction platform fee after employer approval. */
+  platformFeeAmount?: number;
+  platformFeeCurrency?: string;
 }
 
 export interface OperationalRules {
@@ -67,7 +70,7 @@ export class CreateLoanProductConfigDto {
       minimumSalaryInHand: 10000,
       minimumTenureMonths: 3,
       requiresKyc: true,
-      requiresMembership: true,
+      requiresMembership: false,
       requiresBankAccount: true,
       requiresActiveSelfie: false,
       maxRequestsPerCycle: 1,
@@ -83,6 +86,8 @@ export class CreateLoanProductConfigDto {
       annualInterestRate: 36,
       processingFeeRate: 0,
       gstRate: 0,
+      platformFeeAmount: 175,
+      platformFeeCurrency: 'INR',
     },
   })
   @IsObject()

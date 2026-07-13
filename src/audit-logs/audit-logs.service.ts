@@ -44,6 +44,8 @@ export type AuditLogAction =
   | 'SETTLEMENT_OVERDUE'
   | 'MEMBERSHIP_EXPIRED'
   | 'MEMBERSHIP_REJECTED'
+  | 'PLATFORM_FEE_PAID'
+  | 'PLATFORM_FEE_WAIVED'
   | 'REPAYMENT_OVERDUE'
   | 'KYC_SUBMITTED'
   | 'KYC_APPROVED'
@@ -63,6 +65,7 @@ export type AuditEntityType =
   | 'PAYROLL'
   | 'SETTLEMENT'
   | 'MEMBERSHIP'
+  | 'PLATFORM_FEE'
   | 'KYC_DOCUMENT'
   | 'BANK_ACCOUNT';
 

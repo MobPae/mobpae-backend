@@ -206,6 +206,7 @@ export class MembershipService {
     const existingOrder = await this.prisma.paymentOrder.findFirst({
       where: {
         employeeId: employee.id,
+        purpose: 'MEMBERSHIP',
         planKey: plan.planKey,
         status: 'CREATED',
         expiresAt: { gt: new Date() },
@@ -247,6 +248,7 @@ export class MembershipService {
     const paymentOrder = await this.prisma.paymentOrder.create({
       data: {
         provider: 'RAZORPAY',
+        purpose: 'MEMBERSHIP',
         providerOrderId: rzpOrder.id,
         amount: finalAmountPaise,
         currency: 'INR',
@@ -306,6 +308,9 @@ export class MembershipService {
       include: { employee: true },
     });
     if (!order) throw new NotFoundException('Payment order not found');
+    if (order.purpose !== 'MEMBERSHIP' || !order.planKey) {
+      throw new BadRequestException('Payment order is not for membership');
+    }
 
     // Verify the order belongs to this user
     if (order.employee.userId !== userId) {
@@ -358,6 +363,7 @@ export class MembershipService {
       );
       return;
     }
+    if (order.purpose !== 'MEMBERSHIP') return;
 
     // Idempotent: already captured
     if (order.status === 'CAPTURED') {
@@ -392,6 +398,7 @@ export class MembershipService {
     });
 
     if (!order) return;
+    if (order.purpose !== 'MEMBERSHIP') return;
     if (order.status === 'CAPTURED') return; // Already succeeded, ignore the failed event
 
     await this.prisma.$transaction([
@@ -805,7 +812,7 @@ export class MembershipService {
     order: {
       id: string;
       employeeId: string;
-      planKey: string;
+      planKey: string | null;
       amount: number;
       couponCode: string | null;
       discountAmount: number;
@@ -819,6 +826,10 @@ export class MembershipService {
       rawPayload?: unknown;
     },
   ) {
+    if (!order.planKey) {
+      throw new BadRequestException('Membership payment order missing plan');
+    }
+
     const plan = await this.getPlanOrDefault(order.planKey);
     const now = new Date();
     const endDate = new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000);

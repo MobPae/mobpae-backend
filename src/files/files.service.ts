@@ -6,7 +6,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadType, UPLOAD_TYPE_FOLDER } from './upload-type.enum';
-import * as path from 'path';
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
@@ -14,6 +13,23 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/png',
   'image/webp',
 ]);
+
+const MIME_SIGNATURES: Record<string, (buffer: Buffer) => boolean> = {
+  'application/pdf': (buffer) => buffer.subarray(0, 5).toString() === '%PDF-',
+  'image/jpeg': (buffer) =>
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff,
+  'image/png': (buffer) =>
+    buffer
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/webp': (buffer) =>
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString() === 'RIFF' &&
+    buffer.subarray(8, 12).toString() === 'WEBP',
+};
 
 export interface SavedFile {
   /** R2 object key — the only value stored in the database */
@@ -52,14 +68,19 @@ export class FilesService {
       throw new BadRequestException('Only PDF and image uploads are allowed');
     }
 
+    const detectedMimeType = this.detectMimeType(file.buffer);
+    if (!detectedMimeType || detectedMimeType !== file.mimetype) {
+      throw new BadRequestException('File content does not match file type');
+    }
+
     const safeUserId = userId.replace(/[^a-zA-Z0-9-]/g, '');
     const subfolder = UPLOAD_TYPE_FOLDER[type];
-    const ext = path.extname(file.originalname ?? '') || this.mimeToExt(file.mimetype);
+    const ext = this.mimeToExt(detectedMimeType);
     const key = `employees/${safeUserId}/${subfolder}/document${ext}`;
 
-    await this.storage.uploadFile(key, file.buffer, file.mimetype);
+    await this.storage.uploadFile(key, file.buffer, detectedMimeType);
 
-    return { key, mimeType: file.mimetype, size: file.size };
+    return { key, mimeType: detectedMimeType, size: file.size };
   }
 
   /**
@@ -120,5 +141,15 @@ export class FilesService {
       'application/pdf': '.pdf',
     };
     return map[mime] ?? '';
+  }
+
+  private detectMimeType(buffer?: Buffer): string | null {
+    if (!buffer || buffer.length === 0) return null;
+
+    for (const [mimeType, matches] of Object.entries(MIME_SIGNATURES)) {
+      if (matches(buffer)) return mimeType;
+    }
+
+    return null;
   }
 }
