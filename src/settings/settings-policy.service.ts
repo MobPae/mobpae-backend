@@ -5,7 +5,7 @@
  * LoanProductConfig.eligibilityRules / pricingRules, NOT here.
  *
  * This service covers: OTP TTL, app version, maintenance mode, notification toggles,
- * employer settlement policy, membership payment details.
+ * and employer settlement policy.
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,12 +13,6 @@ import { PrismaService } from '../prisma/prisma.service';
 export type EmployerSettlementPolicy = {
   gracePeriodDays: number;
   lateFeePercentage: number;
-};
-
-export type MembershipPaymentInfo = {
-  upiId: string;
-  beneficiary: string;
-  instructions: string;
 };
 
 @Injectable()
@@ -41,15 +35,6 @@ export class SettingsPolicyService {
         settings['employer.late_fee_percentage'],
         30,
       ),
-    };
-  }
-
-  async getMembershipPaymentInfo(): Promise<MembershipPaymentInfo> {
-    const settings = await this.getAllSettings();
-    return {
-      upiId: settings['membership.payment_upi_id'] ?? '',
-      beneficiary: settings['membership.payment_beneficiary'] ?? '',
-      instructions: settings['membership.payment_instructions'] ?? '',
     };
   }
 

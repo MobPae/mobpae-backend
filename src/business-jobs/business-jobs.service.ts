@@ -30,83 +30,24 @@ export class BusinessJobsService {
 
     if (stale.length === 0) return { expired: 0 };
 
-    await this.prisma.loanApplication.updateMany({
-      where: { id: { in: stale.map((a) => a.id) } },
-      data: { status: 'EXPIRED' },
-    });
+    await this.prisma.$transaction([
+      this.prisma.loanApplication.updateMany({
+        where: { id: { in: stale.map((a) => a.id) } },
+        data: { status: 'EXPIRED' },
+      }),
+      this.prisma.loanApplicationHistory.createMany({
+        data: stale.map((application) => ({
+          loanApplicationId: application.id,
+          previousStatus: 'SUBMITTED',
+          newStatus: 'EXPIRED',
+          changedBy: null,
+          actorRole: 'SYSTEM',
+          remarks: 'Application expired after no action for more than 3 days',
+        })),
+      }),
+    ]);
 
     return { expired: stale.length };
-  }
-
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
-  async expireMemberships() {
-    const now = new Date();
-    const memberships = await this.prisma.membership.findMany({
-      where: {
-        endDate: {
-          lt: now,
-        },
-        status: {
-          not: 'EXPIRED',
-        },
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            userId: true,
-            name: true,
-          },
-        },
-      },
-    });
-
-    if (memberships.length === 0) {
-      return {
-        processed: 0,
-      };
-    }
-
-    await this.prisma.membership.updateMany({
-      where: {
-        id: {
-          in: memberships.map((membership) => membership.id),
-        },
-      },
-      data: {
-        status: 'EXPIRED',
-      },
-    });
-
-    await Promise.all(
-      memberships.map(async (membership) => {
-        await this.auditLogsService.log({
-          action: 'MEMBERSHIP_EXPIRED',
-          entityType: 'MEMBERSHIP',
-          entityId: membership.id,
-          oldValue: {
-            status: membership.status,
-            endDate: membership.endDate.toISOString(),
-          },
-          newValue: {
-            status: 'EXPIRED',
-            processedAt: now.toISOString(),
-          },
-        });
-
-        if (membership.employee.userId) {
-          await this.notificationsService.createSystemNotification(
-            membership.employee.userId,
-            'Membership Expired',
-            'Your MobPae membership has expired. Please renew it to continue using salary advance benefits.',
-          );
-        }
-      }),
-    );
-
-    return {
-      processed: memberships.length,
-    };
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_2AM)

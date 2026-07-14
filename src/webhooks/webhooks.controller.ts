@@ -22,7 +22,6 @@ import {
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { RazorpayService } from '../razorpay/razorpay.service';
-import { MembershipService } from '../membership/membership.service';
 import { PlatformFeesService } from '../platform-fees/platform-fees.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -33,7 +32,6 @@ export class WebhooksController {
 
   constructor(
     private readonly razorpayService: RazorpayService,
-    private readonly membershipService: MembershipService,
     private readonly platformFeesService: PlatformFeesService,
     private readonly prisma: PrismaService,
   ) {}
@@ -110,15 +108,10 @@ export class WebhooksController {
               method: payment.method,
               rawPayload: event,
             });
-          } else if (purpose === 'MEMBERSHIP') {
-            await this.membershipService.handleWebhookPayment({
-              eventType: event.event,
-              razorpayOrderId: payment.order_id,
-              razorpayPaymentId: payment.id,
-              status: payment.status,
-              method: payment.method,
-              rawPayload: event,
-            });
+          } else {
+            this.logger.warn(
+              `Ignoring Razorpay payment event for unsupported purpose ${purpose}`,
+            );
           }
         } catch (err) {
           this.logger.error('Error processing webhook payment event', err);
@@ -141,14 +134,10 @@ export class WebhooksController {
               errorDescription: payment.error_description,
               rawPayload: event,
             });
-          } else if (purpose === 'MEMBERSHIP') {
-            await this.membershipService.handleWebhookPaymentFailed({
-              razorpayOrderId: payment.order_id,
-              razorpayPaymentId: payment.id,
-              errorCode: payment.error_code,
-              errorDescription: payment.error_description,
-              rawPayload: event,
-            });
+          } else {
+            this.logger.warn(
+              `Ignoring Razorpay failure event for unsupported purpose ${purpose}`,
+            );
           }
         } catch (err) {
           this.logger.error(

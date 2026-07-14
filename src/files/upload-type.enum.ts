@@ -13,7 +13,7 @@
  *   employees/{userId}/selfie/document.{ext}
  *   employees/{userId}/profile/document.{ext}
  *
- * Note: membership payments are handled by Razorpay — no screenshot upload needed.
+ * Note: platform fee payments are handled by Razorpay — no screenshot upload needed.
  */
 export enum UploadType {
   KYC_AADHAR = 'kyc_aadhar',

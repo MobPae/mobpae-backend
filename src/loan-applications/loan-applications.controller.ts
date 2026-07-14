@@ -8,7 +8,12 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -19,6 +24,7 @@ import { BulkLoanApplicationActionDto } from './dto/bulk-loan-application-action
 import { CancelLoanApplicationDto } from './dto/cancel-loan-application.dto';
 import { CreateLoanApplicationDto } from './dto/create-loan-application.dto';
 import { LoanApplicationListQueryDto } from './dto/loan-application-list-query.dto';
+import { PreviewLoanApplicationDto } from './dto/preview-loan-application.dto';
 import { RejectLoanApplicationDto } from './dto/reject-loan-application.dto';
 
 @ApiTags('Loan Applications')
@@ -40,8 +46,8 @@ export class LoanApplicationsController {
   @Get('preview')
   @Roles('EMPLOYEE')
   @ApiOperation({ summary: 'Preview repayment for a given amount' })
-  preview(@Req() req: any, @Query('amount') amount: string) {
-    return this.service.preview(req.user.userId, Number(amount));
+  preview(@Req() req: any, @Query() query: PreviewLoanApplicationDto) {
+    return this.service.preview(req.user.userId, query.amount);
   }
 
   @Get('eligibility')
@@ -87,7 +93,9 @@ export class LoanApplicationsController {
 
   @Get('employer/pending')
   @Roles('EMPLOYER')
-  @ApiOperation({ summary: 'List pending applications awaiting employer action' })
+  @ApiOperation({
+    summary: 'List pending applications awaiting employer action',
+  })
   findPendingByEmployer(@Req() req: any) {
     return this.service.findPendingByEmployer(req.user.userId);
   }
@@ -128,9 +136,37 @@ export class LoanApplicationsController {
 
   @Get('employee/:employeeId')
   @Roles('ADMIN')
-  @ApiOperation({ summary: 'Admin: list loan applications for a specific employee' })
+  @ApiOperation({
+    summary: 'Admin: list loan applications for a specific employee',
+  })
   findByEmployee(@Param('employeeId') employeeId: string) {
     return this.service.findByEmployee(employeeId);
+  }
+
+  @Get(':id/history')
+  @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
+  @ApiOperation({ summary: 'Get loan application lifecycle history' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        history: [
+          {
+            id: 'history-id',
+            status: 'AWAITING_PLATFORM_FEE_PAYMENT',
+            previousStatus: 'SUBMITTED',
+            actorType: 'EMPLOYER',
+            actorName: 'Rohan Mehta',
+            actorId: null,
+            note: 'Employer approved. Platform fee payment required.',
+            createdAt: '2026-07-10T14:22:00.000Z',
+          },
+        ],
+      },
+    },
+  })
+  findHistory(@Param('id') id: string, @Req() req: any) {
+    return this.service.findHistory(id, req.user);
   }
 
   @Get(':id')

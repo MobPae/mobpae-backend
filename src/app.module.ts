@@ -36,7 +36,6 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { SettingsModule } from './settings/settings.module';
 import { PayrollModule } from './payroll/payroll.module';
-import { MembershipModule } from './membership/membership.module';
 import { EmployerSettlementsModule } from './employer-settlements/employer-settlements.module';
 import { EmailModule } from './email/email.module';
 import { HealthModule } from './health/health.module';
@@ -82,7 +81,7 @@ import { PlatformFeesModule } from './platform-fees/platform-fees.module';
         R2_ACCESS_KEY_ID: Joi.string().required(),
         R2_SECRET_ACCESS_KEY: Joi.string().required(),
         R2_BUCKET_NAME: Joi.string().required(),
-        // Razorpay — required for membership and request-scoped platform fees.
+        // Razorpay — required for request-scoped platform fees.
         RAZORPAY_KEY_ID: Joi.string().required(),
         RAZORPAY_KEY_SECRET: Joi.string().required(),
         RAZORPAY_WEBHOOK_SECRET: Joi.string().required(),
@@ -133,8 +132,6 @@ import { PlatformFeesModule } from './platform-fees/platform-fees.module';
     SettingsModule,
 
     PayrollModule,
-
-    MembershipModule,
 
     EmployerSettlementsModule,
 

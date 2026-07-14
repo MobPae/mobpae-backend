@@ -59,15 +59,25 @@ export class LoggingInterceptor implements NestInterceptor {
   private redact(value: unknown): unknown {
     const sensitiveFields = new Set([
       'password',
-      'currentPassword',
-      'newPassword',
-      'refreshToken',
+      'currentpassword',
+      'newpassword',
+      'confirmpassword',
+      'refreshtoken',
       'token',
+      'accesstoken',
+      'authorization',
+      'cookie',
       'accountNumber',
-      'upiId',
-      'filePath',
-      'paymentReference',
-      'paymentScreenshot',
+      'accountnumber',
+      'upiid',
+      'filepath',
+      'paymentreference',
+      'paymentscreenshot',
+      'providersignature',
+      'razorpaysignature',
+      'razorpaypaymentid',
+      'razorpayorderid',
+      'signature',
     ]);
 
     if (Array.isArray(value)) {
@@ -81,7 +91,9 @@ export class LoggingInterceptor implements NestInterceptor {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, item]) => [
         key,
-        sensitiveFields.has(key) ? '[REDACTED]' : this.redact(item),
+        sensitiveFields.has(key.toLowerCase())
+          ? '[REDACTED]'
+          : this.redact(item),
       ]),
     );
   }

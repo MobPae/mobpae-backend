@@ -10,13 +10,12 @@
  * 3. AppInformation (about, terms, FAQ, etc.)
  * 4. LoanProduct — Salary Advance (SA)
  * 5. LoanProductConfig v1 for SA
- * 6. MembershipPlanConfig rows (linked to SA product)
- * 7. PostgreSQL sequence: loan_application_seq
- * 8. Demo employer + 10 employees + KYC + bank accounts
- * 9. EmployerProductConfig for demo employer
- * 10. LoanLimits, legacy Membership rows (profile/future-product demo)
- * 11. Demo LoanApplications + Platform Fees + Disbursals + Repayments
- * 12. Demo EmployerSettlements + Notifications
+ * 6. PostgreSQL sequence: loan_application_seq
+ * 7. Demo employer + employees + KYC + bank accounts
+ * 8. EmployerProductConfig for demo employer
+ * 9. LoanLimits
+ * 10. Demo LoanApplications + Platform Fees + Disbursals + Repayments
+ * 11. Demo EmployerSettlements + Notifications
  */
 
 import {
@@ -30,7 +29,6 @@ import {
   LoanApplicationStatus,
   LoanApplicationFeeStatus,
   LoanApplicationFeeType,
-  MembershipStatus,
   NotificationType,
   PaymentOrderPurpose,
   PaymentOrderStatus,
@@ -101,16 +99,6 @@ async function seedSettings() {
     { key: 'notifications.repayment_reminder_days_before', value: '3' },
     { key: 'employer.grace_days', value: '3' },
     { key: 'employer.late_fee_percentage', value: '30' },
-    { key: 'membership.payment_upi_id', value: 'jyotirmoy.upd@okicici' },
-    {
-      key: 'membership.payment_beneficiary',
-      value: 'MobPae Financial Services',
-    },
-    {
-      key: 'membership.payment_instructions',
-      value:
-        'Pay using UPI and upload the screenshot. Verification is completed within 24 hours.',
-    },
   ];
 
   for (const setting of settings) {
@@ -160,7 +148,6 @@ async function seedLendingCatalog() {
           minimumSalaryInHand: 10000,
           minimumTenureMonths: 3,
           requiresKyc: true,
-          requiresMembership: false,
           requiresBankAccount: true,
           requiresActiveSelfie: false,
           maxRequestsPerCycle: 1,
@@ -191,68 +178,7 @@ async function seedLendingCatalog() {
   return saProduct;
 }
 
-// ── 6. MembershipPlanConfig ──────────────────────────────────────────────────
-async function seedMembershipPlans(productId: string) {
-  const plans = [
-    {
-      planKey: 'MONTHLY',
-      planName: 'Monthly',
-      amount: 175,
-      validityDays: 30,
-      billingLabel: '₹175 / month',
-      perMonthLabel: null,
-      isPreferred: false,
-      sortOrder: 1,
-    },
-    {
-      planKey: 'BIANNUAL',
-      planName: '6 Month',
-      amount: 499,
-      validityDays: 180,
-      billingLabel: '₹499 / 6 months',
-      perMonthLabel: '₹83 / month',
-      isPreferred: true,
-      sortOrder: 2,
-    },
-    {
-      planKey: 'ANNUAL',
-      planName: 'Annual',
-      amount: 799,
-      validityDays: 365,
-      billingLabel: '₹799 / year',
-      perMonthLabel: '₹67 / month',
-      isPreferred: false,
-      sortOrder: 3,
-    },
-  ];
-
-  // Delete stale plans not in the current set (cascade through payment orders/events first)
-  const validKeys = plans.map((p) => p.planKey);
-  const staleOrders = await prisma.paymentOrder.findMany({
-    where: { planKey: { notIn: validKeys } },
-    select: { id: true },
-  });
-  const staleOrderIds = staleOrders.map((o) => o.id);
-  if (staleOrderIds.length) {
-    await prisma.paymentEvent.deleteMany({ where: { orderId: { in: staleOrderIds } } });
-    await prisma.paymentOrder.deleteMany({ where: { id: { in: staleOrderIds } } });
-  }
-  await prisma.membershipPlanConfig.deleteMany({
-    where: { planKey: { notIn: validKeys } },
-  });
-
-  for (const plan of plans) {
-    await prisma.membershipPlanConfig.upsert({
-      where: { planKey: plan.planKey },
-      update: { ...plan },
-      create: { productId, ...plan },
-    });
-  }
-
-  console.log(`  ✓ ${plans.length} MembershipPlanConfig rows`);
-}
-
-// ── 7. PostgreSQL sequence ───────────────────────────────────────────────────
+// ── 6. PostgreSQL sequence ───────────────────────────────────────────────────
 async function seedSequence() {
   await prisma.$executeRawUnsafe(
     `CREATE SEQUENCE IF NOT EXISTS loan_application_seq START 1 INCREMENT 1`,
@@ -356,7 +282,6 @@ type DemoEmployeeSeed = {
   selfieStatus: SelfieStatus;
   kyc: Partial<Record<KycDocumentType, KycStatus>>;
   bankVerified: boolean;
-  membershipStatus: MembershipStatus;
 };
 
 const employeeSeeds: DemoEmployeeSeed[] = [
@@ -374,7 +299,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.ACTIVE,
   },
   {
     code: 'EMP002',
@@ -386,7 +310,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     selfieStatus: SelfieStatus.PENDING,
     kyc: { PAN: KycStatus.VERIFIED, AADHAR: KycStatus.PENDING },
     bankVerified: false,
-    membershipStatus: MembershipStatus.PENDING,
   },
   {
     code: 'EMP003',
@@ -402,7 +325,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.ACTIVE,
   },
   {
     code: 'EMP004',
@@ -418,7 +340,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.REJECTED,
   },
   {
     code: 'EMP005',
@@ -434,7 +355,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.ACTIVE,
   },
   {
     code: 'EMP006',
@@ -450,7 +370,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.ACTIVE,
   },
   {
     code: 'EMP007',
@@ -462,7 +381,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     selfieStatus: SelfieStatus.PENDING,
     kyc: { PAN: KycStatus.PENDING },
     bankVerified: false,
-    membershipStatus: MembershipStatus.PENDING,
   },
   {
     code: 'EMP008',
@@ -478,7 +396,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.ACTIVE,
   },
   {
     code: 'EMP009',
@@ -490,7 +407,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     selfieStatus: SelfieStatus.PENDING,
     kyc: {},
     bankVerified: false,
-    membershipStatus: MembershipStatus.EXPIRED,
   },
   {
     code: 'EMP010',
@@ -506,7 +422,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: false,
-    membershipStatus: MembershipStatus.ACTIVE,
   },
   {
     code: 'EMP011',
@@ -522,7 +437,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.PENDING,
   },
   {
     code: 'EMP012',
@@ -538,7 +452,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.PENDING,
   },
   {
     code: 'EMP013',
@@ -554,14 +467,12 @@ const employeeSeeds: DemoEmployeeSeed[] = [
       SALARY_SLIP: KycStatus.VERIFIED,
     },
     bankVerified: true,
-    membershipStatus: MembershipStatus.PENDING,
   },
 ];
 
 async function seedEmployees(
   employerId: string,
   adminUserId: string,
-  saProductId: string,
 ) {
   const seeded: { id: string; employeeCode: string; salary: number }[] = [];
 
@@ -617,7 +528,6 @@ async function seedEmployees(
 
     await seedEmployeeKyc(employee.id, seed.kyc, adminUserId);
     await seedBankAccount(employee.id, seed);
-    await seedMembership(employee.id, seed.membershipStatus, adminUserId, saProductId);
     await seedLoanLimit(employee.id, seed.salary);
 
     seeded.push({ id: employee.id, employeeCode: seed.code, salary: seed.salary });
@@ -684,55 +594,6 @@ async function seedBankAccount(employeeId: string, seed: DemoEmployeeSeed) {
       bankName: 'HDFC Bank',
       upiId: `${seed.code.toLowerCase()}@okhdfcbank`,
       verified: seed.bankVerified,
-    },
-  });
-}
-
-async function seedMembership(
-  employeeId: string,
-  status: MembershipStatus,
-  adminUserId: string,
-  productId: string,
-) {
-  const isExpired = status === MembershipStatus.EXPIRED;
-  const startDate = isExpired ? addDays(-430) : addDays(-45);
-  const endDate = isExpired ? addDays(-30) : addDays(320);
-  const isActive = status === MembershipStatus.ACTIVE;
-
-  await prisma.membership.upsert({
-    where: { employeeId },
-    update: {
-      planKey: 'BIANNUAL',
-      planType: 'BIANNUAL',
-      planName: '6 Month Membership',
-      amount: isActive ? 499 : 0,
-      amountPaid: isActive ? 499 : null,
-      startDate,
-      endDate,
-      status,
-      verifiedBy: isActive ? adminUserId : null,
-      verifiedAt: isActive ? addDays(-45) : null,
-      remarks:
-        status === MembershipStatus.REJECTED
-          ? 'Demo rejected membership request'
-          : null,
-    },
-    create: {
-      employeeId,
-      planKey: 'BIANNUAL',
-      planType: 'BIANNUAL',
-      planName: '6 Month Membership',
-      amount: isActive ? 499 : 0,
-      amountPaid: isActive ? 499 : null,
-      startDate,
-      endDate,
-      status,
-      verifiedBy: isActive ? adminUserId : null,
-      verifiedAt: isActive ? addDays(-45) : null,
-      remarks:
-        status === MembershipStatus.REJECTED
-          ? 'Demo rejected membership request'
-          : null,
     },
   });
 }
@@ -1327,27 +1188,24 @@ async function main() {
   // 4+5. LoanProduct + config
   const saProduct = await seedLendingCatalog();
 
-  // 6. MembershipPlanConfig
-  await seedMembershipPlans(saProduct.id);
-
-  // 7. Sequence
+  // 6. Sequence
   await seedSequence();
 
-  // 8. Employer
+  // 7. Employer
   const employer = await seedEmployer(admin.id);
   const employerUser = await prisma.user.findUniqueOrThrow({
     where: { email: EMPLOYER_EMAIL },
   });
   console.log(`  ✓ Employer: ${employer.companyName}`);
 
-  // 9. EmployerProductConfig
+  // 8. EmployerProductConfig
   await seedEmployerProductConfig(employer.id, saProduct.id);
 
-  // 10. Employees
-  const seededEmployees = await seedEmployees(employer.id, admin.id, saProduct.id);
+  // 9. Employees
+  const seededEmployees = await seedEmployees(employer.id, admin.id);
   console.log(`  ✓ ${seededEmployees.length} demo employees`);
 
-  // 11. Loan applications
+  // 10. Loan applications
   const activeConfig = await prisma.loanProductConfig.findFirstOrThrow({
     where: { productId: saProduct.id, isActive: true },
   });

@@ -23,7 +23,7 @@ export class ReportsService {
       totalRecovered,
       outstanding,
       pendingSettlements,
-      membershipTotals,
+      platformFeeTotals,
     ] = await Promise.all([
       this.prisma.employer.count(),
       this.prisma.employer.count({
@@ -107,20 +107,17 @@ export class ReportsService {
           status: 'GENERATED',
         },
       }),
-      this.prisma.membership.aggregate({
+      this.prisma.loanApplicationFee.aggregate({
         where: {
-          status: 'ACTIVE',
+          status: 'PAID',
         },
         _sum: {
           amount: true,
-          discountAmount: true,
         },
       }),
     ]);
 
-    const membershipRevenue =
-      this.toNumber(membershipTotals._sum.amount) -
-      this.toNumber(membershipTotals._sum.discountAmount);
+    const platformFeeRevenue = this.toNumber(platformFeeTotals._sum.amount);
 
     return {
       totalEmployers,
@@ -138,7 +135,7 @@ export class ReportsService {
       totalRecoveredAmount: this.toNumber(totalRecovered._sum.totalAmount),
       outstandingAmount: this.toNumber(outstanding._sum.totalAmount),
       pendingSettlements,
-      membershipRevenue,
+      platformFeeRevenue,
     };
   }
 

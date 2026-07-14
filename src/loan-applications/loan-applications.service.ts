@@ -29,11 +29,41 @@ const ACTIVE_STATUSES: LoanApplicationStatus[] = [
   'SUBMITTED',
   'AWAITING_PLATFORM_FEE_PAYMENT',
   'EMPLOYER_APPROVED',
-  'AWAITING_MEMBERSHIP_PAYMENT',
   'READY_FOR_DISBURSAL',
   'DISBURSED',
   'REPAYMENT_SCHEDULED',
 ];
+
+// Never return stored gateway signatures in loan application responses.
+const PLATFORM_FEE_SELECT = {
+  id: true,
+  loanApplicationId: true,
+  employeeId: true,
+  employerId: true,
+  feeType: true,
+  amount: true,
+  currency: true,
+  status: true,
+  provider: true,
+  paidAt: true,
+  waivedAt: true,
+  waivedBy: true,
+  remarks: true,
+  createdAt: true,
+  updatedAt: true,
+  paymentOrders: {
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      currency: true,
+      createdAt: true,
+      expiresAt: true,
+    },
+  },
+} as const;
 
 // Full relation include used for detail views
 const DETAIL_INCLUDE = {
@@ -51,14 +81,7 @@ const DETAIL_INCLUDE = {
   history: { orderBy: { createdAt: 'asc' as const } },
   disbursal: true,
   repayment: true,
-  platformFee: {
-    include: {
-      paymentOrders: {
-        orderBy: { createdAt: 'desc' as const },
-        take: 1,
-      },
-    },
-  },
+  platformFee: { select: PLATFORM_FEE_SELECT },
 } as const;
 
 @Injectable()
@@ -113,7 +136,6 @@ export class LoanApplicationsService {
       payrollDate: employee.employer.payrollDate,
       payrollCutoffDate: employee.employer.payrollCutoffDate,
     });
-
     const breakdown = this.pricingService.computeRepaymentBreakdown(
       amount,
       snapshot,
@@ -163,7 +185,7 @@ export class LoanApplicationsService {
       this.prisma.loanApplication.findFirst({
         where: { employeeId: employee.id, status: { in: ACTIVE_STATUSES } },
         include: {
-          platformFee: true,
+          platformFee: { select: PLATFORM_FEE_SELECT },
           repayment: {
             select: {
               status: true,
@@ -278,7 +300,6 @@ export class LoanApplicationsService {
         payrollDate: employee.employer?.payrollDate ?? null,
         payrollCutoffDate: employee.employer?.payrollCutoffDate ?? null,
       },
-      membershipRequiredAfterEmployerApproval: false,
       platformFeeRequiredAfterEmployerApproval: true,
       platformFee,
       outstandingRepayment: scheduledRepayment
@@ -361,6 +382,9 @@ export class LoanApplicationsService {
       payrollDate: employee.employer.payrollDate,
       payrollCutoffDate: employee.employer.payrollCutoffDate,
     });
+    const snapshotPayrollCycle = this.getPayrollCycle(
+      snapshot.snapshotRecoveryDate,
+    );
 
     // 5. Application number from PostgreSQL sequence
     const productType = await this.getProductType(config.productId);
@@ -395,13 +419,15 @@ export class LoanApplicationsService {
             submittedAt: submissionDate,
             // Snapshot — frozen forever
             snapshotAnnualInterestRate: snapshot.snapshotAnnualInterestRate,
-            snapshotInterestFreeThreshold: snapshot.snapshotInterestFreeThreshold,
+            snapshotInterestFreeThreshold:
+              snapshot.snapshotInterestFreeThreshold,
             snapshotProcessingFeeRate: snapshot.snapshotProcessingFeeRate,
             snapshotGstRate: snapshot.snapshotGstRate,
             snapshotMaxAdvancePercentage: snapshot.snapshotMaxAdvancePercentage,
             snapshotSalaryInHand: snapshot.snapshotSalaryInHand,
             snapshotInterestDays: snapshot.snapshotInterestDays,
             snapshotRecoveryDate: snapshot.snapshotRecoveryDate,
+            snapshotPayrollCycle,
             history: {
               create: {
                 previousStatus: null,
@@ -416,10 +442,7 @@ export class LoanApplicationsService {
         });
         break; // success — exit retry loop
       } catch (err: any) {
-        if (
-          this.isApplicationNumberCollision(err) &&
-          ++appNumAttempts < 5
-        ) {
+        if (this.isApplicationNumberCollision(err) && ++appNumAttempts < 5) {
           await this.syncApplicationNumberSequence();
           continue;
         }
@@ -478,7 +501,7 @@ export class LoanApplicationsService {
         disbursal: {
           select: { status: true, disbursedAmount: true, completedAt: true },
         },
-        platformFee: true,
+        platformFee: { select: PLATFORM_FEE_SELECT },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -518,7 +541,7 @@ export class LoanApplicationsService {
       );
     }
 
-    return this.prisma.loanApplication.update({
+    const updated = await this.prisma.loanApplication.update({
       where: { id },
       data: {
         status: 'CANCELLED',
@@ -533,6 +556,20 @@ export class LoanApplicationsService {
         },
       },
     });
+
+    await this.auditLogsService.log({
+      userId,
+      action: 'LOAN_APPLICATION_CANCELLED',
+      entityType: 'LOAN_APPLICATION',
+      entityId: id,
+      oldValue: { status: app.status },
+      newValue: {
+        status: 'CANCELLED',
+        remarks: remarks ?? 'Cancelled by employee',
+      },
+    });
+
+    return updated;
   }
 
   // ── Employer: view company applications ─────────────────────────────────────
@@ -558,7 +595,7 @@ export class LoanApplicationsService {
             interestRate: true,
           },
         },
-        platformFee: true,
+        platformFee: { select: PLATFORM_FEE_SELECT },
       },
       orderBy: { submittedAt: 'desc' },
     });
@@ -610,7 +647,6 @@ export class LoanApplicationsService {
     const IN_PROGRESS_STATUSES: LoanApplicationStatus[] = [
       'EMPLOYER_APPROVED',
       'AWAITING_PLATFORM_FEE_PAYMENT',
-      'AWAITING_MEMBERSHIP_PAYMENT',
       'READY_FOR_DISBURSAL',
       'DISBURSED',
       'REPAYMENT_SCHEDULED',
@@ -669,6 +705,20 @@ export class LoanApplicationsService {
         .catch(() => {});
     }
 
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'LOAN_APPLICATION_EMPLOYER_APPROVED',
+      entityType: 'LOAN_APPLICATION',
+      entityId: id,
+      oldValue: {
+        status: app.status,
+      },
+      newValue: {
+        status: 'AWAITING_PLATFORM_FEE_PAYMENT',
+        employerApprovedAmount: Number(app.requestedAmount),
+      },
+    });
+
     return updated;
   }
 
@@ -723,6 +773,20 @@ export class LoanApplicationsService {
         )
         .catch(() => {});
     }
+
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'LOAN_APPLICATION_EMPLOYER_REJECTED',
+      entityType: 'LOAN_APPLICATION',
+      entityId: id,
+      oldValue: {
+        status: app.status,
+      },
+      newValue: {
+        status: 'EMPLOYER_REJECTED',
+        remarks: dto.remarks,
+      },
+    });
 
     return updated;
   }
@@ -789,7 +853,7 @@ export class LoanApplicationsService {
           employee: { select: { id: true, name: true, employeeCode: true } },
           employer: { select: { id: true, companyName: true } },
           disbursal: { select: { status: true, disbursedAmount: true } },
-          platformFee: true,
+          platformFee: { select: PLATFORM_FEE_SELECT },
           repayment: {
             select: {
               status: true,
@@ -842,10 +906,95 @@ export class LoanApplicationsService {
           },
         },
         history: { orderBy: { createdAt: 'asc' } },
-        platformFee: true,
+        platformFee: { select: PLATFORM_FEE_SELECT },
       },
       orderBy: { submittedAt: 'desc' },
     });
+  }
+
+  // ── Admin/Employer/Employee: lifecycle history ─────────────────────────────
+
+  async findHistory(id: string, user: { userId: string; role: string }) {
+    const app = await this.prisma.loanApplication.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        employerId: true,
+        employee: {
+          select: {
+            id: true,
+            userId: true,
+          },
+        },
+      },
+    });
+    if (!app) throw new NotFoundException('Application not found');
+
+    await this.assertHistoryAccess(app, user);
+
+    const history = await this.prisma.loanApplicationHistory.findMany({
+      where: { loanApplicationId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const visibleHistory = this.filterHistoryForViewer(history, user.role);
+
+    const actorIds = Array.from(
+      new Set(
+        visibleHistory
+          .map((event) => event.changedBy)
+          .filter((actorId): actorId is string => Boolean(actorId)),
+      ),
+    );
+
+    const actors =
+      actorIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: actorIds } },
+            select: {
+              id: true,
+              email: true,
+              role: true,
+              employee: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+              employer: {
+                select: {
+                  id: true,
+                  companyName: true,
+                  contactPerson: true,
+                },
+              },
+            },
+          })
+        : [];
+
+    const actorsById = new Map(actors.map((actor) => [actor.id, actor]));
+
+    const isAdminViewer = user.role === 'ADMIN';
+
+    return {
+      history: visibleHistory.map((event) => {
+        const actor = event.changedBy
+          ? actorsById.get(event.changedBy)
+          : undefined;
+        const actorType = this.formatActorType(event.actorRole ?? actor?.role);
+
+        return {
+          id: event.id,
+          status: event.newStatus,
+          previousStatus: event.previousStatus,
+          actorType,
+          actorName: this.formatActorName(actorType, actor),
+          actorId: isAdminViewer ? event.changedBy : null,
+          note: this.formatHistoryNote(event, isAdminViewer),
+          createdAt: event.createdAt,
+        };
+      }),
+    };
   }
 
   // ── Admin/Employer: detail ──────────────────────────────────────────────────
@@ -919,6 +1068,22 @@ export class LoanApplicationsService {
         .catch(() => {});
     }
 
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'LOAN_APPLICATION_ADMIN_APPROVED',
+      entityType: 'LOAN_APPLICATION',
+      entityId: id,
+      oldValue: {
+        status: app.status,
+      },
+      newValue: {
+        status: 'READY_FOR_DISBURSAL',
+        adminApprovedAmount: Number(
+          app.employerApprovedAmount ?? app.requestedAmount,
+        ),
+      },
+    });
+
     return updated;
   }
 
@@ -939,7 +1104,6 @@ export class LoanApplicationsService {
       'SUBMITTED',
       'AWAITING_PLATFORM_FEE_PAYMENT',
       'EMPLOYER_APPROVED',
-      'AWAITING_MEMBERSHIP_PAYMENT',
       'READY_FOR_DISBURSAL',
     ];
     if (!rejectableStatuses.includes(app.status)) {
@@ -976,6 +1140,20 @@ export class LoanApplicationsService {
         )
         .catch(() => {});
     }
+
+    await this.auditLogsService.log({
+      userId: actorUserId,
+      action: 'LOAN_APPLICATION_ADMIN_REJECTED',
+      entityType: 'LOAN_APPLICATION',
+      entityId: id,
+      oldValue: {
+        status: app.status,
+      },
+      newValue: {
+        status: 'ADMIN_REJECTED',
+        remarks: dto.remarks,
+      },
+    });
 
     return updated;
   }
@@ -1028,9 +1206,7 @@ export class LoanApplicationsService {
   }
 
   private async syncApplicationNumberSequence(): Promise<void> {
-    const [existing] = await this.prisma.$queryRaw<
-      { maxSeq: bigint | null }[]
-    >`
+    const [existing] = await this.prisma.$queryRaw<{ maxSeq: bigint | null }[]>`
       SELECT COALESCE(
         MAX((substring("applicationNumber" from '[0-9]{8}$'))::BIGINT),
         0
@@ -1042,9 +1218,7 @@ export class LoanApplicationsService {
     const maxSeq = Number(existing?.maxSeq ?? 0);
     if (maxSeq <= 0) return;
 
-    const [sequence] = await this.prisma.$queryRaw<
-      { lastValue: bigint }[]
-    >`
+    const [sequence] = await this.prisma.$queryRaw<{ lastValue: bigint }[]>`
       SELECT last_value AS "lastValue"
       FROM "loan_application_seq"
     `;
@@ -1055,5 +1229,128 @@ export class LoanApplicationsService {
     await this.prisma.$queryRaw`
       SELECT setval('loan_application_seq', ${maxSeq}, true)
     `;
+  }
+
+  private getPayrollCycle(recoveryDate: Date): Date {
+    return new Date(recoveryDate.getFullYear(), recoveryDate.getMonth(), 1);
+  }
+
+  private async assertHistoryAccess(
+    app: {
+      employerId: string;
+      employee: {
+        userId: string | null;
+      };
+    },
+    user: { userId: string; role: string },
+  ) {
+    if (user.role === 'ADMIN') return;
+
+    if (user.role === 'EMPLOYEE' && app.employee.userId === user.userId) {
+      return;
+    }
+
+    if (user.role === 'EMPLOYER') {
+      const employer = await this.prisma.employer.findUnique({
+        where: { userId: user.userId },
+        select: { id: true },
+      });
+
+      if (employer?.id === app.employerId) return;
+    }
+
+    throw new ForbiddenException('Access denied');
+  }
+
+  private formatActorType(actorRole?: string | null) {
+    if (actorRole === 'EMPLOYEE') return 'EMPLOYEE';
+    if (actorRole === 'EMPLOYER') return 'EMPLOYER';
+    if (actorRole === 'ADMIN') return 'ADMIN';
+    return 'SYSTEM';
+  }
+
+  private formatActorName(
+    actorType: string,
+    actor?: {
+      email: string;
+      employee?: { name: string } | null;
+      employer?: { companyName: string; contactPerson: string } | null;
+    },
+  ) {
+    if (!actor) return actorType === 'SYSTEM' ? 'MobPae System' : 'Unknown';
+
+    if (actorType === 'EMPLOYEE') return actor.employee?.name ?? actor.email;
+    if (actorType === 'EMPLOYER') {
+      return (
+        actor.employer?.contactPerson ??
+        actor.employer?.companyName ??
+        actor.email
+      );
+    }
+    if (actorType === 'ADMIN') return 'MobPae Admin';
+
+    return 'MobPae System';
+  }
+
+  private filterHistoryForViewer<
+    T extends { newStatus: LoanApplicationStatus },
+  >(history: T[], viewerRole: string) {
+    if (viewerRole !== 'EMPLOYER') return history;
+
+    const employerVisibleStatuses = new Set<LoanApplicationStatus>([
+      LoanApplicationStatus.SUBMITTED,
+      LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT,
+      LoanApplicationStatus.EMPLOYER_REJECTED,
+      LoanApplicationStatus.READY_FOR_DISBURSAL,
+      LoanApplicationStatus.ADMIN_REJECTED,
+      LoanApplicationStatus.DISBURSED,
+      LoanApplicationStatus.REPAYMENT_SCHEDULED,
+      LoanApplicationStatus.REPAID,
+      LoanApplicationStatus.CANCELLED,
+      LoanApplicationStatus.EXPIRED,
+    ]);
+
+    return history.filter((event) =>
+      employerVisibleStatuses.has(event.newStatus),
+    );
+  }
+
+  private formatHistoryNote(
+    event: {
+      newStatus: LoanApplicationStatus;
+      remarks: string | null;
+    },
+    isAdminViewer: boolean,
+  ) {
+    if (isAdminViewer) return event.remarks;
+
+    // Non-admin history is consumed by employee/employer portals, so avoid
+    // exposing internal review notes while keeping the timeline understandable.
+    switch (event.newStatus) {
+      case LoanApplicationStatus.SUBMITTED:
+        return 'Application submitted';
+      case LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT:
+        return 'Employer approved. Platform fee payment required.';
+      case LoanApplicationStatus.EMPLOYER_APPROVED:
+        return 'Platform fee completed. Awaiting MobPae review.';
+      case LoanApplicationStatus.EMPLOYER_REJECTED:
+        return event.remarks ?? 'Employer rejected the request';
+      case LoanApplicationStatus.READY_FOR_DISBURSAL:
+        return 'MobPae approved. Ready for disbursal.';
+      case LoanApplicationStatus.ADMIN_REJECTED:
+        return 'MobPae rejected the request';
+      case LoanApplicationStatus.DISBURSED:
+        return 'Advance disbursed';
+      case LoanApplicationStatus.REPAYMENT_SCHEDULED:
+        return 'Disbursal completed and repayment scheduled';
+      case LoanApplicationStatus.REPAID:
+        return 'Repayment completed';
+      case LoanApplicationStatus.CANCELLED:
+        return 'Application cancelled';
+      case LoanApplicationStatus.EXPIRED:
+        return 'Application expired';
+      default:
+        return null;
+    }
   }
 }

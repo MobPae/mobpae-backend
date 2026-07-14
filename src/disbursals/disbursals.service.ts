@@ -61,8 +61,7 @@ export class DisbursalsService {
     }
 
     // Guard: salary advance requires the request-specific platform fee to be
-    // cleared after employer approval. Memberships remain available for future
-    // products but no longer gate salary advance disbursal.
+    // cleared after employer approval.
     const feeCleared = await this.platformFeesService.isFeeCleared(
       loanApplication.id,
     );

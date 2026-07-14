@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -37,6 +46,7 @@ export class AuthController {
           role: 'ADMIN',
           employeeId: null,
           passwordChanged: true,
+          lastLoginAt: '2026-07-13T08:00:00.000Z',
         },
       },
     },
@@ -62,6 +72,7 @@ export class AuthController {
           role: 'ADMIN',
           employeeId: null,
           passwordChanged: true,
+          lastLoginAt: '2026-07-13T08:00:00.000Z',
         },
       },
     },
@@ -156,8 +167,70 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current authenticated user profile' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        userId: 'user-id',
+        email: 'employee@northstar.com',
+        role: 'EMPLOYEE',
+        employeeId: 'employee-id',
+        sessionId: 'session-id',
+        lastLoginAt: '2026-07-13T08:00:00.000Z',
+      },
+    },
+  })
   getProfile(@Req() req: any) {
-    return req.user;
+    return this.authService.getCurrentUserProfile(req.user, req.user.sessionId);
+  }
+
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List active sessions for current user' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        sessions: [
+          {
+            id: 'session-id',
+            current: true,
+            device: 'Chrome on macOS',
+            ipAddress: '103.21.244.10',
+            loginAt: '2026-07-10T09:15:00.000Z',
+            lastActiveAt: '2026-07-14T11:02:00.000Z',
+          },
+        ],
+      },
+    },
+  })
+  getSessions(@Req() req: any) {
+    return this.authService.listSessions(req.user.userId, req.user.sessionId);
+  }
+
+  @Delete('sessions/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Revoke one active session for current user' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        success: true,
+        message: 'Session revoked successfully',
+      },
+    },
+  })
+  revokeSession(@Param('id') id: string, @Req() req: any) {
+    return this.authService.revokeSession(
+      req.user.userId,
+      id,
+      req.user.sessionId,
+      this.getMeta(req),
+    );
   }
 
   private getMeta(req: any) {

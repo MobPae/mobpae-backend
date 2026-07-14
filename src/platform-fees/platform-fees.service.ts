@@ -18,7 +18,11 @@ import {
 } from '@prisma/client';
 
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-import { getOrderBy, getPagination, paginate } from '../common/utils/pagination.util';
+import {
+  getOrderBy,
+  getPagination,
+  paginate,
+} from '../common/utils/pagination.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RazorpayService } from '../razorpay/razorpay.service';
@@ -27,6 +31,10 @@ import { VerifyPlatformFeePaymentDto } from './dto/verify-platform-fee-payment.d
 import { WaivePlatformFeeDto } from './dto/waive-platform-fee.dto';
 
 type PrismaClientLike = PrismaService | Prisma.TransactionClient;
+type FormatFeeOptions = {
+  includeProviderRefs?: boolean;
+  includePaymentOrders?: boolean;
+};
 
 @Injectable()
 export class PlatformFeesService {
@@ -157,7 +165,7 @@ export class PlatformFeesService {
     ) {
       return {
         alreadyPaid: true,
-        fee: this.formatFee(fee),
+        fee: this.formatFee(fee, { includeProviderRefs: false }),
         requestStatus: application.status,
       };
     }
@@ -287,7 +295,6 @@ export class PlatformFeesService {
 
     const order = await this.prisma.paymentOrder.findUnique({
       where: { providerOrderId: params.razorpayOrderId },
-      include: { platformFee: true },
     });
 
     if (!order || order.purpose !== PaymentOrderPurpose.PLATFORM_FEE) {
@@ -333,7 +340,12 @@ export class PlatformFeesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return fees.map((fee) => this.formatFee(fee));
+    return fees.map((fee) =>
+      this.formatFee(fee, {
+        includeProviderRefs: false,
+        includePaymentOrders: false,
+      }),
+    );
   }
 
   async findAll(query: PlatformFeeListQueryDto) {
@@ -346,8 +358,16 @@ export class PlatformFeesService {
       ...(query.search
         ? {
             OR: [
-              { employee: { name: { contains: query.search, mode: 'insensitive' } } },
-              { employee: { email: { contains: query.search, mode: 'insensitive' } } },
+              {
+                employee: {
+                  name: { contains: query.search, mode: 'insensitive' },
+                },
+              },
+              {
+                employee: {
+                  email: { contains: query.search, mode: 'insensitive' },
+                },
+              },
               {
                 employer: {
                   companyName: { contains: query.search, mode: 'insensitive' },
@@ -378,7 +398,12 @@ export class PlatformFeesService {
     ]);
 
     return paginate(
-      data.map((fee) => this.formatFee(fee)),
+      data.map((fee) =>
+        this.formatFee(fee, {
+          includeProviderRefs: true,
+          includePaymentOrders: true,
+        }),
+      ),
       total,
       page,
       limit,
@@ -395,7 +420,10 @@ export class PlatformFeesService {
       throw new NotFoundException('Platform fee not found');
     }
 
-    return this.formatFee(fee);
+    return this.formatFee(fee, {
+      includeProviderRefs: true,
+      includePaymentOrders: true,
+    });
   }
 
   async waive(id: string, adminUserId: string, dto: WaivePlatformFeeDto) {
@@ -457,7 +485,10 @@ export class PlatformFeesService {
       entityType: 'PLATFORM_FEE',
       entityId: id,
       oldValue: { status: fee.status },
-      newValue: { status: LoanApplicationFeeStatus.WAIVED, remarks: dto.remarks },
+      newValue: {
+        status: LoanApplicationFeeStatus.WAIVED,
+        remarks: dto.remarks,
+      },
     });
 
     await this.safeNotify(
@@ -495,21 +526,44 @@ export class PlatformFeesService {
     }
 
     if (!order.platformFee) {
-      throw new BadRequestException('Payment order is not linked to a platform fee');
+      throw new BadRequestException(
+        'Payment order is not linked to a platform fee',
+      );
     }
 
     const fee = order.platformFee;
-    const alreadyPaid =
-      order.status === PaymentOrderStatus.CAPTURED &&
-      fee.status === LoanApplicationFeeStatus.PAID;
+    const finalized = await this.prisma.$transaction(async (tx) => {
+      const capturedAt = args.capturedAt ?? new Date();
 
-    if (!alreadyPaid) {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.paymentOrder.update({
-          where: { id: order.id },
-          data: { status: PaymentOrderStatus.CAPTURED },
-        });
+      const orderUpdate = await tx.paymentOrder.updateMany({
+        where: {
+          id: order.id,
+          status: { not: PaymentOrderStatus.CAPTURED },
+        },
+        data: { status: PaymentOrderStatus.CAPTURED },
+      });
 
+      const feeUpdate = await tx.loanApplicationFee.updateMany({
+        where: {
+          id: fee.id,
+          status: {
+            notIn: [
+              LoanApplicationFeeStatus.PAID,
+              LoanApplicationFeeStatus.WAIVED,
+            ],
+          },
+        },
+        data: {
+          status: LoanApplicationFeeStatus.PAID,
+          providerOrderId: order.providerOrderId,
+          providerPaymentId: args.providerPaymentId,
+          providerSignature: args.providerSignature,
+          paidAt: capturedAt,
+        },
+      });
+
+      const changed = orderUpdate.count > 0 || feeUpdate.count > 0;
+      if (changed) {
         await tx.paymentEvent.create({
           data: {
             orderId: order.id,
@@ -520,34 +574,28 @@ export class PlatformFeesService {
             status: 'CAPTURED',
             method: args.method,
             rawPayload: (args.rawPayload as Prisma.InputJsonValue) ?? undefined,
-            capturedAt: args.capturedAt ?? new Date(),
+            capturedAt,
           },
         });
+      }
 
-        await tx.loanApplicationFee.update({
-          where: { id: fee.id },
-          data: {
-            status: LoanApplicationFeeStatus.PAID,
-            providerOrderId: order.providerOrderId,
-            providerPaymentId: args.providerPaymentId,
-            providerSignature: args.providerSignature,
-            paidAt: new Date(),
+      let applicationMoved = false;
+      if (feeUpdate.count > 0) {
+        const applicationUpdate = await tx.loanApplication.updateMany({
+          where: {
+            id: fee.loanApplicationId,
+            status: LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT,
           },
+          data: { status: LoanApplicationStatus.EMPLOYER_APPROVED },
         });
+        applicationMoved = applicationUpdate.count > 0;
 
-        if (
-          fee.loanApplication.status ===
-          LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT
-        ) {
-          await tx.loanApplication.update({
-            where: { id: fee.loanApplicationId },
-            data: { status: LoanApplicationStatus.EMPLOYER_APPROVED },
-          });
-
+        if (applicationMoved) {
           await tx.loanApplicationHistory.create({
             data: {
               loanApplicationId: fee.loanApplicationId,
-              previousStatus: fee.loanApplication.status,
+              previousStatus:
+                LoanApplicationStatus.AWAITING_PLATFORM_FEE_PAYMENT,
               newStatus: LoanApplicationStatus.EMPLOYER_APPROVED,
               changedBy: fee.employee.userId,
               actorRole: Role.EMPLOYEE,
@@ -555,8 +603,15 @@ export class PlatformFeesService {
             },
           });
         }
-      });
+      }
 
+      return {
+        feeFinalized: feeUpdate.count > 0,
+        applicationMoved,
+      };
+    });
+
+    if (finalized.feeFinalized) {
       await this.auditLogs.log({
         userId: fee.employee.userId,
         action: 'PLATFORM_FEE_PAID',
@@ -584,12 +639,23 @@ export class PlatformFeesService {
 
     return {
       success: true,
-      fee: await this.findOne(fee.id),
+      fee: this.formatFee(
+        await this.prisma.loanApplicationFee.findUniqueOrThrow({
+          where: { id: fee.id },
+          include: this.feeInclude(),
+        }),
+        {
+          includeProviderRefs: false,
+          includePaymentOrders: false,
+        },
+      ),
       requestStatus: LoanApplicationStatus.EMPLOYER_APPROVED,
     };
   }
 
-  private async getActivePlatformFeeConfig(client: PrismaClientLike = this.prisma) {
+  private async getActivePlatformFeeConfig(
+    client: PrismaClientLike = this.prisma,
+  ) {
     const config = await client.loanProductConfig.findFirst({
       where: {
         isActive: true,
@@ -667,7 +733,12 @@ export class PlatformFeesService {
   }
 
   private formatOrderResponse(
-    order: { id: string; providerOrderId: string; amount: number; currency: string },
+    order: {
+      id: string;
+      providerOrderId: string;
+      amount: number;
+      currency: string;
+    },
     fee: LoanApplicationFee,
     employee: {
       id: string;
@@ -683,7 +754,7 @@ export class PlatformFeesService {
       amountRupees: Number(fee.amount),
       currency: order.currency,
       keyId: this.razorpay.getKeyId(),
-      fee: this.formatFee(fee),
+      fee: this.formatFee(fee, { includeProviderRefs: false }),
       customer: {
         name: employee.name,
         email: employee.email,
@@ -693,8 +764,8 @@ export class PlatformFeesService {
     };
   }
 
-  private formatFee(fee: any) {
-    return {
+  private formatFee(fee: any, options: FormatFeeOptions = {}) {
+    const formatted: Record<string, unknown> = {
       id: fee.id,
       loanApplicationId: fee.loanApplicationId,
       employeeId: fee.employeeId,
@@ -704,8 +775,6 @@ export class PlatformFeesService {
       currency: fee.currency,
       status: fee.status,
       provider: fee.provider,
-      providerOrderId: fee.providerOrderId,
-      providerPaymentId: fee.providerPaymentId,
       paidAt: fee.paidAt,
       waivedAt: fee.waivedAt,
       waivedBy: fee.waivedBy,
@@ -715,8 +784,18 @@ export class PlatformFeesService {
       employee: fee.employee,
       employer: fee.employer,
       loanApplication: fee.loanApplication,
-      paymentOrders: fee.paymentOrders,
     };
+
+    if (options.includeProviderRefs) {
+      formatted.providerOrderId = fee.providerOrderId;
+      formatted.providerPaymentId = fee.providerPaymentId;
+    }
+
+    if (options.includePaymentOrders) {
+      formatted.paymentOrders = fee.paymentOrders;
+    }
+
+    return formatted;
   }
 
   private toPaise(amount: number) {

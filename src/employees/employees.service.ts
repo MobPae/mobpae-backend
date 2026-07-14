@@ -27,6 +27,28 @@ import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 import { PlatformFeesService } from '../platform-fees/platform-fees.service';
 import { normalizeEmail } from '../common/utils/email.util';
 
+// App-state responses need display-only platform-fee status. Razorpay order IDs
+// are returned only by the explicit payment-initiation endpoint.
+const APP_STATE_PLATFORM_FEE_SELECT = {
+  id: true,
+  amount: true,
+  currency: true,
+  status: true,
+  paidAt: true,
+  paymentOrders: {
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      currency: true,
+      createdAt: true,
+      expiresAt: true,
+    },
+  },
+} as const;
+
 @Injectable()
 export class EmployeesService {
   constructor(
@@ -600,7 +622,6 @@ export class EmployeesService {
    * - Home Dashboard
    * - Profile Screen
    * - Advance Eligibility
-   * - Membership Banner
    * - KYC Status
    * - Bank Account Status
    */
@@ -612,7 +633,6 @@ export class EmployeesService {
       include: {
         employer: true,
         loanLimit: true,
-        membership: true,
         bankAccount: true,
         kycDocuments: true,
       },
@@ -638,7 +658,6 @@ export class EmployeesService {
             'SUBMITTED',
             'EMPLOYER_APPROVED',
             'AWAITING_PLATFORM_FEE_PAYMENT',
-            'AWAITING_MEMBERSHIP_PAYMENT',
             'READY_FOR_DISBURSAL',
             'DISBURSED',
             'REPAYMENT_SCHEDULED',
@@ -725,11 +744,6 @@ export class EmployeesService {
       payrollCutoffDate: employee.employer.payrollCutoffDate,
 
       /**
-       * Membership
-       */
-      membershipActive: employee.membership?.status === 'ACTIVE',
-
-      /**
        * KYC & Bank
        */
       kycStatus,
@@ -753,7 +767,6 @@ export class EmployeesService {
             'SUBMITTED',
             'EMPLOYER_APPROVED',
             'AWAITING_PLATFORM_FEE_PAYMENT',
-            'AWAITING_MEMBERSHIP_PAYMENT',
             'READY_FOR_DISBURSAL',
             'DISBURSED',
             'REPAYMENT_SCHEDULED',
@@ -763,14 +776,7 @@ export class EmployeesService {
       include: {
         repayment: true,
         disbursal: true,
-        platformFee: {
-          include: {
-            paymentOrders: {
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
-          },
-        },
+        platformFee: { select: APP_STATE_PLATFORM_FEE_SELECT },
         history: {
           orderBy: {
             createdAt: 'asc',
@@ -853,7 +859,6 @@ export class EmployeesService {
                   amount: Number(currentRequest.platformFee.amount),
                   currency: currentRequest.platformFee.currency,
                   status: currentRequest.platformFee.status,
-                  providerOrderId: currentRequest.platformFee.providerOrderId,
                   paidAt: currentRequest.platformFee.paidAt,
                   latestPaymentOrder:
                     currentRequest.platformFee.paymentOrders?.[0] ?? null,
@@ -889,7 +894,6 @@ export class EmployeesService {
         employer: true,
         kycDocuments: true,
         bankAccount: true,
-        membership: true,
       },
     });
 
@@ -927,7 +931,6 @@ export class EmployeesService {
       selfieVerifiedAt: employee.selfieVerifiedAt,
       kycStatus,
       bankVerified: employee.bankAccount?.verified ?? false,
-      membershipActive: employee.membership?.status === 'ACTIVE',
       appActivated: employee.appActivated,
       employmentStatus: employee.employmentStatus,
     };
@@ -1269,13 +1272,6 @@ export class EmployeesService {
     availableAdvance: number;
   }) {
     if (currentRequestStatus === 'AWAITING_PLATFORM_FEE_PAYMENT') {
-      return {
-        code: 'PAY_PLATFORM_FEE',
-        label: 'Pay platform fee',
-      };
-    }
-
-    if (currentRequestStatus === 'AWAITING_MEMBERSHIP_PAYMENT') {
       return {
         code: 'PAY_PLATFORM_FEE',
         label: 'Pay platform fee',

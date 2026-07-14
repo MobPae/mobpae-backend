@@ -105,9 +105,9 @@ export class FilesService {
   ): Promise<boolean> {
     if (user.role === 'ADMIN') return true;
 
-    // Extract the userId segment from the key path
-    // Key format: employees/{userId}/... or membership/{userId}/...
-    const match = key.match(/^(?:employees|membership)\/([^/]+)\//);
+    // Extract the userId segment from the key path.
+    // Key format: employees/{userId}/...
+    const match = key.match(/^employees\/([^/]+)\//);
     if (!match) return false;
     const keyUserId = match[1];
 

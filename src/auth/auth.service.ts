@@ -75,6 +75,8 @@ export class AuthService {
       throw error;
     }
 
+    const previousLoginAt = user.lastLogin;
+    const loginAt = new Date();
     const { accessToken, refreshToken } = await this.prisma.$transaction(
       async (tx) => {
         await tx.userSession.updateMany({
@@ -94,6 +96,11 @@ export class AuthService {
             deviceInfo: meta.deviceInfo,
             ipAddress: meta.ipAddress,
           },
+        });
+
+        await tx.user.update({
+          where: { id: user.id },
+          data: { lastLogin: loginAt },
         });
 
         const refreshToken = this.buildRefreshToken(session.id);
@@ -123,7 +130,10 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      user: authUser,
+      user: {
+        ...authUser,
+        lastLoginAt: previousLoginAt,
+      },
     };
   }
 
@@ -214,7 +224,109 @@ export class AuthService {
     return {
       accessToken: await this.createAccessToken(authUser, session.id),
       refreshToken: newRefreshToken,
-      user: authUser,
+      user: {
+        ...authUser,
+        lastLoginAt: await this.getPreviousLoginAt(session.userId, session.id),
+      },
+    };
+  }
+
+  async getCurrentUserProfile(
+    requestUser: {
+      userId: string;
+      email: string;
+      role: string;
+      employeeId?: string;
+      sessionId: string;
+    },
+    currentSessionId: string,
+  ) {
+    return {
+      ...requestUser,
+      lastLoginAt: await this.getPreviousLoginAt(
+        requestUser.userId,
+        currentSessionId,
+      ),
+    };
+  }
+
+  async listSessions(userId: string, currentSessionId: string) {
+    const sessions = await this.prisma.userSession.findMany({
+      where: {
+        userId,
+        isActive: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      sessions: sessions.map((session) => ({
+        id: session.id,
+        current: session.id === currentSessionId,
+        device: this.formatDevice(session.deviceInfo),
+        ipAddress: session.ipAddress,
+        loginAt: session.createdAt,
+        lastActiveAt: session.updatedAt,
+      })),
+    };
+  }
+
+  async revokeSession(
+    userId: string,
+    sessionId: string,
+    currentSessionId: string,
+    meta: RequestMeta = {},
+  ) {
+    const session = await this.prisma.userSession.findUnique({
+      where: {
+        id: sessionId,
+      },
+      select: {
+        id: true,
+        userId: true,
+        isActive: true,
+      },
+    });
+
+    if (!session || session.userId !== userId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    if (session.isActive) {
+      await this.prisma.userSession.update({
+        where: {
+          id: session.id,
+        },
+        data: {
+          isActive: false,
+        },
+      });
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        email: true,
+      },
+    });
+
+    await this.writeAuthAudit('SESSION_REVOKED', {
+      userId,
+      email: user?.email,
+      meta,
+      details: {
+        sessionId: session.id,
+        current: session.id === currentSessionId,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Session revoked successfully',
     };
   }
 
@@ -620,12 +732,64 @@ export class AuthService {
     return createdAt.getTime() + refreshTokenLifetimeMs < Date.now();
   }
 
+  private async getPreviousLoginAt(userId: string, currentSessionId: string) {
+    const previousSession = await this.prisma.userSession.findFirst({
+      where: {
+        userId,
+        id: {
+          not: currentSessionId,
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      select: {
+        createdAt: true,
+      },
+    });
+
+    return previousSession?.createdAt ?? null;
+  }
+
+  private formatDevice(userAgent?: string | null) {
+    if (!userAgent) return 'Unknown device';
+
+    const browser = userAgent.includes('Edg/')
+      ? 'Edge'
+      : userAgent.includes('OPR/')
+        ? 'Opera'
+        : userAgent.includes('Firefox/')
+          ? 'Firefox'
+          : userAgent.includes('CriOS/')
+            ? 'Chrome'
+            : userAgent.includes('Chrome/')
+              ? 'Chrome'
+              : userAgent.includes('Safari/')
+                ? 'Safari'
+                : 'Browser';
+
+    const os = /iPhone|iPad|iPod/.test(userAgent)
+      ? 'iOS'
+      : userAgent.includes('Android')
+        ? 'Android'
+        : userAgent.includes('Mac OS X') || userAgent.includes('Macintosh')
+          ? 'macOS'
+          : userAgent.includes('Windows')
+            ? 'Windows'
+            : userAgent.includes('Linux')
+              ? 'Linux'
+              : 'device';
+
+    return `${browser} on ${os}`;
+  }
+
   private async writeAuthAudit(
     action:
       | 'LOGIN_SUCCESS'
       | 'LOGIN_FAILED'
       | 'LOGOUT'
       | 'TOKEN_REFRESH'
+      | 'SESSION_REVOKED'
       | 'PASSWORD_RESET_REQUESTED'
       | 'PASSWORD_RESET_COMPLETED'
       | 'PASSWORD_CHANGED',

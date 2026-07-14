@@ -43,7 +43,7 @@ export class ReportsController {
         totalRecoveredAmount: 180000,
         outstandingAmount: 30000,
         pendingSettlements: 2,
-        membershipRevenue: 124750,
+        platformFeeRevenue: 124750,
       },
     },
   })

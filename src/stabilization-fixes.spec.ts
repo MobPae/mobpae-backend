@@ -7,8 +7,11 @@ import { EmployersService } from './employers/employers.service';
 import { SalaryRequestsService } from './salary-requests/salary-requests.service';
 import { EmployerSettlementsService } from './employer-settlements/employer-settlements.service';
 import { HealthController } from './health/health.controller';
-import { MembershipService } from './membership/membership.service';
 import { EmployeesService } from './employees/employees.service';
+import { PreviewLoanApplicationDto } from './loan-applications/dto/preview-loan-application.dto';
+import { PlatformFeesService } from './platform-fees/platform-fees.service';
+import { AuthService } from './auth/auth.service';
+import { LoanApplicationsService } from './loan-applications/loan-applications.service';
 
 describe('Backend stabilization fixes', () => {
   it('rejects invalid payroll dates and non-positive salaries', async () => {
@@ -102,7 +105,7 @@ describe('Backend stabilization fixes', () => {
             companyName: 'Northstar',
             payrollDate: 28,
           },
-          membership: { status: 'ACTIVE' },
+          loanLimit: { maximumEligibleAmount: 5400 },
           bankAccount: { id: 'bank-1' },
           kycDocuments: [{ id: 'kyc-1' }],
           appActivated: true,
@@ -115,10 +118,12 @@ describe('Backend stabilization fixes', () => {
           .mockResolvedValueOnce({ value: '10' })
           .mockResolvedValueOnce({ value: '10000' }),
       },
-      salaryRequest: {
-        findMany: jest.fn().mockResolvedValue([
-          { amount: 5000, approvedAmount: null },
-        ]),
+      loanApplication: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { requestedAmount: 5000, adminApprovedAmount: null },
+          ]),
       },
     };
     const service = new EmployeesService(
@@ -131,12 +136,12 @@ describe('Backend stabilization fixes', () => {
 
     await expect(service.findByUserId('employee-user-1')).resolves.toEqual(
       expect.objectContaining({
-        approvedLimit: 5400,
+        maximumEligibleAmount: 5400,
         activeRequestAmount: 5000,
         availableAdvance: 400,
       }),
     );
-    expect(prisma.salaryRequest.findMany).toHaveBeenCalledWith(
+    expect(prisma.loanApplication.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           employeeId: 'employee-1',
@@ -144,7 +149,7 @@ describe('Backend stabilization fixes', () => {
             in: [
               'SUBMITTED',
               'EMPLOYER_APPROVED',
-              'AWAITING_MEMBERSHIP_PAYMENT',
+              'AWAITING_PLATFORM_FEE_PAYMENT',
               'READY_FOR_DISBURSAL',
               'DISBURSED',
               'REPAYMENT_SCHEDULED',
@@ -174,7 +179,7 @@ describe('Backend stabilization fixes', () => {
             companyName: 'Northstar',
             payrollDate: 28,
           },
-          membership: null,
+          loanLimit: { maximumEligibleAmount: 5400 },
           bankAccount: null,
           kycDocuments: [],
           appActivated: true,
@@ -187,7 +192,7 @@ describe('Backend stabilization fixes', () => {
           .mockResolvedValueOnce({ value: '10' })
           .mockResolvedValueOnce({ value: '10000' }),
       },
-      salaryRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      loanApplication: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const service = new EmployeesService(
       prisma as any,
@@ -199,7 +204,7 @@ describe('Backend stabilization fixes', () => {
 
     await expect(service.findByUserId('employee-user-1')).resolves.toEqual(
       expect.objectContaining({
-        approvedLimit: 5400,
+        maximumEligibleAmount: 5400,
         activeRequestAmount: 0,
         availableAdvance: 5400,
       }),
@@ -255,29 +260,61 @@ describe('Backend stabilization fixes', () => {
     consoleError.mockRestore();
   });
 
-  it('queries pending requests using the authenticated employer user', async () => {
-    const prisma = {
-      salaryRequest: { findMany: jest.fn().mockResolvedValue([]) },
-    };
-    const service = new SalaryRequestsService(
-      prisma as any,
-      {} as any,
+  it('keeps the legacy salary requests service disabled', async () => {
+    const service = new SalaryRequestsService();
+
+    expect(() => service.findPendingByEmployer('employer-user-1')).toThrow(
+      'SalaryRequests has been replaced by LoanApplications',
+    );
+  });
+
+  it('validates salary advance preview query amounts', async () => {
+    const invalid = plainToInstance(PreviewLoanApplicationDto, {
+      amount: '999',
+    });
+    const valid = plainToInstance(PreviewLoanApplicationDto, {
+      amount: '3500',
+    });
+
+    await expect(validate(invalid)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ property: 'amount' })]),
+    );
+    await expect(validate(valid)).resolves.toHaveLength(0);
+    expect(valid.amount).toBe(3500);
+  });
+
+  it('hides payment provider references from employee-facing platform fee responses', () => {
+    const service = new PlatformFeesService(
       {} as any,
       {} as any,
       {} as any,
       {} as any,
     );
 
-    await service.findPendingByEmployer('employer-user-1');
+    const employeeFee = (service as any).formatFee({
+      id: 'fee-1',
+      loanApplicationId: 'loan-1',
+      employeeId: 'employee-1',
+      employerId: 'employer-1',
+      feeType: 'PLATFORM_FEE',
+      amount: '175',
+      currency: 'INR',
+      status: 'PENDING_PAYMENT',
+      provider: 'RAZORPAY',
+      providerOrderId: 'order_sensitive',
+      providerPaymentId: 'pay_sensitive',
+      paidAt: null,
+      waivedAt: null,
+      waivedBy: null,
+      remarks: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      paymentOrders: [{ providerOrderId: 'order_sensitive' }],
+    });
 
-    expect(prisma.salaryRequest.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          employee: { employer: { userId: 'employer-user-1' } },
-          status: 'SUBMITTED',
-        },
-      }),
-    );
+    expect(employeeFee).not.toHaveProperty('providerOrderId');
+    expect(employeeFee).not.toHaveProperty('providerPaymentId');
+    expect(employeeFee).not.toHaveProperty('paymentOrders');
   });
 
   it('treats an overdue settlement as employer risk', async () => {
@@ -315,7 +352,7 @@ describe('Backend stabilization fixes', () => {
     expect(prisma.employerSettlement.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ['PENDING', 'PARTIALLY_PAID', 'OVERDUE'] },
+          status: { in: ['GENERATED', 'PARTIALLY_PAID', 'OVERDUE'] },
         }),
       }),
     );
@@ -333,49 +370,247 @@ describe('Backend stabilization fixes', () => {
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('audits membership rejection', async () => {
+  it('returns previous login and current session details', async () => {
+    const previousLogin = new Date('2026-07-13T08:00:00.000Z');
+    const currentLogin = new Date('2026-07-14T08:00:00.000Z');
+    const lastActive = new Date('2026-07-14T09:00:00.000Z');
     const prisma = {
-      membership: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'membership-1',
-          status: 'PENDING',
-          remarks: null,
-          employee: {
-            userId: 'employee-user-1',
-            email: 'employee@northstar.com',
-            name: 'Arjun',
+      userSession: {
+        findFirst: jest.fn().mockResolvedValue({ createdAt: previousLogin }),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'session-current',
+            deviceInfo:
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36',
+            ipAddress: '103.21.244.10',
+            createdAt: currentLogin,
+            updatedAt: lastActive,
           },
-        }),
-        update: jest.fn().mockResolvedValue({
-          id: 'membership-1',
-          status: 'PENDING',
-          remarks: 'Payment failed',
-        }),
+        ]),
       },
     };
-    const email = {
-      sendMembershipRejectedEmail: jest.fn().mockResolvedValue(undefined),
-    };
-    const notifications = {
-      createSystemNotification: jest.fn().mockResolvedValue(undefined),
-    };
-    const audit = { log: jest.fn().mockResolvedValue(undefined) };
-    const service = new MembershipService(
+    const service = new AuthService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
       prisma as any,
-      email as any,
-      notifications as any,
-      audit as any,
     );
 
-    await service.reject('membership-1', 'Payment failed', 'admin-1');
-
-    expect(audit.log).toHaveBeenCalledWith(
+    await expect(
+      service.getCurrentUserProfile(
+        {
+          userId: 'user-1',
+          email: 'employee@northstar.com',
+          role: 'EMPLOYEE',
+          sessionId: 'session-current',
+        },
+        'session-current',
+      ),
+    ).resolves.toEqual(
       expect.objectContaining({
-        userId: 'admin-1',
-        action: 'MEMBERSHIP_REJECTED',
-        entityType: 'MEMBERSHIP',
-        entityId: 'membership-1',
+        lastLoginAt: previousLogin,
       }),
     );
+
+    await expect(
+      service.listSessions('user-1', 'session-current'),
+    ).resolves.toEqual({
+      sessions: [
+        expect.objectContaining({
+          id: 'session-current',
+          current: true,
+          device: 'Chrome on macOS',
+          ipAddress: '103.21.244.10',
+          loginAt: currentLogin,
+          lastActiveAt: lastActive,
+        }),
+      ],
+    });
+  });
+
+  it('returns loan application lifecycle history with actor details', async () => {
+    const submittedAt = new Date('2026-07-10T09:00:00.000Z');
+    const approvedAt = new Date('2026-07-10T14:22:00.000Z');
+    const prisma = {
+      loanApplication: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'loan-1',
+          employerId: 'employer-1',
+          employee: {
+            id: 'employee-1',
+            userId: 'employee-user-1',
+          },
+        }),
+      },
+      loanApplicationHistory: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'history-1',
+            loanApplicationId: 'loan-1',
+            previousStatus: null,
+            newStatus: 'SUBMITTED',
+            changedBy: 'employee-user-1',
+            actorRole: 'EMPLOYEE',
+            remarks: null,
+            createdAt: submittedAt,
+          },
+          {
+            id: 'history-2',
+            loanApplicationId: 'loan-1',
+            previousStatus: 'SUBMITTED',
+            newStatus: 'AWAITING_PLATFORM_FEE_PAYMENT',
+            changedBy: 'employer-user-1',
+            actorRole: 'EMPLOYER',
+            remarks: 'Employer approved; platform fee required',
+            createdAt: approvedAt,
+          },
+        ]),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'employee-user-1',
+            email: 'ananya@northstar.com',
+            role: 'EMPLOYEE',
+            employee: { id: 'employee-1', name: 'Ananya Sharma' },
+            employer: null,
+          },
+          {
+            id: 'employer-user-1',
+            email: 'rohan@northstar.com',
+            role: 'EMPLOYER',
+            employee: null,
+            employer: {
+              id: 'employer-1',
+              companyName: 'Northstar Retail Pvt Ltd',
+              contactPerson: 'Rohan Mehta',
+            },
+          },
+        ]),
+      },
+    };
+    const service = new LoanApplicationsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(
+      service.findHistory('loan-1', {
+        userId: 'admin-1',
+        role: 'ADMIN',
+      }),
+    ).resolves.toEqual({
+      history: [
+        {
+          id: 'history-1',
+          status: 'SUBMITTED',
+          previousStatus: null,
+          actorType: 'EMPLOYEE',
+          actorName: 'Ananya Sharma',
+          actorId: 'employee-user-1',
+          note: null,
+          createdAt: submittedAt,
+        },
+        {
+          id: 'history-2',
+          status: 'AWAITING_PLATFORM_FEE_PAYMENT',
+          previousStatus: 'SUBMITTED',
+          actorType: 'EMPLOYER',
+          actorName: 'Rohan Mehta',
+          actorId: 'employer-user-1',
+          note: 'Employer approved; platform fee required',
+          createdAt: approvedAt,
+        },
+      ],
+    });
+  });
+
+  it('hides internal loan application history notes from employer viewers', async () => {
+    const rejectedAt = new Date('2026-07-11T10:00:00.000Z');
+    const prisma = {
+      loanApplication: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'loan-1',
+          employerId: 'employer-1',
+          employee: {
+            id: 'employee-1',
+            userId: 'employee-user-1',
+          },
+        }),
+      },
+      employer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'employer-1',
+        }),
+      },
+      loanApplicationHistory: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'history-3',
+            loanApplicationId: 'loan-1',
+            previousStatus: 'EMPLOYER_APPROVED',
+            newStatus: 'ADMIN_REJECTED',
+            changedBy: 'admin-user-1',
+            actorRole: 'ADMIN',
+            remarks: 'Internal credit review mismatch - do not expose',
+            createdAt: rejectedAt,
+          },
+          {
+            id: 'history-4',
+            loanApplicationId: 'loan-1',
+            previousStatus: 'AWAITING_PLATFORM_FEE_PAYMENT',
+            newStatus: 'EMPLOYER_APPROVED',
+            changedBy: 'employee-user-1',
+            actorRole: 'EMPLOYEE',
+            remarks: 'Platform fee paid; ready for MobPae admin review.',
+            createdAt: new Date('2026-07-10T16:00:00.000Z'),
+          },
+        ]),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'admin-user-1',
+            email: 'admin@mobpae.com',
+            role: 'ADMIN',
+            employee: null,
+            employer: null,
+          },
+        ]),
+      },
+    };
+    const service = new LoanApplicationsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(
+      service.findHistory('loan-1', {
+        userId: 'employer-user-1',
+        role: 'EMPLOYER',
+      }),
+    ).resolves.toEqual({
+      history: [
+        {
+          id: 'history-3',
+          status: 'ADMIN_REJECTED',
+          previousStatus: 'EMPLOYER_APPROVED',
+          actorType: 'ADMIN',
+          actorName: 'MobPae Admin',
+          actorId: null,
+          note: 'MobPae rejected the request',
+          createdAt: rejectedAt,
+        },
+      ],
+    });
   });
 });

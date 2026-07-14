@@ -24,7 +24,6 @@ export interface EligibilityRules {
   minimumSalaryInHand: number;
   minimumTenureMonths: number;
   requiresKyc: boolean;
-  requiresMembership: boolean;
   requiresBankAccount: boolean;
   requiresActiveSelfie: boolean;
   maxRequestsPerCycle: number;
@@ -70,7 +69,6 @@ export class CreateLoanProductConfigDto {
       minimumSalaryInHand: 10000,
       minimumTenureMonths: 3,
       requiresKyc: true,
-      requiresMembership: false,
       requiresBankAccount: true,
       requiresActiveSelfie: false,
       maxRequestsPerCycle: 1,

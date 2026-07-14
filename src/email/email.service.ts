@@ -471,44 +471,6 @@ export class EmailService {
     );
   }
 
-  async sendMembershipApprovedEmail(data: {
-    to: string;
-    employeeName: string;
-    plan: string;
-    startDate: Date;
-    endDate: Date;
-  }) {
-    return this.sendTemplateEmail(
-      data.to,
-      'Your MobPae Membership is Active',
-      'membership-approved',
-      {
-        title: 'Membership Approved',
-        employeeName: data.employeeName,
-        plan: data.plan,
-        startDate: this.formatDate(data.startDate),
-        endDate: this.formatDate(data.endDate),
-      },
-    );
-  }
-
-  async sendMembershipRejectedEmail(data: {
-    to: string;
-    employeeName: string;
-    remarks?: string;
-  }) {
-    return this.sendTemplateEmail(
-      data.to,
-      'Membership Request Not Approved – MobPae',
-      'membership-rejected',
-      {
-        title: 'Membership Rejected',
-        employeeName: data.employeeName,
-        remarks: data.remarks ?? 'No reason provided.',
-      },
-    );
-  }
-
   async sendSelfieVerifiedEmail(data: {
     to: string;
     employeeName: string;

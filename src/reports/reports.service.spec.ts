@@ -12,6 +12,7 @@ describe('ReportsService', () => {
           .fn()
           .mockResolvedValueOnce(12)
           .mockResolvedValueOnce(10)
+          .mockResolvedValueOnce(1)
           .mockResolvedValueOnce(1),
       },
       employee: {
@@ -23,7 +24,7 @@ describe('ReportsService', () => {
       employeeBankAccount: {
         count: jest.fn().mockResolvedValue(7),
       },
-      salaryRequest: {
+      loanApplication: {
         count: jest
           .fn()
           .mockResolvedValueOnce(5)
@@ -33,7 +34,7 @@ describe('ReportsService', () => {
       disbursal: {
         aggregate: jest.fn().mockResolvedValue({
           _sum: {
-            amount: decimal(210000),
+            disbursedAmount: decimal(210000),
           },
         }),
       },
@@ -54,11 +55,10 @@ describe('ReportsService', () => {
       employerSettlement: {
         count: jest.fn().mockResolvedValue(2),
       },
-      membership: {
+      loanApplicationFee: {
         aggregate: jest.fn().mockResolvedValue({
           _sum: {
-            amount: decimal(125000),
-            discountAmount: decimal(250),
+            amount: decimal(124750),
           },
         }),
       },
@@ -69,26 +69,27 @@ describe('ReportsService', () => {
       totalEmployers: 12,
       activeEmployers: 10,
       suspendedEmployers: 1,
+      pendingEmployers: 1,
       totalEmployees: 250,
       activeEmployees: 230,
       pendingKyc: 18,
       pendingBankVerification: 7,
-      pendingSalaryRequests: 5,
-      approvedSalaryRequests: 3,
-      disbursedSalaryRequests: 42,
+      pendingLoanApplications: 5,
+      approvedLoanApplications: 3,
+      disbursedLoanApplications: 42,
       totalDisbursedAmount: 210000,
       totalRecoveredAmount: 180000,
       outstandingAmount: 30000,
       pendingSettlements: 2,
-      membershipRevenue: 124750,
+      platformFeeRevenue: 124750,
     });
 
     expect(prisma.disbursal.aggregate).toHaveBeenCalledWith({
       where: {
-        status: 'DISBURSED',
+        status: 'SUCCESS',
       },
       _sum: {
-        amount: true,
+        disbursedAmount: true,
       },
     });
     expect(prisma.repayment.aggregate).toHaveBeenCalledWith({
@@ -99,13 +100,12 @@ describe('ReportsService', () => {
         totalAmount: true,
       },
     });
-    expect(prisma.membership.aggregate).toHaveBeenCalledWith({
+    expect(prisma.loanApplicationFee.aggregate).toHaveBeenCalledWith({
       where: {
-        status: 'ACTIVE',
+        status: 'PAID',
       },
       _sum: {
         amount: true,
-        discountAmount: true,
       },
     });
   });

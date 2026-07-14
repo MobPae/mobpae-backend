@@ -3,9 +3,7 @@ import { EmployeesService } from './employees/employees.service';
 import { EmployerEnquiriesService } from './employer-enquiries/employer-enquiries.service';
 import { EmployerSettlementsService } from './employer-settlements/employer-settlements.service';
 import { EmployersService } from './employers/employers.service';
-import { MembershipService } from './membership/membership.service';
 import { NotificationsService } from './notifications/notifications.service';
-import { SalaryRequestsService } from './salary-requests/salary-requests.service';
 
 function createPrisma(modelName: string, data: unknown[] = [{ id: 'row-1' }]) {
   const model = {
@@ -125,50 +123,6 @@ describe('admin list pagination coverage', () => {
     );
   });
 
-  it('paginates, searches, sorts, and filters salary requests', async () => {
-    const prisma = createPrisma('salaryRequest');
-    const service = new SalaryRequestsService(
-      prisma,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-
-    const result = await service.findAllForAdmin({
-      page: 2,
-      limit: 5,
-      search: 'employee',
-      status: 'SUBMITTED',
-      employerId: 'employer-1',
-      employeeId: 'employee-1',
-      startDate: '2026-06-01T00:00:00.000Z',
-      endDate: '2026-06-30T23:59:59.999Z',
-      sortBy: 'requestedAt',
-      sortOrder: 'asc',
-    });
-
-    expectPaginated(result);
-    expect(prisma.salaryRequest.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          status: 'SUBMITTED',
-          employerId: 'employer-1',
-          employeeId: 'employee-1',
-          createdAt: {
-            gte: new Date('2026-06-01T00:00:00.000Z'),
-            lte: new Date('2026-06-30T23:59:59.999Z'),
-          },
-          OR: expect.any(Array),
-        }),
-        orderBy: { requestedAt: 'asc' },
-        skip: 5,
-        take: 5,
-      }),
-    );
-  });
-
   it('paginates, searches, sorts, and filters audit logs', async () => {
     const prisma = createPrisma('auditLog');
     const service = new AuditLogsService(prisma);
@@ -257,33 +211,6 @@ describe('admin list pagination coverage', () => {
           OR: expect.any(Array),
         }),
         orderBy: { dueDate: 'asc' },
-        skip: 5,
-        take: 5,
-      }),
-    );
-  });
-
-  it('paginates, searches, sorts, and filters memberships', async () => {
-    const prisma = createPrisma('membership');
-    const service = new MembershipService(prisma, {} as any, {} as any, {} as any);
-
-    const result = await service.findAll({
-      page: 2,
-      limit: 5,
-      search: 'annual',
-      status: 'ACTIVE',
-      sortBy: 'endDate',
-      sortOrder: 'asc',
-    });
-
-    expectPaginated(result);
-    expect(prisma.membership.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          status: 'ACTIVE',
-          OR: expect.any(Array),
-        }),
-        orderBy: { endDate: 'asc' },
         skip: 5,
         take: 5,
       }),

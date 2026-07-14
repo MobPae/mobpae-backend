@@ -5,10 +5,6 @@ describe('BusinessJobsService', () => {
 
   function createMocks() {
     const prisma = {
-      membership: {
-        findMany: jest.fn(),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
       repayment: {
         findMany: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -44,54 +40,9 @@ describe('BusinessJobsService', () => {
         auditLogsService as any,
         notificationsService as any,
         employerSettlementsService as any,
-        {} as any, // salaryRequestsService
       ),
     };
   }
-
-  it('expires memberships, audits, and notifies employees', async () => {
-    const { prisma, auditLogsService, notificationsService, service } =
-      createMocks();
-    prisma.membership.findMany.mockResolvedValue([
-      {
-        id: 'membership-1',
-        status: 'ACTIVE',
-        endDate: pastDate,
-        employee: {
-          id: 'employee-1',
-          userId: 'employee-user',
-          name: 'Arjun',
-        },
-      },
-    ]);
-
-    await expect(service.expireMemberships()).resolves.toEqual({
-      processed: 1,
-    });
-
-    expect(prisma.membership.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: {
-          in: ['membership-1'],
-        },
-      },
-      data: {
-        status: 'EXPIRED',
-      },
-    });
-    expect(auditLogsService.log).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'MEMBERSHIP_EXPIRED',
-        entityType: 'MEMBERSHIP',
-        entityId: 'membership-1',
-      }),
-    );
-    expect(notificationsService.createSystemNotification).toHaveBeenCalledWith(
-      'employee-user',
-      'Membership Expired',
-      expect.any(String),
-    );
-  });
 
   it('marks repayments overdue, audits, and notifies employees', async () => {
     const { prisma, auditLogsService, notificationsService, service } =
@@ -101,7 +52,7 @@ describe('BusinessJobsService', () => {
         id: 'repayment-1',
         status: 'SCHEDULED',
         dueDate: pastDate,
-        salaryRequest: {
+        loanApplication: {
           employee: {
             id: 'employee-1',
             userId: 'employee-user',
