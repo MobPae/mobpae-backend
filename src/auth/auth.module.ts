@@ -3,6 +3,8 @@ import { JwtModule } from '@nestjs/jwt';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { PermissionService } from './permissions';
+import { EmployerPermissionGuard } from './guards/employer-permission.guard';
 
 import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -22,6 +24,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, PermissionService, EmployerPermissionGuard],
+  exports: [PermissionService, EmployerPermissionGuard],
 })
 export class AuthModule {}

@@ -16,28 +16,28 @@ export class PayrollService {
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
-  async getSummary(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+  async getSummary(employerId: string) {
+    const employer = await this.prisma.employer.findUnique({ where: { id: employerId } });
     if (!employer) throw new BadRequestException('Employer not found');
 
     const employeesDue = await this.prisma.repayment.count({
       where: {
         status: 'SCHEDULED',
-        loanApplication: { employee: { employerId: employer.id } },
+        loanApplication: { employee: { employerId } },
       },
     });
 
     const completedRecoveries = await this.prisma.repayment.count({
       where: {
         status: 'PAID',
-        loanApplication: { employee: { employerId: employer.id } },
+        loanApplication: { employee: { employerId } },
       },
     });
 
     const repayments = await this.prisma.repayment.findMany({
       where: {
         status: 'SCHEDULED',
-        loanApplication: { employee: { employerId: employer.id } },
+        loanApplication: { employee: { employerId } },
       },
     });
 
@@ -60,13 +60,10 @@ export class PayrollService {
    * Returns scheduled (upcoming) salary deductions for the employer's employees.
    * These are repayments that have not yet been collected via a settlement.
    */
-  async getUpcomingRecoveries(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
-    if (!employer) throw new BadRequestException('Employer not found');
-
+  async getUpcomingRecoveries(employerId: string) {
     return this.prisma.repayment.findMany({
       where: {
-        loanApplication: { employee: { employerId: employer.id } },
+        loanApplication: { employee: { employerId } },
       },
       include: {
         loanApplication: {
@@ -81,8 +78,8 @@ export class PayrollService {
   }
 
   // Keep old name as alias for backward compat with existing controller routes
-  async getRecoveries(userId: string) {
-    return this.getUpcomingRecoveries(userId);
+  async getRecoveries(employerId: string) {
+    return this.getUpcomingRecoveries(employerId);
   }
 
   /**

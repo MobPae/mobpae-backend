@@ -18,6 +18,9 @@ import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { EmployerPermissionGuard } from '../auth/guards/employer-permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { Permission } from '../auth/permissions';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -39,8 +42,10 @@ export class EmployeesController {
 
   @Post()
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.EMPLOYEE_MANAGE)
   create(@Body() dto: CreateEmployeeDto, @Req() req: any) {
-    return this.employeesService.create(dto, req.user.userId);
+    return this.employeesService.create(dto, req.user.employerId, req.user.userId);
   }
 
   @Get()
@@ -54,8 +59,10 @@ export class EmployeesController {
 
   @Get('employer')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.EMPLOYEE_VIEW)
   findAllForEmployer(@Req() req: any) {
-    return this.employeesService.findAllForEmployer(req.user.userId);
+    return this.employeesService.findAllForEmployer(req.user.employerId);
   }
 
   @Get('me')
@@ -163,6 +170,8 @@ export class EmployeesController {
 
   @Post('bulk')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.EMPLOYEE_MANAGE)
   @ApiOperation({
     summary: 'Bulk upload employees',
   })
@@ -172,21 +181,26 @@ export class EmployeesController {
     @Body()
     employees: CreateEmployeeDto[],
   ) {
-    return this.employeesService.bulkCreate(req.user.userId, employees);
+    return this.employeesService.bulkCreate(req.user.employerId, employees, req.user.userId);
   }
 
   @Patch('bulk-activation')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.EMPLOYEE_MANAGE)
   bulkActivation(@Body() dto: BulkEmployeeActivationDto, @Req() req: any) {
     return this.employeesService.bulkActivation(
       dto.employeeIds,
       dto.appActivated,
+      req.user.employerId,
       req.user.userId,
     );
   }
 
   @Patch(':id/activation')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.EMPLOYEE_MANAGE)
   updateActivation(
     @Param('id') id: string,
     @Body() dto: UpdateEmployeeActivationDto,
@@ -195,6 +209,7 @@ export class EmployeesController {
     return this.employeesService.updateActivation(
       id,
       dto.appActivated,
+      req.user.employerId,
       req.user.userId,
     );
   }
@@ -230,11 +245,26 @@ export class EmployeesController {
 
   @Patch(':id')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.EMPLOYEE_MANAGE)
   update(
     @Param('id') id: string,
     @Body() dto: UpdateEmployeeDto,
     @Req() req: any,
   ) {
-    return this.employeesService.update(id, dto, req.user.userId);
+    return this.employeesService.update(id, dto, req.user.employerId, req.user.userId);
+  }
+
+  /**
+   * Resend activation email — generates a new temp password and resends the
+   * employee-created email. Blocked if the employee has already set their own password.
+   * Accessible by both ADMIN and EMPLOYER (employer-scoped ownership check in service).
+   */
+  @Post(':id/resend-activation')
+  @Roles('ADMIN', 'EMPLOYER')
+  @ApiOperation({ summary: 'Resend activation email for an employee who has not yet set their password' })
+  resendActivationEmail(@Param('id') id: string, @Req() req: any) {
+    const employerId = req.user.role === 'EMPLOYER' ? req.user.employerId : undefined;
+    return this.employeesService.resendActivationEmail(id, employerId);
   }
 }

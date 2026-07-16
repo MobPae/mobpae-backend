@@ -146,10 +146,10 @@ export class EmployersService {
     };
   }
 
-  async getProfile(userId: string) {
+  async getProfile(employerId: string) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
       include: {
         user: {
@@ -181,10 +181,10 @@ export class EmployersService {
     };
   }
 
-  async updateProfile(userId: string, dto: UpdateEmployerProfileDto) {
+  async updateProfile(employerId: string, dto: UpdateEmployerProfileDto) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
     });
 
@@ -204,7 +204,7 @@ export class EmployersService {
       },
     });
 
-    return this.getProfile(userId);
+    return this.getProfile(employerId);
   }
 
   async create(dto: CreateEmployerDto, actorUserId: string) {

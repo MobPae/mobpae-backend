@@ -21,6 +21,10 @@ async function bootstrap() {
       'http://localhost:5175',
       'http://localhost:5176',
       'http://192.168.1.6:5175/',
+      // Capacitor Android/iOS origins
+      'http://localhost',
+      'capacitor://localhost',
+      'ionic://localhost',
     ].join(',')
   )
     .split(',')

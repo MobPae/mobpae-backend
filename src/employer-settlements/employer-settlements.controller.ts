@@ -16,6 +16,9 @@ import { EmployerSettlementsService } from './employer-settlements.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { EmployerPermissionGuard } from '../auth/guards/employer-permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { Permission } from '../auth/permissions';
 
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { EmployerSettlementListQueryDto } from './dto/employer-settlement-list-query.dto';
@@ -47,20 +50,24 @@ export class EmployerSettlementsController {
    */
   @Get('employer')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.SETTLEMENT_VIEW)
   @ApiOperation({
     summary: 'Get employer settlements',
   })
   findByEmployer(@Req() req: any) {
-    return this.employerSettlementsService.findByEmployer(req.user.userId);
+    return this.employerSettlementsService.findByEmployer(req.user.employerId);
   }
 
   @Get('employer/summary')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.SETTLEMENT_VIEW)
   @ApiOperation({
     summary: 'Get employer settlement summary',
   })
   getSummary(@Req() req: any) {
-    return this.employerSettlementsService.getSummary(req.user.userId);
+    return this.employerSettlementsService.getSummary(req.user.employerId);
   }
 
   /**

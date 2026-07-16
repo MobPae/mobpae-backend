@@ -36,14 +36,8 @@ export class DashboardService {
     };
   }
 
-  async getEmployerDashboard(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
-
-    if (!employer) {
-      throw new NotFoundException('Employer not found');
-    }
-
-    return this.getEmployerDashboardByEmployerId(employer.id);
+  async getEmployerDashboard(employerId: string) {
+    return this.getEmployerDashboardByEmployerId(employerId);
   }
 
   async getEmployerDashboardByEmployerId(employerId: string) {
@@ -237,8 +231,8 @@ export class DashboardService {
     };
   }
 
-  async getEmployerTrends(userId: string, period: string = 'monthly') {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+  async getEmployerTrends(employerId: string, period: string = 'monthly') {
+    const employer = await this.prisma.employer.findUnique({ where: { id: employerId } });
 
     if (!employer) {
       throw new NotFoundException('Employer not found');

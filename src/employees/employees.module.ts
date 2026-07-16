@@ -6,6 +6,7 @@ import { FilesModule } from '../files/files.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailModule } from '../email/email.module';
 import { PlatformFeesModule } from '../platform-fees/platform-fees.module';
+import { AuthModule } from '../auth/auth.module';
 
 import { EmployeesService } from './employees.service';
 import { EmployeesController } from './employees.controller';
@@ -18,6 +19,7 @@ import { EmployeesController } from './employees.controller';
     NotificationsModule,
     EmailModule,
     PlatformFeesModule,
+    AuthModule,
   ],
   providers: [EmployeesService],
   controllers: [EmployeesController],

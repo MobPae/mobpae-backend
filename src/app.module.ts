@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 
 import { EmployersModule } from './employers/employers.module';
+import { EmployerMembersModule } from './employer-members/employer-members.module';
 import { EmployeesModule } from './employees/employees.module';
 
 import { LoanProductsModule } from './loan-products/loan-products.module';
@@ -67,6 +68,7 @@ import { PlatformFeesModule } from './platform-fees/platform-fees.module';
         MAIL_FROM: Joi.string().email().required(),
         MAIL_FROM_NAME: Joi.string().required(),
         FRONTEND_URL: Joi.string().uri().required(),
+        EMPLOYER_PORTAL_URL: Joi.string().uri().required(),
         CORS_ORIGINS: Joi.string().optional(),
         ENABLE_SWAGGER: Joi.boolean()
           .truthy('true')
@@ -105,6 +107,7 @@ import { PlatformFeesModule } from './platform-fees/platform-fees.module';
     UsersModule,
 
     EmployersModule,
+    EmployerMembersModule,
     EmployeesModule,
 
     LoanProductsModule,

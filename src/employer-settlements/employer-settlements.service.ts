@@ -101,12 +101,9 @@ export class EmployerSettlementsService {
   /**
    * Employer — view own settlements.
    */
-  async findByEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
-    if (!employer) throw new BadRequestException('Employer not found');
-
+  async findByEmployer(employerId: string) {
     return this.prisma.employerSettlement.findMany({
-      where: { employerId: employer.id },
+      where: { employerId },
       include: {
         lineItems: { select: { id: true, status: true } },
         payments: { select: { id: true, amount: true, status: true } },
@@ -223,12 +220,12 @@ export class EmployerSettlementsService {
     return updatedSettlement;
   }
 
-  async getSummary(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
+  async getSummary(employerId: string) {
+    const employer = await this.prisma.employer.findUnique({ where: { id: employerId } });
     if (!employer) throw new BadRequestException('Employer not found');
 
     const settlements = await this.prisma.employerSettlement.findMany({
-      where: { employerId: employer.id },
+      where: { employerId },
       orderBy: { dueDate: 'asc' },
     });
 

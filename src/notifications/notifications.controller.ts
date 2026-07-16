@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -9,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
+import { PushNotificationService } from './push-notification.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -20,13 +22,47 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { NotificationListQueryDto } from './dto/notification-list-query.dto';
+import { IsIn, IsString } from 'class-validator';
+
+class RegisterTokenDto {
+  @IsString()
+  token: string;
+
+  @IsIn(['ios', 'android', 'web'])
+  platform: string;
+}
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
 @Controller('notifications')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly pushNotificationService: PushNotificationService,
+  ) {}
+
+  // ── Push token registration ──────────────────────────────────────────────
+
+  @Post('register-token')
+  @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
+  @ApiOperation({ summary: 'Register or refresh a push notification device token' })
+  registerToken(@Body() dto: RegisterTokenDto, @Req() req: any) {
+    return this.pushNotificationService.registerToken(
+      req.user.userId,
+      dto.token,
+      dto.platform,
+    );
+  }
+
+  @Delete('remove-token')
+  @Roles('ADMIN', 'EMPLOYER', 'EMPLOYEE')
+  @ApiOperation({ summary: 'Remove a push notification device token on logout' })
+  removeToken(@Body() dto: Pick<RegisterTokenDto, 'token'>) {
+    return this.pushNotificationService.removeToken(dto.token);
+  }
+
+  // ── In-app notifications ─────────────────────────────────────────────────
 
   @Post()
   @Roles('ADMIN')

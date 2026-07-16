@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../pricing/pricing.service';
 import { CreateDisbursalDto } from './dto/create-disbursal.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PushNotificationService } from '../notifications/push-notification.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { DisbursalListQueryDto } from './dto/disbursal-list-query.dto';
@@ -18,6 +19,7 @@ export class DisbursalsService {
     private readonly prisma: PrismaService,
     private readonly pricingService: PricingService,
     private readonly notificationsService: NotificationsService,
+    private readonly pushNotificationService: PushNotificationService,
     private readonly emailService: EmailService,
     private readonly auditLogsService: AuditLogsService,
     private readonly platformFeesService: PlatformFeesService,
@@ -322,6 +324,14 @@ export class DisbursalsService {
         'Salary Advance Disbursed',
         `₹${disbursedAmount} has been disbursed to your registered bank account.`,
       );
+      this.pushNotificationService
+        .sendToUser(
+          loanApplication.employee.userId,
+          'Advance Disbursed 🎉',
+          `₹${disbursedAmount} is on its way to your bank account.`,
+          { screen: 'activity' },
+        )
+        .catch(() => {});
     }
 
     if (repaymentCreated && repayment) {

@@ -13,10 +13,14 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { EmployersService } from './employers.service';
+import { EmployerMembersService } from '../employer-members/employer-members.service';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { EmployerPermissionGuard } from '../auth/guards/employer-permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { Permission } from '../auth/permissions';
 
 import { Role } from '../common/enums/role.enum';
 
@@ -30,7 +34,10 @@ import { EmployerListQueryDto } from './dto/employer-list-query.dto';
 @Controller('employers')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EmployersController {
-  constructor(private readonly employersService: EmployersService) {}
+  constructor(
+    private readonly employersService: EmployersService,
+    private readonly employerMembersService: EmployerMembersService,
+  ) {}
 
   /**
    * Employer Profile
@@ -38,14 +45,18 @@ export class EmployersController {
 
   @Get('profile')
   @Roles(Role.EMPLOYER)
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.ORG_SETTINGS_VIEW)
   getProfile(@Req() req: any) {
-    return this.employersService.getProfile(req.user.userId);
+    return this.employersService.getProfile(req.user.employerId);
   }
 
   @Put('profile')
   @Roles(Role.EMPLOYER)
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.ORG_SETTINGS_MANAGE)
   updateProfile(@Req() req: any, @Body() dto: UpdateEmployerProfileDto) {
-    return this.employersService.updateProfile(req.user.userId, dto);
+    return this.employersService.updateProfile(req.user.employerId, dto);
   }
 
   /**
@@ -83,6 +94,20 @@ export class EmployersController {
     dto: CreateEmployerDto,
   ) {
     return this.employersService.create(dto, req.user.userId);
+  }
+
+  /** Admin: list active/suspended members for any employer */
+  @Get(':id/members')
+  @Roles(Role.ADMIN)
+  getEmployerMembers(@Param('id') id: string) {
+    return this.employerMembersService.listMembers(id);
+  }
+
+  /** Admin: list pending invites for any employer */
+  @Get(':id/invites')
+  @Roles(Role.ADMIN)
+  getEmployerInvites(@Param('id') id: string) {
+    return this.employerMembersService.listInvites(id);
   }
 
   @Patch(':id/status')

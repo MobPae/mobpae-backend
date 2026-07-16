@@ -46,6 +46,14 @@ export class AuthService {
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
+      // Increment failed login counter (non-blocking — don't fail the request if this errors)
+      this.prisma.user
+        .update({
+          where: { id: user.id },
+          data: { failedLoginCount: { increment: 1 } },
+        })
+        .catch(() => undefined);
+
       await this.writeAuthAudit('LOGIN_FAILED', {
         userId: user.id,
         email: user.email,
@@ -100,7 +108,7 @@ export class AuthService {
 
         await tx.user.update({
           where: { id: user.id },
-          data: { lastLogin: loginAt },
+          data: { lastLogin: loginAt, failedLoginCount: 0 },
         });
 
         const refreshToken = this.buildRefreshToken(session.id);
@@ -507,6 +515,8 @@ export class AuthService {
         data: {
           password: hashedPassword,
           passwordChanged: true,
+          passwordChangedAt: new Date(),
+          failedLoginCount: 0,
         },
       }),
       this.prisma.passwordResetToken.update({
@@ -584,7 +594,12 @@ export class AuthService {
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: user.id },
-        data: { password: hashedPassword, passwordChanged: true },
+        data: {
+          password: hashedPassword,
+          passwordChanged: true,
+          passwordChangedAt: new Date(),
+          failedLoginCount: 0,
+        },
       }),
       this.prisma.userSession.updateMany({
         where: { userId: user.id, isActive: true },

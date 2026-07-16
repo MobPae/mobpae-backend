@@ -21,14 +21,12 @@ export class EmployerProductConfigsService {
   }
 
   /**
-   * Lists all product configs for the currently logged-in employer (by userId).
+   * Lists all product configs for the currently logged-in employer (by employerId).
    * Used by employer portal.
    */
-  async findByUserId(userId: string) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
-    if (!employer) throw new NotFoundException('Employer not found');
+  async findByEmployerId(employerId: string) {
     return this.prisma.employerProductConfig.findMany({
-      where: { employerId: employer.id },
+      where: { employerId },
       include: { product: true },
     });
   }
@@ -93,14 +91,12 @@ export class EmployerProductConfigsService {
    * Self-service upsert for the employer portal.
    * Employer can only set their percentage override — cannot change isEnabled or requiresEmployerApproval.
    */
-  async upsertByUserId(
-    userId: string,
+  async upsertByEmployerId(
+    employerId: string,
     productType: string,
     dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvancePercentageOverride'>,
   ) {
-    const employer = await this.prisma.employer.findUnique({ where: { userId } });
-    if (!employer) throw new NotFoundException('Employer not found');
-    return this.upsert(employer.id, productType, dto);
+    return this.upsert(employerId, productType, dto);
   }
 
   /**

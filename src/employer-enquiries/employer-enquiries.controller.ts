@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 
 import { EmployerEnquiriesService } from './employer-enquiries.service';
 
@@ -21,9 +22,11 @@ export class EmployerEnquiriesController {
   ) {}
 
   /**
-   * Public — enquiry from landing page
+   * Public — enquiry from landing page.
+   * Strict limit to prevent spam from the website form.
    */
   @Post()
+  @Throttle({ default: { limit: 5, ttl: 60 * 60 * 1000 } })
   create(@Body() dto: CreateEmployerEnquiryDto) {
     return this.employerEnquiriesService.create(dto);
   }

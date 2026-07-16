@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { FilesService } from '../files/files.service';
 import { UploadType } from '../files/upload-type.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PushNotificationService } from '../notifications/push-notification.service';
 import { EmailService } from '../email/email.service';
 import {
   containsSearch,
@@ -56,11 +58,12 @@ export class EmployeesService {
     private readonly auditLogsService: AuditLogsService,
     private readonly filesService: FilesService,
     private readonly notificationsService: NotificationsService,
+    private readonly pushNotificationService: PushNotificationService,
     private readonly emailService: EmailService,
     private readonly platformFeesService: PlatformFeesService,
   ) {}
 
-  async create(dto: CreateEmployeeDto, userId: string) {
+  async create(dto: CreateEmployeeDto, employerId: string, actorUserId: string) {
     const normalizedDto = {
       ...dto,
       email: normalizeEmail(dto.email),
@@ -68,7 +71,7 @@ export class EmployeesService {
 
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
     });
 
@@ -108,7 +111,7 @@ export class EmployeesService {
 
     const employee = await this.createEmployeeInTransaction(
       normalizedDto,
-      userId,
+      actorUserId,
       employer.id,
       hashedPassword,
     );
@@ -239,6 +242,7 @@ export class EmployeesService {
         where,
         include: {
           employer: true,
+          user: { select: { passwordChanged: true } },
         },
         orderBy: getOrderBy(
           query,
@@ -263,10 +267,10 @@ export class EmployeesService {
     return paginate(data, total, page, limit);
   }
 
-  async update(employeeId: string, dto: UpdateEmployeeDto, userId: string) {
+  async update(employeeId: string, dto: UpdateEmployeeDto, employerId: string, actorUserId: string) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
     });
 
@@ -300,7 +304,7 @@ export class EmployeesService {
     });
 
     await this.writeAuditLog({
-      userId,
+      userId: actorUserId,
       action: 'EMPLOYEE_UPDATED',
       entityType: 'EMPLOYEE',
       entityId: updatedEmployee.id,
@@ -314,11 +318,12 @@ export class EmployeesService {
   async updateActivation(
     employeeId: string,
     appActivated: boolean,
-    userId: string,
+    employerId: string,
+    actorUserId: string,
   ) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
     });
 
@@ -347,7 +352,7 @@ export class EmployeesService {
     });
 
     await this.writeAuditLog({
-      userId,
+      userId: actorUserId,
       action: 'EMPLOYEE_UPDATED',
       entityType: 'EMPLOYEE',
       entityId: updatedEmployee.id,
@@ -361,11 +366,12 @@ export class EmployeesService {
   async bulkActivation(
     employeeIds: string[],
     appActivated: boolean,
-    userId: string,
+    employerId: string,
+    actorUserId: string,
   ) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
     });
 
@@ -386,7 +392,7 @@ export class EmployeesService {
     });
 
     await this.writeAuditLog({
-      userId,
+      userId: actorUserId,
       action: 'EMPLOYEE_UPDATED',
       entityType: 'EMPLOYEE',
       entityId: employer.id,
@@ -448,10 +454,10 @@ export class EmployeesService {
 
   // Bulk Create employees with row-level error handling. Temporary passwords are
   // delivered through email and development console logs only, never API payloads.
-  async bulkCreate(userId: string, employees: CreateEmployeeDto[]) {
+  async bulkCreate(employerId: string, employees: CreateEmployeeDto[], actorUserId: string) {
     const employer = await this.prisma.employer.findUnique({
       where: {
-        userId,
+        id: employerId,
       },
     });
 
@@ -560,7 +566,7 @@ export class EmployeesService {
 
           await tx.auditLog.create({
             data: {
-              userId,
+              userId: actorUserId,
               action: 'EMPLOYEE_CREATED',
               entityType: 'EMPLOYEE',
               entityId: createdEmployee.id,
@@ -1071,6 +1077,14 @@ export class EmployeesService {
         'Selfie Verified',
         'Your selfie verification has been approved.',
       );
+      this.pushNotificationService
+        .sendToUser(
+          employee.userId,
+          'KYC Verified ✓',
+          'Your identity verification is complete. You can now request a salary advance.',
+          { screen: 'home' },
+        )
+        .catch(() => {});
     }
 
     try {
@@ -1136,6 +1150,14 @@ export class EmployeesService {
         'Selfie Rejected',
         remarks || 'Your selfie verification has been rejected.',
       );
+      this.pushNotificationService
+        .sendToUser(
+          employee.userId,
+          'KYC Needs Attention',
+          remarks || 'Your selfie verification was rejected. Please resubmit clear photos.',
+          { screen: 'home' },
+        )
+        .catch(() => {});
     }
 
     try {
@@ -1170,23 +1192,14 @@ export class EmployeesService {
     return updatedEmployee;
   }
 
-  async findAllForEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (!employer) {
-      throw new NotFoundException('Employer not found');
-    }
-
+  async findAllForEmployer(employerId: string) {
     const employees = await this.prisma.employee.findMany({
       where: {
-        employerId: employer.id,
+        employerId,
       },
       include: {
         employer: true,
+        user: { select: { passwordChanged: true } },
         kycDocuments: {
           select: { status: true },
           orderBy: { createdAt: 'desc' },
@@ -1221,8 +1234,8 @@ export class EmployeesService {
           ? 'VERIFIED'
           : 'PENDING';
 
-      const { kycDocuments, bankAccount, ...rest } = emp;
-      return { ...rest, kycStatus, bankAccountStatus };
+      const { kycDocuments, bankAccount, user, ...rest } = emp;
+      return { ...rest, kycStatus, bankAccountStatus, passwordChanged: user?.passwordChanged ?? false };
     });
   }
 
@@ -1407,6 +1420,54 @@ export class EmployeesService {
     }
 
     await this.auditLogsService.log(auditData);
+  }
+
+  async resendActivationEmail(
+    employeeId: string,
+    employerId?: string,
+  ): Promise<{ message: string }> {
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
+      include: { user: true, employer: true },
+    });
+
+    if (!employee) {
+      throw new NotFoundException('Employee not found');
+    }
+
+    if (employerId && employee.employerId !== employerId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    if (employee.user?.passwordChanged) {
+      throw new BadRequestException(
+        'This employee has already set their own password and does not need an activation email.',
+      );
+    }
+
+    const temporaryPassword = this.generateTemporaryPassword();
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+
+    await this.prisma.user.update({
+      where: { id: employee.userId ?? undefined },
+      data: { password: hashedPassword, passwordChanged: false },
+    });
+
+    this.logTemporaryEmployeePassword({
+      employeeId: employee.id,
+      employeeCode: employee.employeeCode,
+      email: employee.email,
+      password: temporaryPassword,
+    });
+
+    await this.sendEmployeeCreatedEmail(
+      employee.email,
+      employee.name,
+      employee.employer.companyName,
+      temporaryPassword,
+    );
+
+    return { message: 'Activation email resent successfully' };
   }
 
   private generateTemporaryPassword() {

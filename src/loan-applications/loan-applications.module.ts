@@ -6,6 +6,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PlatformFeesModule } from '../platform-fees/platform-fees.module';
 import { PricingModule } from '../pricing/pricing.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AuthModule } from '../auth/auth.module';
 
 import { LoanApplicationsController } from './loan-applications.controller';
 import { LoanApplicationsService } from './loan-applications.service';
@@ -18,6 +19,7 @@ import { LoanApplicationsService } from './loan-applications.service';
     NotificationsModule,
     AuditLogsModule,
     PlatformFeesModule,
+    AuthModule,
   ],
   controllers: [LoanApplicationsController],
   providers: [LoanApplicationsService],

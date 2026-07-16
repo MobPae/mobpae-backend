@@ -7,9 +7,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SettingsModule } from '../settings/settings.module';
 import { EmailModule } from '../email/email.module';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [PrismaModule, SettingsModule, EmailModule, AuditLogsModule],
+  imports: [PrismaModule, SettingsModule, EmailModule, AuditLogsModule, AuthModule],
   controllers: [EmployerSettlementsController],
   providers: [EmployerSettlementsService],
   exports: [EmployerSettlementsService],

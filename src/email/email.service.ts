@@ -526,6 +526,31 @@ export class EmailService {
     );
   }
 
+  async sendEmployerInviteEmail(data: {
+    to: string;
+    inviteeName: string;
+    companyName: string;
+    invitedBy: string;
+    role: string;
+    acceptUrl: string;
+    expiryHours?: number;
+  }) {
+    return this.sendTemplateEmail(
+      data.to,
+      `You're invited to join ${data.companyName} on MobPae`,
+      'employer-invite',
+      {
+        title: 'Team Invitation',
+        inviteeName: data.inviteeName,
+        companyName: data.companyName,
+        invitedBy: data.invitedBy,
+        role: data.role,
+        acceptUrl: data.acceptUrl,
+        expiryHours: data.expiryHours ?? 72,
+      },
+    );
+  }
+
   private formatDate(date: Date): string {
     return date.toLocaleDateString('en-IN', {
       day: '2-digit',

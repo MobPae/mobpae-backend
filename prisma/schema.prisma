@@ -23,15 +23,22 @@ model User {
   role            Role
   isActive        Boolean              @default(true)
   passwordChanged Boolean              @default(false)
-  lastLogin       DateTime?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  auditLogs       AuditLog[]
+  lastLogin         DateTime?
+  failedLoginCount  Int       @default(0)
+  mfaEnabled        Boolean   @default(false)
+  passwordChangedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  auditLogs         AuditLog[]
   employee        Employee?
   employer        Employer?
   notifications   Notification[]
   passwordResets  PasswordResetToken[]
   sessions        UserSession[]
+  employerMembers EmployerMember[]
+  sentInvites     EmployerInvite[] @relation("SentInvites")
+  acceptedInvites EmployerInvite[] @relation("AcceptedInvites")
+  deviceTokens    DeviceToken[]
 
   @@map("users")
 }
@@ -55,16 +62,84 @@ model Employer {
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   userId                 String                  @unique
-  riskStatus             EmployerRiskStatus      @default(GOOD)
-  employees              Employee[]
+  riskStatus          EmployerRiskStatus      @default(GOOD)
+  onboardingStage     EmployerOnboardingStage @default(PROSPECT)
+  approvalPolicy      ApprovalPolicy          @default(ANY_HR)
+  employerType        EmployerType?
+  employees           Employee[]
   employerEnquiry        EmployerEnquiry?
   settlements            EmployerSettlement[]
   user                   User                    @relation(fields: [userId], references: [id])
   loanApplications       LoanApplication[]
   employerProductConfigs EmployerProductConfig[]
-  loanApplicationFees    LoanApplicationFee[]
+  loanApplicationFees LoanApplicationFee[]
+  members             EmployerMember[]
+  invites             EmployerInvite[]
 
   @@map("employers")
+}
+
+// ============================================================
+// EMPLOYER MEMBER
+// One row per portal user per employer. Replaces the single
+// Employer.userId pattern to support multi-user employer teams.
+// Role hierarchy: OWNER > ADMIN > HR / FINANCE > VIEWER
+// ============================================================
+
+model EmployerMember {
+  id         String               @id @default(uuid())
+  employerId String
+  userId     String
+  role       EmployerRole
+  status     EmployerMemberStatus @default(ACTIVE)
+  officeCode String?              // e.g. BLR, HYD — scopes data visibility
+  joinedAt   DateTime             @default(now())
+  removedAt  DateTime?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  employer Employer @relation(fields: [employerId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([employerId, userId])
+  @@index([employerId])
+  @@index([userId])
+  @@index([status])
+  @@map("employer_members")
+}
+
+// ============================================================
+// EMPLOYER INVITE
+// Token-based invite flow for adding EmployerMember users.
+// tokenHash = SHA-256 of the raw token (never store plain token).
+// Raw token is emailed to the invitee; hash is stored here.
+// ============================================================
+
+model EmployerInvite {
+  id               String       @id @default(uuid())
+  employerId       String
+  email            String
+  role             EmployerRole
+  tokenHash        String       @unique
+  status           InviteStatus @default(PENDING)
+  expiresAt        DateTime
+  invitedByUserId  String
+  acceptedByUserId String?
+  resendCount      Int          @default(0)
+  lastSentAt       DateTime?
+  createdAt        DateTime     @default(now())
+  acceptedAt       DateTime?
+  revokedAt        DateTime?
+
+  employer       Employer @relation(fields: [employerId], references: [id])
+  invitedByUser  User     @relation("SentInvites", fields: [invitedByUserId], references: [id])
+  acceptedByUser User?    @relation("AcceptedInvites", fields: [acceptedByUserId], references: [id])
+
+  @@index([employerId])
+  @@index([email])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("employer_invites")
 }
 
 // ============================================================
@@ -215,8 +290,9 @@ model EmployerProductConfig {
   // % of salary override set by employer (e.g. 20 = 20%). Must be ≤ hardCeilingPercentage.
   maximumAdvancePercentageOverride Decimal?    @db.Decimal(5, 2)
   requiresEmployerApproval         Boolean     @default(true)
-  isEnabled                        Boolean     @default(true)
-  createdAt                        DateTime    @default(now())
+  isEnabled                        Boolean               @default(true)
+  enrollmentStatus                 EmployerProductStatus @default(ACTIVE)
+  createdAt                        DateTime              @default(now())
   updatedAt                        DateTime    @updatedAt
   employer                         Employer    @relation(fields: [employerId], references: [id])
   product                          LoanProduct @relation(fields: [productId], references: [id])
@@ -697,6 +773,23 @@ model AuditLog {
 }
 
 // ============================================================
+// DEVICE TOKEN (push notifications)
+// ============================================================
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  String   // "ios" | "android" | "web"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// ============================================================
 // USER SESSION
 // ============================================================
 
@@ -1033,4 +1126,57 @@ enum AppInfoType {
   FAQ
   CONTACT
   WHATS_NEW
+}
+
+enum EmployerRole {
+  OWNER
+  ADMIN
+  HR
+  FINANCE
+  VIEWER
+}
+
+enum EmployerMemberStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum EmployerOnboardingStage {
+  PROSPECT
+  DISCUSSION
+  DOCS_PENDING
+  AGREEMENT_SIGNED
+  CONFIG_PENDING
+  TESTING
+  LIVE
+}
+
+enum ApprovalPolicy {
+  ANY_HR
+  FINANCE_ONLY
+  MULTI_LEVEL
+}
+
+enum EmployerType {
+  PRIVATE
+  PUBLIC
+  GOVERNMENT
+  PSU
+  STARTUP
+  NGO
+}
+
+enum EmployerProductStatus {
+  ACTIVE
+  INACTIVE
+  TRIAL
+  SUSPENDED
 }

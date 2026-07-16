@@ -18,6 +18,9 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { EmployerPermissionGuard } from '../auth/guards/employer-permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { Permission } from '../auth/permissions';
 
 import { LoanApplicationsService } from './loan-applications.service';
 import { BulkLoanApplicationActionDto } from './dto/bulk-loan-application-action.dto';
@@ -86,43 +89,53 @@ export class LoanApplicationsController {
 
   @Get('employer')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.LOAN_VIEW)
   @ApiOperation({ summary: "List employer's loan applications" })
   findAllForEmployer(@Req() req: any) {
-    return this.service.findAllForEmployer(req.user.userId);
+    return this.service.findAllForEmployer(req.user.employerId);
   }
 
   @Get('employer/pending')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.LOAN_VIEW)
   @ApiOperation({
     summary: 'List pending applications awaiting employer action',
   })
   findPendingByEmployer(@Req() req: any) {
-    return this.service.findPendingByEmployer(req.user.userId);
+    return this.service.findPendingByEmployer(req.user.employerId);
   }
 
   @Post(':id/employer-approve')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.LOAN_APPROVE)
   @ApiOperation({ summary: 'Employer approves a loan application' })
   employerApprove(@Param('id') id: string, @Req() req: any) {
-    return this.service.employerApprove(id, req.user.userId);
+    return this.service.employerApprove(id, req.user.employerId, req.user.userId);
   }
 
   @Post(':id/employer-reject')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.LOAN_APPROVE)
   @ApiOperation({ summary: 'Employer rejects a loan application' })
   employerReject(
     @Param('id') id: string,
     @Body() dto: RejectLoanApplicationDto,
     @Req() req: any,
   ) {
-    return this.service.employerReject(id, dto, req.user.userId);
+    return this.service.employerReject(id, dto, req.user.employerId, req.user.userId);
   }
 
   @Post('bulk-action')
   @Roles('EMPLOYER')
+  @UseGuards(JwtAuthGuard, EmployerPermissionGuard)
+  @RequirePermission(Permission.LOAN_APPROVE)
   @ApiOperation({ summary: 'Bulk approve or reject applications' })
   bulkAction(@Body() dto: BulkLoanApplicationActionDto, @Req() req: any) {
-    return this.service.bulkAction(dto, req.user.userId);
+    return this.service.bulkAction(dto, req.user.employerId, req.user.userId);
   }
 
   // ── Admin ─────────────────────────────────────────────────────────────────

@@ -13,6 +13,9 @@ import { UpsertEmployerProductConfigDto } from './dto/upsert-employer-product-co
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { EmployerPermissionGuard } from '../auth/guards/employer-permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { Permission } from '../auth/permissions';
 
 // ── Admin: manage any employer's product config ──────────────────────────────
 
@@ -49,26 +52,25 @@ export class EmployerProductConfigsController {
 @ApiTags('Employer Product Configs')
 @ApiBearerAuth()
 @Controller('employers/my/product-configs')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, EmployerPermissionGuard)
 export class EmployerSelfProductConfigsController {
   constructor(private readonly service: EmployerProductConfigsService) {}
 
   @Get()
-  @Roles('EMPLOYER')
+  @RequirePermission(Permission.ORG_SETTINGS_VIEW)
   @ApiOperation({ summary: 'Get all product configs for the logged-in employer' })
   findMine(@Req() req: any) {
-    return this.service.findByUserId(req.user.userId);
+    return this.service.findByEmployerId(req.user.employerId);
   }
 
   @Get(':productType/rules')
-  @Roles('EMPLOYER')
   @ApiOperation({ summary: 'Get active eligibility + pricing rules for a product type (employer view)' })
   getActiveRules(@Param('productType') productType: string) {
     return this.service.findActiveRulesForProductType(productType.toUpperCase());
   }
 
   @Put(':productType')
-  @Roles('EMPLOYER')
+  @RequirePermission(Permission.ORG_SETTINGS_MANAGE)
   @ApiOperation({
     summary: 'Update advance percentage override for the logged-in employer',
   })
@@ -77,6 +79,6 @@ export class EmployerSelfProductConfigsController {
     @Param('productType') productType: string,
     @Body() dto: Pick<UpsertEmployerProductConfigDto, 'maximumAdvancePercentageOverride'>,
   ) {
-    return this.service.upsertByUserId(req.user.userId, productType.toUpperCase(), dto);
+    return this.service.upsertByEmployerId(req.user.employerId, productType.toUpperCase(), dto);
   }
 }

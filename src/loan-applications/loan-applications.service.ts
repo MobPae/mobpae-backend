@@ -10,6 +10,7 @@ import { LoanApplicationStatus } from '@prisma/client';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PushNotificationService } from '../notifications/push-notification.service';
 import { PlatformFeesService } from '../platform-fees/platform-fees.service';
 import { PricingService } from '../pricing/pricing.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -91,6 +92,7 @@ export class LoanApplicationsService {
     private readonly pricingService: PricingService,
     private readonly eligibilityService: EligibilityService,
     private readonly notificationsService: NotificationsService,
+    private readonly pushNotificationService: PushNotificationService,
     private readonly auditLogsService: AuditLogsService,
     private readonly platformFeesService: PlatformFeesService,
   ) {}
@@ -574,14 +576,9 @@ export class LoanApplicationsService {
 
   // ── Employer: view company applications ─────────────────────────────────────
 
-  async findAllForEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: { userId },
-    });
-    if (!employer) throw new NotFoundException('Employer not found');
-
+  async findAllForEmployer(employerId: string) {
     return this.prisma.loanApplication.findMany({
-      where: { employerId: employer.id },
+      where: { employerId },
       include: {
         employee: { select: { id: true, name: true, employeeCode: true } },
         repayment: {
@@ -601,14 +598,9 @@ export class LoanApplicationsService {
     });
   }
 
-  async findPendingByEmployer(userId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: { userId },
-    });
-    if (!employer) throw new NotFoundException('Employer not found');
-
+  async findPendingByEmployer(employerId: string) {
     return this.prisma.loanApplication.findMany({
-      where: { employerId: employer.id, status: 'SUBMITTED' },
+      where: { employerId, status: 'SUBMITTED' },
       include: {
         employee: {
           select: {
@@ -625,14 +617,9 @@ export class LoanApplicationsService {
 
   // ── Employer: approve ───────────────────────────────────────────────────────
 
-  async employerApprove(id: string, actorUserId: string) {
-    const employer = await this.prisma.employer.findUnique({
-      where: { userId: actorUserId },
-    });
-    if (!employer) throw new ForbiddenException('Not an employer');
-
+  async employerApprove(id: string, employerId: string, actorUserId: string) {
     const app = await this.prisma.loanApplication.findFirst({
-      where: { id, employerId: employer.id },
+      where: { id, employerId },
       include: { employee: { select: { id: true, userId: true, name: true } } },
     });
     if (!app) throw new NotFoundException('Application not found');
@@ -703,6 +690,14 @@ export class LoanApplicationsService {
           'Your employer approved the request. Pay the platform fee to continue to MobPae review.',
         )
         .catch(() => {});
+      this.pushNotificationService
+        .sendToUser(
+          app.employee.userId,
+          'Advance Approved ✓',
+          'Your employer approved your advance request. Pay the platform fee to proceed.',
+          { screen: 'advance' },
+        )
+        .catch(() => {});
     }
 
     await this.auditLogsService.log({
@@ -727,15 +722,11 @@ export class LoanApplicationsService {
   async employerReject(
     id: string,
     dto: RejectLoanApplicationDto,
+    employerId: string,
     actorUserId: string,
   ) {
-    const employer = await this.prisma.employer.findUnique({
-      where: { userId: actorUserId },
-    });
-    if (!employer) throw new ForbiddenException('Not an employer');
-
     const app = await this.prisma.loanApplication.findFirst({
-      where: { id, employerId: employer.id },
+      where: { id, employerId },
       include: { employee: true },
     });
     if (!app) throw new NotFoundException('Application not found');
@@ -772,6 +763,14 @@ export class LoanApplicationsService {
           `Your loan application has been rejected. Reason: ${dto.remarks}`,
         )
         .catch(() => {});
+      this.pushNotificationService
+        .sendToUser(
+          app.employee.userId,
+          'Advance Request Rejected',
+          `Your advance request was not approved. Reason: ${dto.remarks}`,
+          { screen: 'activity' },
+        )
+        .catch(() => {});
     }
 
     await this.auditLogsService.log({
@@ -793,14 +792,15 @@ export class LoanApplicationsService {
 
   // ── Employer: bulk action ───────────────────────────────────────────────────
 
-  async bulkAction(dto: BulkLoanApplicationActionDto, actorUserId: string) {
+  async bulkAction(dto: BulkLoanApplicationActionDto, employerId: string, actorUserId: string) {
     const results = await Promise.allSettled(
       dto.ids.map((id) =>
         dto.action === 'APPROVE'
-          ? this.employerApprove(id, actorUserId)
+          ? this.employerApprove(id, employerId, actorUserId)
           : this.employerReject(
               id,
               { remarks: dto.remarks ?? 'Bulk rejected' },
+              employerId,
               actorUserId,
             ),
       ),
@@ -1064,6 +1064,14 @@ export class LoanApplicationsService {
           app.employee.userId,
           'Loan Application Ready for Disbursal',
           'Your loan application has been approved and is ready for disbursal.',
+        )
+        .catch(() => {});
+      this.pushNotificationService
+        .sendToUser(
+          app.employee.userId,
+          'MobPae Approved Your Advance',
+          'Your advance is approved and ready for disbursal.',
+          { screen: 'advance' },
         )
         .catch(() => {});
     }
