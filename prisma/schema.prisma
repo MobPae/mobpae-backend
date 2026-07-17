@@ -27,6 +27,7 @@ model User {
   failedLoginCount  Int       @default(0)
   mfaEnabled        Boolean   @default(false)
   passwordChangedAt DateTime?
+  termsAcceptedAt   DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   auditLogs         AuditLog[]
@@ -156,10 +157,6 @@ model Employee {
   phone               String
   salaryInHand        Decimal              @db.Decimal(12, 2)
   profilePhotoUrl     String?
-  selfieUrl           String?
-  selfieStatus        SelfieStatus         @default(PENDING)
-  selfieVerifiedAt    DateTime?
-  selfieVerifiedBy    String?
   joiningDate         DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -176,7 +173,6 @@ model Employee {
 
   @@unique([employerId, employeeCode])
   @@index([employerId])
-  @@index([selfieStatus])
   @@map("employees")
 }
 
@@ -250,7 +246,7 @@ model LoanProductConfig {
   // Shape: { maximumAdvancePercentage, minimumAdvanceAmount,
   //          minimumSalaryInHand, minimumTenureMonths,
   //          requiresKyc, requiresBankAccount,
-  //          requiresActiveSelfie, maxRequestsPerCycle, cooldownDays }
+  //          maxRequestsPerCycle, cooldownDays }
   eligibilityRules Json
 
   // PricingRules — consumed by PricingService (pure function, no I/O)
@@ -936,12 +932,6 @@ enum EmployerStatus {
 enum EmployeeStatus {
   ACTIVE
   INACTIVE
-}
-
-enum SelfieStatus {
-  PENDING
-  VERIFIED
-  REJECTED
 }
 
 enum PayrollCycleType {

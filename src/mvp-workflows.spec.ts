@@ -501,7 +501,6 @@ describe('critical MVP workflow unit coverage', () => {
           id: 'employee-1',
           employerId: 'employer-1',
           salaryInHand: 54000,
-          selfieStatus: 'VERIFIED',
         }),
       },
       kycDocument: {

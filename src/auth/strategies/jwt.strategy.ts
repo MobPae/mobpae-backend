@@ -15,8 +15,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: any) {
     const user = await this.prisma.user.findUnique({
-      where: {
-        id: payload.sub,
+      where: { id: payload.sub },
+      // Explicit select avoids querying columns that may not exist yet in the DB
+      // (e.g. termsAcceptedAt before migration is applied).
+      select: {
+        id: true,
+        isActive: true,
+        role: true,
       },
     });
 

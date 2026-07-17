@@ -415,9 +415,7 @@ export class EmployeesService {
         id: employeeId,
       },
       select: {
-        selfieStatus: true,
-        selfieUrl: true,
-        selfieVerifiedAt: true,
+        id: true,
       },
     });
 
@@ -444,10 +442,6 @@ export class EmployeesService {
       pan,
       aadhar,
       salarySlip,
-      selfie: employee.selfieStatus === 'VERIFIED',
-      selfieStatus: employee.selfieStatus,
-      selfieUrl: employee.selfieUrl,
-      selfieVerifiedAt: employee.selfieVerifiedAt,
       kycCompleted: pan && aadhar && salarySlip,
     };
   }
@@ -725,9 +719,6 @@ export class EmployeesService {
       phone: employee.phone,
       employeeCode: employee.employeeCode,
       profilePhotoUrl: employee.profilePhotoUrl,
-      selfieUrl: employee.selfieUrl,
-      selfieStatus: employee.selfieStatus,
-      selfieVerifiedAt: employee.selfieVerifiedAt,
 
       /**
        * Salary Info
@@ -900,11 +891,24 @@ export class EmployeesService {
         employer: true,
         kycDocuments: true,
         bankAccount: true,
+        // user NOT included here — termsAcceptedAt is read via raw query below
+        // so the endpoint doesn't break if the migration hasn't been applied.
       },
     });
 
     if (!employee) {
       throw new NotFoundException('Employee not found');
+    }
+
+    // Read termsAcceptedAt via raw SQL to tolerate the column being missing pre-migration.
+    let termsAccepted = false;
+    try {
+      const rows = await this.prisma.$queryRaw<{ termsAcceptedAt: Date | null }[]>`
+        SELECT "termsAcceptedAt" FROM users WHERE id = ${userId} LIMIT 1
+      `;
+      termsAccepted = !!rows[0]?.termsAcceptedAt;
+    } catch {
+      termsAccepted = false;
     }
 
     const requiredVerified = ['PAN', 'AADHAR', 'SALARY_SLIP'].every((type) =>
@@ -932,13 +936,11 @@ export class EmployeesService {
       employerId: employee.employerId,
       employerName: employee.employer.companyName,
       profilePhotoUrl: employee.profilePhotoUrl,
-      selfieUrl: employee.selfieUrl,
-      selfieStatus: employee.selfieStatus,
-      selfieVerifiedAt: employee.selfieVerifiedAt,
       kycStatus,
       bankVerified: employee.bankAccount?.verified ?? false,
       appActivated: employee.appActivated,
       employmentStatus: employee.employmentStatus,
+      termsAccepted,
     };
   }
 
@@ -969,227 +971,6 @@ export class EmployeesService {
         profilePhotoUrl: upload.key,
       },
     });
-  }
-
-  async uploadSelfie(userId: string, file: any) {
-    this.assertImageUpload(file);
-
-    const employee = await this.prisma.employee.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
-    }
-
-    const upload = await this.filesService.saveUploadedFile(
-      file,
-      userId,
-      UploadType.SELFIE,
-    );
-    const updatedEmployee = await this.prisma.employee.update({
-      where: {
-        id: employee.id,
-      },
-      data: {
-        selfieUrl: upload.key,
-        selfieStatus: 'PENDING',
-        selfieVerifiedAt: null,
-        selfieVerifiedBy: null,
-      },
-    });
-
-    const admins = await this.prisma.user.findMany({
-      where: {
-        role: 'ADMIN',
-        isActive: true,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    await Promise.all(
-      admins.map((admin) =>
-        this.notificationsService.createSystemNotification(
-          admin.id,
-          'Selfie Submitted',
-          `${employee.name} submitted a selfie for verification.`,
-        ),
-      ),
-    );
-
-    await this.writeAuditLog({
-      userId,
-      action: 'SELFIE_SUBMITTED',
-      entityType: 'EMPLOYEE',
-      entityId: employee.id,
-      oldValue: {
-        selfieUrl: employee.selfieUrl,
-        selfieStatus: employee.selfieStatus,
-        selfieVerifiedAt: employee.selfieVerifiedAt?.toISOString() ?? null,
-        selfieVerifiedBy: employee.selfieVerifiedBy,
-      },
-      newValue: {
-        selfieUrl: updatedEmployee.selfieUrl,
-        selfieStatus: updatedEmployee.selfieStatus,
-        selfieVerifiedAt:
-          updatedEmployee.selfieVerifiedAt?.toISOString() ?? null,
-        selfieVerifiedBy: updatedEmployee.selfieVerifiedBy,
-      },
-    });
-
-    return updatedEmployee;
-  }
-
-  async verifySelfie(employeeId: string, adminUserId: string) {
-    const employee = await this.prisma.employee.findUnique({
-      where: {
-        id: employeeId,
-      },
-    });
-
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
-    }
-
-    if (!employee.selfieUrl) {
-      throw new BadRequestException('Selfie has not been uploaded');
-    }
-
-    const verifiedAt = new Date();
-    const updatedEmployee = await this.prisma.employee.update({
-      where: {
-        id: employeeId,
-      },
-      data: {
-        selfieStatus: 'VERIFIED',
-        selfieVerifiedAt: verifiedAt,
-        selfieVerifiedBy: adminUserId,
-      },
-    });
-
-    if (employee.userId) {
-      await this.notificationsService.createSystemNotification(
-        employee.userId,
-        'Selfie Verified',
-        'Your selfie verification has been approved.',
-      );
-      this.pushNotificationService
-        .sendToUser(
-          employee.userId,
-          'KYC Verified ✓',
-          'Your identity verification is complete. You can now request a salary advance.',
-          { screen: 'home' },
-        )
-        .catch(() => {});
-    }
-
-    try {
-      await this.emailService.sendSelfieVerifiedEmail({
-        to: employee.email,
-        employeeName: employee.name,
-        verifiedDate: verifiedAt,
-      });
-    } catch (err) {
-      console.error('Failed to send selfie verified email', err);
-    }
-
-    await this.writeAuditLog({
-      userId: adminUserId,
-      action: 'SELFIE_VERIFIED',
-      entityType: 'EMPLOYEE',
-      entityId: employee.id,
-      oldValue: {
-        selfieStatus: employee.selfieStatus,
-        selfieVerifiedAt: employee.selfieVerifiedAt?.toISOString() ?? null,
-        selfieVerifiedBy: employee.selfieVerifiedBy,
-      },
-      newValue: {
-        selfieStatus: updatedEmployee.selfieStatus,
-        selfieVerifiedAt:
-          updatedEmployee.selfieVerifiedAt?.toISOString() ?? null,
-        selfieVerifiedBy: updatedEmployee.selfieVerifiedBy,
-      },
-    });
-
-    return updatedEmployee;
-  }
-
-  async rejectSelfie(employeeId: string, remarks: string, adminUserId: string) {
-    const employee = await this.prisma.employee.findUnique({
-      where: {
-        id: employeeId,
-      },
-    });
-
-    if (!employee) {
-      throw new NotFoundException('Employee not found');
-    }
-
-    if (!employee.selfieUrl) {
-      throw new BadRequestException('Selfie has not been uploaded');
-    }
-
-    const updatedEmployee = await this.prisma.employee.update({
-      where: {
-        id: employeeId,
-      },
-      data: {
-        selfieStatus: 'REJECTED',
-        selfieVerifiedAt: null,
-        selfieVerifiedBy: adminUserId,
-      },
-    });
-
-    if (employee.userId) {
-      await this.notificationsService.createSystemNotification(
-        employee.userId,
-        'Selfie Rejected',
-        remarks || 'Your selfie verification has been rejected.',
-      );
-      this.pushNotificationService
-        .sendToUser(
-          employee.userId,
-          'KYC Needs Attention',
-          remarks || 'Your selfie verification was rejected. Please resubmit clear photos.',
-          { screen: 'home' },
-        )
-        .catch(() => {});
-    }
-
-    try {
-      await this.emailService.sendSelfieRejectedEmail({
-        to: employee.email,
-        employeeName: employee.name,
-        remarks,
-      });
-    } catch (err) {
-      console.error('Failed to send selfie rejected email', err);
-    }
-
-    await this.writeAuditLog({
-      userId: adminUserId,
-      action: 'SELFIE_REJECTED',
-      entityType: 'EMPLOYEE',
-      entityId: employee.id,
-      oldValue: {
-        selfieStatus: employee.selfieStatus,
-        selfieVerifiedAt: employee.selfieVerifiedAt?.toISOString() ?? null,
-        selfieVerifiedBy: employee.selfieVerifiedBy,
-      },
-      newValue: {
-        selfieStatus: updatedEmployee.selfieStatus,
-        selfieVerifiedAt:
-          updatedEmployee.selfieVerifiedAt?.toISOString() ?? null,
-        selfieVerifiedBy: updatedEmployee.selfieVerifiedBy,
-        remarks,
-      },
-    });
-
-    return updatedEmployee;
   }
 
   async findAllForEmployer(employerId: string) {

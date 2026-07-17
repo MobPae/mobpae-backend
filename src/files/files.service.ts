@@ -56,7 +56,6 @@ export class FilesService {
    * Key format: employees/{userId}/{subfolder}/document.{ext}
    * Examples:
    *   employees/{userId}/kyc/pan/document.pdf
-   *   employees/{userId}/selfie/document.jpg
    *   employees/{userId}/profile/document.png
    */
   async saveUploadedFile(

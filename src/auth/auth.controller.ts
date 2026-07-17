@@ -165,6 +165,16 @@ export class AuthController {
     );
   }
 
+  @Post('accept-terms')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Record that the user has accepted Terms & Conditions' })
+  @ApiResponse({ status: 200, schema: { example: { success: true } } })
+  async acceptTerms(@Req() req: any) {
+    await this.authService.acceptTerms(req.user.userId);
+    return { success: true };
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

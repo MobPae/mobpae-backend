@@ -36,7 +36,6 @@ import {
   PrismaClient,
   RepaymentStatus,
   Role,
-  SelfieStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { normalizeEmail } from '../src/common/utils/email.util';
@@ -149,7 +148,6 @@ async function seedLendingCatalog() {
           minimumTenureMonths: 3,
           requiresKyc: true,
           requiresBankAccount: true,
-          requiresActiveSelfie: false,
           maxRequestsPerCycle: 1,
           cooldownDays: 0,
         },
@@ -279,7 +277,6 @@ type DemoEmployeeSeed = {
   salary: number;
   employmentStatus: EmployeeStatus;
   appActivated: boolean;
-  selfieStatus: SelfieStatus;
   kyc: Partial<Record<KycDocumentType, KycStatus>>;
   bankVerified: boolean;
 };
@@ -292,7 +289,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 54000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -307,7 +303,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 62000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.PENDING,
     kyc: { PAN: KycStatus.VERIFIED, AADHAR: KycStatus.PENDING },
     bankVerified: false,
   },
@@ -318,7 +313,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 47000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -333,7 +327,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 73500,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.REJECTED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.REJECTED,
@@ -348,7 +341,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 51000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -363,7 +355,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 68000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -378,7 +369,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 39000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: false,
-    selfieStatus: SelfieStatus.PENDING,
     kyc: { PAN: KycStatus.PENDING },
     bankVerified: false,
   },
@@ -389,7 +379,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 82000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -404,7 +393,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 58500,
     employmentStatus: EmployeeStatus.INACTIVE,
     appActivated: false,
-    selfieStatus: SelfieStatus.PENDING,
     kyc: {},
     bankVerified: false,
   },
@@ -415,7 +403,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 45500,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -430,7 +417,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 38000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -445,7 +431,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 52000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -460,7 +445,6 @@ const employeeSeeds: DemoEmployeeSeed[] = [
     salary: 44000,
     employmentStatus: EmployeeStatus.ACTIVE,
     appActivated: true,
-    selfieStatus: SelfieStatus.VERIFIED,
     kyc: {
       PAN: KycStatus.VERIFIED,
       AADHAR: KycStatus.VERIFIED,
@@ -479,12 +463,6 @@ async function seedEmployees(
   for (const [index, seed] of employeeSeeds.entries()) {
     const email = `${seed.code.toLowerCase()}@northstar.mobpae.com`;
     const user = await upsertUser(email, Role.EMPLOYEE, DEMO_PASSWORD);
-    const verifiedAt =
-      seed.selfieStatus === SelfieStatus.VERIFIED ? addDays(-8) : null;
-
-    const hasSelfie =
-      seed.selfieStatus !== SelfieStatus.PENDING ||
-      Object.keys(seed.kyc).length > 0;
 
     const employee = await prisma.employee.upsert({
       where: {
@@ -498,13 +476,7 @@ async function seedEmployees(
         salaryInHand: seed.salary,
         appActivated: seed.appActivated,
         employmentStatus: seed.employmentStatus,
-        selfieStatus: seed.selfieStatus,
-        selfieVerifiedAt: verifiedAt,
-        selfieVerifiedBy: verifiedAt ? adminUserId : null,
         joiningDate: addDays(-120 + index * 4),
-        selfieUrl: hasSelfie
-          ? `uploads/demo/${seed.code.toLowerCase()}-selfie.png`
-          : null,
       },
       create: {
         userId: user.id,
@@ -516,13 +488,7 @@ async function seedEmployees(
         salaryInHand: seed.salary,
         appActivated: seed.appActivated,
         employmentStatus: seed.employmentStatus,
-        selfieStatus: seed.selfieStatus,
-        selfieVerifiedAt: verifiedAt,
-        selfieVerifiedBy: verifiedAt ? adminUserId : null,
         joiningDate: addDays(-120 + index * 4),
-        selfieUrl: hasSelfie
-          ? `uploads/demo/${seed.code.toLowerCase()}-selfie.png`
-          : null,
       },
     });
 

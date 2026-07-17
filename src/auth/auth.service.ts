@@ -141,6 +141,7 @@ export class AuthService {
       user: {
         ...authUser,
         lastLoginAt: previousLoginAt,
+        termsAccepted: await this.getTermsAccepted(user.id),
       },
     };
   }
@@ -637,6 +638,7 @@ export class AuthService {
         success: true,
         accessToken: await this.createAccessToken(authUser, session.id),
         refreshToken: rawRefreshToken,
+        termsAccepted: await this.getTermsAccepted(userId),
       };
     }
 
@@ -647,10 +649,28 @@ export class AuthService {
     };
   }
 
+  /**
+   * Record that the authenticated user has accepted the Terms & Conditions.
+   * Idempotent — safe to call multiple times.
+   */
+  async acceptTerms(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { termsAcceptedAt: new Date() },
+    });
+  }
+
   private async getAuthUser(userId: string) {
     const user = await this.prisma.user.findUnique({
-      where: {
-        id: userId,
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        isActive: true,
+        passwordChanged: true,
+        // termsAcceptedAt intentionally omitted — read separately so that callers
+        // don't break if the DB migration hasn't been applied yet.
       },
     });
 
@@ -711,6 +731,19 @@ export class AuthService {
       employeeId,
       passwordChanged: user.passwordChanged,
     };
+  }
+
+  /** Read termsAcceptedAt safely — returns false if the column doesn't exist yet. */
+  private async getTermsAccepted(userId: string): Promise<boolean> {
+    try {
+      const row = await this.prisma.$queryRaw<{ termsAcceptedAt: Date | null }[]>`
+        SELECT "termsAcceptedAt" FROM users WHERE id = ${userId} LIMIT 1
+      `;
+      return !!row[0]?.termsAcceptedAt;
+    } catch {
+      // Column not yet in DB (migration pending) — default false so T&C screen shows.
+      return false;
+    }
   }
 
   private async createAccessToken(

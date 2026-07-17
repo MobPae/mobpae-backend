@@ -4,6 +4,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { EmployerSettlementsService } from '../employer-settlements/employer-settlements.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PushNotificationService } from '../notifications/push-notification.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class BusinessJobsService {
     private readonly prisma: PrismaService,
     private readonly auditLogsService: AuditLogsService,
     private readonly notificationsService: NotificationsService,
+    private readonly pushNotificationService: PushNotificationService,
     private readonly employerSettlementsService: EmployerSettlementsService,
   ) {}
 
@@ -217,6 +219,85 @@ export class BusinessJobsService {
     return {
       processed: settlements.length,
     };
+  }
+
+  /**
+   * Send repayment reminder push notifications 1 day before each employer's payroll date.
+   * Runs daily at 10:00 AM IST (04:30 UTC).
+   * Finds employers whose payrollDate falls tomorrow, then notifies their employees
+   * who have a pending (SCHEDULED) repayment.
+   */
+  @Cron('30 4 * * *')
+  async sendRepaymentReminders() {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowDay = tomorrow.getDate();
+
+    // Find employers whose payroll day is tomorrow
+    const employers = await this.prisma.employer.findMany({
+      where: { payrollDate: tomorrowDay, status: 'ACTIVE' },
+      select: { id: true, companyName: true },
+    });
+
+    if (employers.length === 0) return { notified: 0 };
+
+    const employerIds = employers.map((e) => e.id);
+
+    // Find SCHEDULED repayments for those employers' employees
+    const repayments = await this.prisma.repayment.findMany({
+      where: {
+        status: 'SCHEDULED',
+        loanApplication: {
+          status: 'DISBURSED',
+          employee: { employerId: { in: employerIds } },
+        },
+      },
+      include: {
+        loanApplication: {
+          include: {
+            employee: { select: { userId: true, name: true } },
+          },
+        },
+      },
+    });
+
+    let notified = 0;
+
+    await Promise.all(
+      repayments.map(async (repayment) => {
+        const userId = repayment.loanApplication.employee.userId;
+        if (!userId) return;
+
+        const amount = Number(repayment.totalAmount);
+        const formatted = new Intl.NumberFormat('en-IN', {
+          style: 'currency',
+          currency: 'INR',
+          maximumFractionDigits: 0,
+        }).format(amount);
+
+        await Promise.all([
+          this.notificationsService
+            .createSystemNotification(
+              userId,
+              'Repayment Due Tomorrow',
+              `Your salary advance repayment of ${formatted} will be deducted from tomorrow's payroll.`,
+            )
+            .catch(() => {}),
+          this.pushNotificationService
+            .sendToUser(
+              userId,
+              'Repayment Due Tomorrow',
+              `${formatted} will be deducted from your salary tomorrow. Make sure your account is ready.`,
+              { screen: 'repayments' },
+            )
+            .catch(() => {}),
+        ]);
+
+        notified++;
+      }),
+    );
+
+    return { notified };
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_4AM)

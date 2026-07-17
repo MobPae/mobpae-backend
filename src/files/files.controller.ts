@@ -50,7 +50,7 @@ export class FilesController {
     description:
       'Document type — determines storage folder. ' +
       'KYC: kyc_aadhar | kyc_pan | kyc_salary_slip | kyc_other. ' +
-      'Employee: selfie | profile_photo. ' +
+      'Employee: profile_photo. ' +
       'Re-uploading the same type overwrites the existing file in R2.',
   })
   @ApiBody({

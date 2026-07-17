@@ -96,9 +96,6 @@ describe('Backend stabilization fixes', () => {
           phone: '9999999998',
           employeeCode: 'EMP001',
           profilePhotoUrl: null,
-          selfieUrl: 'selfie.jpg',
-          selfieStatus: 'VERIFIED',
-          selfieVerifiedAt: new Date(),
           salaryInHand: 54000,
           employer: {
             id: 'employer-1',
@@ -170,9 +167,6 @@ describe('Backend stabilization fixes', () => {
           phone: '9999999998',
           employeeCode: 'EMP001',
           profilePhotoUrl: null,
-          selfieUrl: null,
-          selfieStatus: 'PENDING',
-          selfieVerifiedAt: null,
           salaryInHand: 54000,
           employer: {
             id: 'employer-1',

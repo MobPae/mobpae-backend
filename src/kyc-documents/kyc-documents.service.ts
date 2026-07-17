@@ -196,18 +196,11 @@ export class KycDocumentsService {
           : {}),
         ...(filters.status
           ? {
-              OR: [
-                {
-                  kycDocuments: {
-                    some: {
-                      status: filters.status,
-                    },
-                  },
+              kycDocuments: {
+                some: {
+                  status: filters.status,
                 },
-                {
-                  selfieStatus: filters.status,
-                },
-              ],
+              },
             }
           : {}),
       },

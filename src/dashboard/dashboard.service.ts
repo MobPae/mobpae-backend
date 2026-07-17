@@ -219,7 +219,6 @@ export class DashboardService {
     return {
       employeeName: employee.name,
       kycCompleted,
-      selfieStatus: employee.selfieStatus,
       maximumEligibleAmount,
       activeRequestAmount,
       availableAdvance,

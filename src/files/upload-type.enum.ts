@@ -10,7 +10,6 @@
  *   employees/{userId}/kyc/pan/document.{ext}
  *   employees/{userId}/kyc/salary-slip/document.{ext}
  *   employees/{userId}/kyc/other/document.{ext}
- *   employees/{userId}/selfie/document.{ext}
  *   employees/{userId}/profile/document.{ext}
  *
  * Note: platform fee payments are handled by Razorpay — no screenshot upload needed.
@@ -20,7 +19,6 @@ export enum UploadType {
   KYC_PAN = 'kyc_pan',
   KYC_SALARY_SLIP = 'kyc_salary_slip',
   KYC_OTHER = 'kyc_other',
-  SELFIE = 'selfie',
   PROFILE_PHOTO = 'profile_photo',
 }
 
@@ -30,6 +28,5 @@ export const UPLOAD_TYPE_FOLDER: Record<UploadType, string> = {
   [UploadType.KYC_PAN]: 'kyc/pan',
   [UploadType.KYC_SALARY_SLIP]: 'kyc/salary-slip',
   [UploadType.KYC_OTHER]: 'kyc/other',
-  [UploadType.SELFIE]: 'selfie',
   [UploadType.PROFILE_PHOTO]: 'profile',
 };

@@ -1147,6 +1147,14 @@ export class LoanApplicationsService {
           `Your loan application has been rejected by admin. Reason: ${dto.remarks}`,
         )
         .catch(() => {});
+      this.pushNotificationService
+        .sendToUser(
+          app.employee.userId,
+          'Advance Request Rejected',
+          `Your advance request was not approved. Reason: ${dto.remarks}`,
+          { screen: 'activity' },
+        )
+        .catch(() => {});
     }
 
     await this.auditLogsService.log({

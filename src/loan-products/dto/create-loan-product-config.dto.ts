@@ -25,7 +25,6 @@ export interface EligibilityRules {
   minimumTenureMonths: number;
   requiresKyc: boolean;
   requiresBankAccount: boolean;
-  requiresActiveSelfie: boolean;
   maxRequestsPerCycle: number;
   cooldownDays: number;
 }
@@ -70,7 +69,6 @@ export class CreateLoanProductConfigDto {
       minimumTenureMonths: 3,
       requiresKyc: true,
       requiresBankAccount: true,
-      requiresActiveSelfie: false,
       maxRequestsPerCycle: 1,
       cooldownDays: 0,
     },

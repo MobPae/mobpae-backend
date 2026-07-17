@@ -79,13 +79,13 @@ describe('StorageService', () => {
     it('sends DeleteObjectCommand with correct bucket and key', async () => {
       mockSend.mockResolvedValueOnce({});
       const service = buildService();
-      await service.deleteFile('employees/user-1/selfie/photo.jpg');
+      await service.deleteFile('employees/user-1/profile/photo.jpg');
 
       expect(mockSend).toHaveBeenCalledTimes(1);
       const cmd = mockSend.mock.calls[0][0];
       expect(cmd.input).toMatchObject({
         Bucket: 'test-bucket',
-        Key: 'employees/user-1/selfie/photo.jpg',
+        Key: 'employees/user-1/profile/photo.jpg',
       });
     });
 
@@ -141,7 +141,7 @@ describe('StorageService', () => {
       mockSend.mockResolvedValueOnce({ ContentLength: 1234 });
       const service = buildService();
 
-      const exists = await service.fileExists('employees/user-1/selfie/selfie.jpg');
+      const exists = await service.fileExists('employees/user-1/profile/photo.jpg');
       expect(exists).toBe(true);
     });
 
@@ -153,7 +153,7 @@ describe('StorageService', () => {
       mockSend.mockRejectedValueOnce(notFound);
       const service = buildService();
 
-      const exists = await service.fileExists('employees/user-1/selfie/missing.jpg');
+      const exists = await service.fileExists('employees/user-1/profile/missing.jpg');
       expect(exists).toBe(false);
     });
 

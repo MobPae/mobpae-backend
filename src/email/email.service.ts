@@ -471,40 +471,6 @@ export class EmailService {
     );
   }
 
-  async sendSelfieVerifiedEmail(data: {
-    to: string;
-    employeeName: string;
-    verifiedDate: Date;
-  }) {
-    return this.sendTemplateEmail(
-      data.to,
-      'Selfie Verification Approved – MobPae',
-      'selfie-verified',
-      {
-        title: 'Selfie Verified',
-        employeeName: data.employeeName,
-        verifiedDate: this.formatDate(data.verifiedDate),
-      },
-    );
-  }
-
-  async sendSelfieRejectedEmail(data: {
-    to: string;
-    employeeName: string;
-    remarks?: string;
-  }) {
-    return this.sendTemplateEmail(
-      data.to,
-      'Selfie Verification Failed – MobPae',
-      'selfie-rejected',
-      {
-        title: 'Selfie Rejected',
-        employeeName: data.employeeName,
-        remarks: data.remarks ?? 'Please resubmit a clear selfie.',
-      },
-    );
-  }
-
   async sendEnquiryStatusUpdatedEmail(data: {
     to: string;
     companyName: string;

@@ -86,7 +86,7 @@ export class EmployeesController {
   @Get('me/profile')
   @Roles('EMPLOYEE')
   @ApiOperation({
-    summary: 'Get current employee profile with photo and selfie status',
+    summary: 'Get current employee profile with photo',
   })
   getMyProfile(@Req() req: any) {
     return this.employeesService.getProfile(req.user.userId);
@@ -128,34 +128,6 @@ export class EmployeesController {
   )
   uploadProfilePhoto(@Req() req: any, @UploadedFile() file: any) {
     return this.employeesService.uploadProfilePhoto(req.user.userId, file);
-  }
-
-  @Post('selfie')
-  @Roles('EMPLOYEE')
-  @ApiOperation({
-    summary: 'Upload selfie for KYC identity verification',
-  })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        file: {
-          type: 'string',
-          format: 'binary',
-        },
-      },
-    },
-  })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: {
-        fileSize: 5 * 1024 * 1024,
-      },
-    }),
-  )
-  uploadSelfie(@Req() req: any, @UploadedFile() file: any) {
-    return this.employeesService.uploadSelfie(req.user.userId, file);
   }
 
   @Get(':id/kyc-status')
@@ -212,35 +184,6 @@ export class EmployeesController {
       req.user.employerId,
       req.user.userId,
     );
-  }
-
-  @Post(':id/selfie/verify')
-  @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Approve employee selfie verification',
-  })
-  verifySelfie(@Param('id') id: string, @Req() req: any) {
-    return this.employeesService.verifySelfie(id, req.user.userId);
-  }
-
-  @Post(':id/selfie/reject')
-  @Roles('ADMIN')
-  @ApiOperation({
-    summary: 'Reject employee selfie verification',
-  })
-  @ApiBody({
-    schema: {
-      example: {
-        remarks: 'Face not clear',
-      },
-    },
-  })
-  rejectSelfie(
-    @Param('id') id: string,
-    @Body('remarks') remarks: string,
-    @Req() req: any,
-  ) {
-    return this.employeesService.rejectSelfie(id, remarks, req.user.userId);
   }
 
   @Patch(':id')
