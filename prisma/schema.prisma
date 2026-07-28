@@ -153,7 +153,7 @@ model Employee {
   employerId          String
   employeeCode        String
   name                String
-  email               String
+  email               String               @unique
   phone               String
   salaryInHand        Decimal              @db.Decimal(12, 2)
   profilePhotoUrl     String?
@@ -418,7 +418,14 @@ model LoanApplication {
   @@index([status])
   @@index([productId])
   @@index([submittedAt])
+  @@index([configId])
+  @@index([fundingPartnerId])
   @@map("loan_applications")
+  // NOTE: migration 20260721000000_one_active_advance_index adds a partial
+  // unique index on (employeeId) WHERE status IN (<active statuses>) to
+  // enforce ADR 005 (one active advance per employee) at the DB level.
+  // Prisma's schema DSL can't express partial indexes, so it isn't declared
+  // here — don't let `prisma migrate dev`/`db push` drift detection drop it.
 }
 
 // ============================================================
@@ -614,6 +621,8 @@ model SettlementLineItem {
   repayment  Repayment          @relation(fields: [repaymentId], references: [id])
 
   @@index([settlementId])
+  @@index([loanApplicationId])
+  @@index([employeeId])
   @@map("settlement_line_items")
 }
 
@@ -657,6 +666,7 @@ model EmployerEnquiry {
   email         String
   phone         String
   employeeCount Int?
+  message       String?
   status        EmployerEnquiryStatus @default(NEW)
   remarks       String?
   createdAt     DateTime              @default(now())

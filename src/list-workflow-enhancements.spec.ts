@@ -3,8 +3,6 @@ import { RepaymentsService } from './repayments/repayments.service';
 import { DisbursalsService } from './disbursals/disbursals.service';
 import { EmployerSettlementsService } from './employer-settlements/employer-settlements.service';
 import { PayrollService } from './payroll/payroll.service';
-import { BulkSalaryRequestAction } from './salary-requests/dto/bulk-salary-request-action.dto';
-import { SalaryRequestsService } from './salary-requests/salary-requests.service';
 
 describe('list and workflow enhancements', () => {
   it('filters admin disbursals by status, ownership, and created-date range', async () => {
@@ -78,96 +76,6 @@ describe('list and workflow enhancements', () => {
     );
   });
 
-  it('delegates every bulk approval to the existing approval flow', async () => {
-    const service = new SalaryRequestsService(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    const approve = jest
-      .spyOn(service, 'approve')
-      .mockResolvedValueOnce({ id: 'request-1' } as any)
-      .mockResolvedValueOnce({ id: 'request-2' } as any);
-
-    const result = await service.bulkAction(
-      {
-        action: BulkSalaryRequestAction.APPROVE,
-        ids: ['request-1', 'request-2'],
-      },
-      'employer-user',
-    );
-
-    expect(approve).toHaveBeenNthCalledWith(1, 'request-1', 'employer-user');
-    expect(approve).toHaveBeenNthCalledWith(2, 'request-2', 'employer-user');
-    expect(result).toMatchObject({
-      action: 'APPROVE',
-      processed: 2,
-      succeeded: ['request-1', 'request-2'],
-      failed: [],
-    });
-  });
-
-  it('continues a bulk action and reports individual failures', async () => {
-    const service = new SalaryRequestsService(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    jest
-      .spyOn(service, 'approve')
-      .mockResolvedValueOnce({ id: 'request-1' } as any)
-      .mockRejectedValueOnce(new Error('Already processed'));
-
-    const result = await service.bulkAction(
-      {
-        action: BulkSalaryRequestAction.APPROVE,
-        ids: ['request-1', 'request-2'],
-      },
-      'employer-user',
-    );
-
-    expect(result).toMatchObject({
-      processed: 1,
-      succeeded: ['request-1'],
-      failed: ['request-2'],
-      failures: [{ id: 'request-2', message: 'Already processed' }],
-    });
-  });
-
-  it('uses a safe default remark for bulk rejection', async () => {
-    const service = new SalaryRequestsService(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-    const reject = jest
-      .spyOn(service, 'reject')
-      .mockResolvedValue({ id: 'request-1' } as any);
-
-    await service.bulkAction(
-      {
-        action: BulkSalaryRequestAction.REJECT,
-        ids: ['request-1'],
-      },
-      'employer-user',
-    );
-
-    expect(reject).toHaveBeenCalledWith(
-      'request-1',
-      'Rejected by employer.',
-      'employer-user',
-    );
-  });
-
   it('returns only the authenticated user unread count', async () => {
     const prisma = {
       notification: {
@@ -180,39 +88,6 @@ describe('list and workflow enhancements', () => {
     expect(prisma.notification.count).toHaveBeenCalledWith({
       where: { userId: 'user-1', isRead: false },
     });
-  });
-
-  it('returns an already approved salary request without repeating side effects', async () => {
-    const approvedRequest = {
-      id: 'request-1',
-      employerId: 'employer-1',
-      status: 'EMPLOYER_APPROVED',
-      employee: { userId: 'employee-user' },
-    };
-    const prisma = {
-      salaryRequest: {
-        findUnique: jest.fn().mockResolvedValue(approvedRequest),
-        updateMany: jest.fn(),
-      },
-      employer: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'employer-1' }),
-      },
-    } as any;
-    const notifications = { createSystemNotification: jest.fn() };
-    const service = new SalaryRequestsService(
-      prisma,
-      notifications as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-
-    await expect(
-      service.approve('request-1', 'employer-user'),
-    ).resolves.toEqual(approvedRequest);
-    expect(prisma.salaryRequest.updateMany).not.toHaveBeenCalled();
-    expect(notifications.createSystemNotification).not.toHaveBeenCalled();
   });
 
   it('returns an already completed disbursal without another transaction', async () => {

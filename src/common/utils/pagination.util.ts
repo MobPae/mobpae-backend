@@ -11,8 +11,16 @@ export type PaginatedResponse<T> = {
 };
 
 export function getPagination(query: ListQueryDto) {
-  const page = Math.max(Number(query.page ?? 1), 1);
-  const limit = Math.min(Math.max(Number(query.limit ?? 20), 1), 100);
+  // query.page/limit are normally pre-validated integers (ListQueryDto +
+  // the global ValidationPipe), but guard against NaN here too — Prisma's
+  // skip/take reject NaN with an unhandled error rather than a clean 400.
+  const rawPage = Number(query.page ?? 1);
+  const rawLimit = Number(query.limit ?? 20);
+  const page = Math.max(Number.isFinite(rawPage) ? rawPage : 1, 1);
+  const limit = Math.min(
+    Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1),
+    100,
+  );
 
   return {
     page,

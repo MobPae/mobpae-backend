@@ -69,6 +69,8 @@ export class LoggingInterceptor implements NestInterceptor {
       'cookie',
       'accountNumber',
       'accountnumber',
+      'ifsccode',
+      'accountholdername',
       'upiid',
       'filepath',
       'paymentreference',

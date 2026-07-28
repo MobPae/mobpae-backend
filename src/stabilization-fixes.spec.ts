@@ -4,7 +4,6 @@ import { validate } from 'class-validator';
 import { CreateEmployeeDto } from './employees/dto/create-employee.dto';
 import { CreateEmployerDto } from './employers/dto/create-employer.dto';
 import { EmployersService } from './employers/employers.service';
-import { SalaryRequestsService } from './salary-requests/salary-requests.service';
 import { EmployerSettlementsService } from './employer-settlements/employer-settlements.service';
 import { HealthController } from './health/health.controller';
 import { EmployeesService } from './employees/employees.service';
@@ -252,14 +251,6 @@ describe('Backend stabilization fixes', () => {
     );
     expect(result).not.toHaveProperty('temporaryPassword');
     consoleError.mockRestore();
-  });
-
-  it('keeps the legacy salary requests service disabled', async () => {
-    const service = new SalaryRequestsService();
-
-    expect(() => service.findPendingByEmployer('employer-user-1')).toThrow(
-      'SalaryRequests has been replaced by LoanApplications',
-    );
   });
 
   it('validates salary advance preview query amounts', async () => {

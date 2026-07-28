@@ -17,6 +17,14 @@ type RequestMeta = {
   deviceInfo?: string;
 };
 
+// Precomputed once at startup. bcrypt.compare() against this dummy hash keeps
+// the "user not found" login path doing the same bcrypt work as "wrong
+// password", so response timing can't be used to enumerate registered emails.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
+  'mobpae-timing-safety-placeholder',
+  10,
+);
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -31,6 +39,13 @@ export class AuthService {
     const normalizedEmail = normalizeEmail(email);
     const user = await this.usersService.findByEmail(normalizedEmail);
 
+    // Always run bcrypt.compare, even when no user was found, so the two
+    // failure paths below take the same amount of time (see DUMMY_PASSWORD_HASH).
+    const passwordMatch = await bcrypt.compare(
+      password,
+      user?.password ?? DUMMY_PASSWORD_HASH,
+    );
+
     if (!user) {
       await this.writeAuthAudit('LOGIN_FAILED', {
         email: normalizedEmail,
@@ -42,8 +57,6 @@ export class AuthService {
 
       throw new UnauthorizedException('Invalid credentials');
     }
-
-    const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
       // Increment failed login counter (non-blocking — don't fail the request if this errors)
@@ -404,7 +417,7 @@ export class AuthService {
     });
 
     if (!user || !user.isActive) {
-      await this.writeAuthAudit('LOGIN_FAILED', {
+      await this.writeAuthAudit('PASSWORD_RESET_REQUESTED', {
         userId: user?.id,
         email: normalizedEmail,
         meta,

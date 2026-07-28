@@ -24,7 +24,9 @@ export class EmailService {
           pass: process.env.SMTP_PASS,
         },
         tls: {
-          rejectUnauthorized: false, // Allow self-signed certs in dev; prod certs should work fine
+          // Only allow self-signed certs outside production; production must
+          // verify the SMTP server's certificate.
+          rejectUnauthorized: process.env.NODE_ENV === 'production',
         },
       });
     }
@@ -32,16 +34,25 @@ export class EmailService {
   }
 
   /**
-   * Simple template variable replacement
+   * Template variable replacement. Values are HTML-escaped by default since
+   * several of them (companyName, contactPerson, remarks, reason, …) can
+   * originate from user input (e.g. the public employer-enquiry form) —
+   * pass a key in `rawKeys` only for values that are already-built,
+   * trusted HTML fragments (e.g. `content`, `recoveryRows`).
    */
   private replaceVariables(
     template: string,
     variables: Record<string, any>,
+    rawKeys: string[] = [],
   ): string {
     let content = template;
 
     Object.entries(variables).forEach(([key, value]) => {
-      content = content.replaceAll(`{{${key}}}`, String(value ?? ''));
+      const stringValue = String(value ?? '');
+      const safeValue = rawKeys.includes(key)
+        ? stringValue
+        : this.escapeHtml(stringValue);
+      content = content.replaceAll(`{{${key}}}`, safeValue);
     });
 
     return content;
@@ -53,17 +64,22 @@ export class EmailService {
   private buildEmail(
     templateName: string,
     variables: Record<string, any>,
+    rawKeys: string[] = [],
   ): string {
     const layout = this.getTemplate('layout');
     const template = this.getTemplate(templateName);
 
-    const body = this.replaceVariables(template, variables);
+    const body = this.replaceVariables(template, variables, rawKeys);
 
-    return this.replaceVariables(layout, {
-      title: variables.title ?? 'MobPae',
-      year: new Date().getFullYear(),
-      content: body,
-    });
+    return this.replaceVariables(
+      layout,
+      {
+        title: variables.title ?? 'MobPae',
+        year: new Date().getFullYear(),
+        content: body,
+      },
+      ['content'],
+    );
   }
 
   private getTemplate(templateName: string): string {
@@ -109,8 +125,9 @@ export class EmailService {
     subject: string,
     templateName: string,
     variables: Record<string, any>,
+    rawKeys: string[] = [],
   ) {
-    const html = this.buildEmail(templateName, variables);
+    const html = this.buildEmail(templateName, variables, rawKeys);
 
     return this.sendEmail(to, subject, html);
   }
@@ -340,6 +357,7 @@ export class EmailService {
         settlementId: data.settlementId,
         recoveryRows,
       },
+      ['recoveryRows'],
     );
   }
 

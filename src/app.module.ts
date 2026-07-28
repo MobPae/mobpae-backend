@@ -55,7 +55,11 @@ import { PlatformFeesModule } from './platform-fees/platform-fees.module';
       isGlobal: true,
       validationSchema: Joi.object({
         DATABASE_URL: Joi.string().required(),
-        JWT_SECRET: Joi.string().required(),
+        // Min length is a floor, not a recommendation — see deployment.md for
+        // the production requirement (64+ random chars).
+        JWT_SECRET: Joi.string().min(32).required(),
+        // Base64-encoded 32-byte AES-256 key for bank account field encryption.
+        BANK_ENCRYPTION_KEY: Joi.string().required(),
         SMTP_HOST: Joi.string().required(),
         SMTP_PORT: Joi.number().required(),
         SMTP_USER: Joi.string().required(),

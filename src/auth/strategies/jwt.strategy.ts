@@ -51,22 +51,26 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     let officeCode: string | undefined;
 
     if (user.role === 'EMPLOYER') {
-      // Prefer EmployerMember lookup (post-migration path).
-      // Fall back to legacy Employer.userId if seed hasn't run yet.
+      // Look up any EmployerMember row for this user regardless of status.
+      // If one exists it is authoritative — including for the original
+      // employer owner once they've been migrated onto EmployerMember — so a
+      // SUSPENDED/REMOVED row must deny access rather than silently falling
+      // back to the legacy Employer.userId lookup below.
       const member = await this.prisma.employerMember.findFirst({
-        where: { userId: user.id, status: 'ACTIVE' },
+        where: { userId: user.id },
         include: { employer: { select: { id: true, status: true } } },
       });
 
       if (member) {
-        if (member.employer.status !== 'ACTIVE') {
+        if (member.status !== 'ACTIVE' || member.employer.status !== 'ACTIVE') {
           throw new UnauthorizedException('Employer account is inactive');
         }
         employerId = member.employerId;
         employerRole = member.role;
         officeCode = member.officeCode ?? undefined;
       } else {
-        // Legacy fallback — Employer created before invite system
+        // No EmployerMember row at all — Employer created before the invite
+        // system existed and not yet migrated.
         const employer = await this.prisma.employer.findUnique({
           where: { userId: user.id },
         });

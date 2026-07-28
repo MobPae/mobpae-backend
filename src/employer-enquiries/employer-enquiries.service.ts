@@ -32,6 +32,7 @@ export class EmployerEnquiriesService {
         email,
         phone: dto.phone,
         employeeCount: dto.employeeCount,
+        message: dto.message,
       },
     });
 
@@ -45,6 +46,7 @@ export class EmployerEnquiriesService {
         email: enquiry.email,
         phone: enquiry.phone,
         employeeCount: enquiry.employeeCount,
+        message: enquiry.message,
         status: enquiry.status,
       },
     });

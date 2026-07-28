@@ -8,6 +8,7 @@ import { CreateBankAccountDto } from './dto/create-bank-account.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
+import { EncryptionUtil } from '../common/utils/encryption.util';
 
 type BankAuditAction = 'BANK_SUBMITTED' | 'BANK_APPROVED' | 'BANK_REJECTED';
 
@@ -27,6 +28,10 @@ export class BankAccountsService {
     return '********' + accountNumber.slice(-4);
   }
 
+  /**
+   * accountNumber/ifscCode are stored AES-256-GCM encrypted (see EncryptionUtil).
+   * Every read path must decrypt before use — this is the single place that does.
+   */
   private toSafeAccountResponse<T extends Record<string, any>>(
     account: T | null,
   ) {
@@ -34,8 +39,17 @@ export class BankAccountsService {
 
     return {
       ...account,
-      accountNumber: this.maskAccountNumber(account.accountNumber),
+      accountNumber: this.maskAccountNumber(
+        this.decryptOrNull(account.accountNumber),
+      ),
+      ifscCode: account.ifscCode
+        ? EncryptionUtil.decrypt(account.ifscCode)
+        : account.ifscCode,
     };
+  }
+
+  private decryptOrNull(value?: string | null): string | null {
+    return value ? EncryptionUtil.decrypt(value) : null;
   }
 
   private toSafeAuditValue(value?: Record<string, unknown> | null) {
@@ -69,6 +83,19 @@ export class BankAccountsService {
       },
     });
 
+    // accountNumber/ifscCode are stored encrypted — decrypt the existing row
+    // once so the change-detection comparison below is plaintext vs plaintext.
+    const existingAccountPlain = existingAccount
+      ? {
+          ...existingAccount,
+          accountNumber: EncryptionUtil.decrypt(existingAccount.accountNumber),
+          ifscCode: EncryptionUtil.decrypt(existingAccount.ifscCode),
+        }
+      : null;
+
+    const encryptedAccountNumber = EncryptionUtil.encrypt(dto.accountNumber);
+    const encryptedIfscCode = EncryptionUtil.encrypt(dto.ifscCode);
+
     const account = existingAccount
       ? await this.prisma.employeeBankAccount.update({
           where: {
@@ -76,12 +103,12 @@ export class BankAccountsService {
           },
           data: {
             accountHolderName: dto.accountHolderName,
-            accountNumber: dto.accountNumber,
-            ifscCode: dto.ifscCode,
+            accountNumber: encryptedAccountNumber,
+            ifscCode: encryptedIfscCode,
             bankName: dto.bankName,
             upiId: dto.upiId,
 
-            verified: this.didBankDetailsChange(existingAccount, dto)
+            verified: this.didBankDetailsChange(existingAccountPlain!, dto)
               ? false
               : existingAccount.verified,
           },
@@ -91,8 +118,8 @@ export class BankAccountsService {
             employeeId: employee.id,
 
             accountHolderName: dto.accountHolderName,
-            accountNumber: dto.accountNumber,
-            ifscCode: dto.ifscCode,
+            accountNumber: encryptedAccountNumber,
+            ifscCode: encryptedIfscCode,
             bankName: dto.bankName,
             upiId: dto.upiId,
           },
@@ -198,7 +225,9 @@ export class BankAccountsService {
         employeeName: existingAccount.employee.name,
         accountHolder: existingAccount.accountHolderName,
         bankName: existingAccount.bankName ?? undefined,
-        maskedAccount: this.maskAccountNumber(existingAccount.accountNumber),
+        maskedAccount: this.maskAccountNumber(
+          EncryptionUtil.decrypt(existingAccount.accountNumber),
+        ),
       });
     } catch (err) {
       console.error('Failed to send bank account verified email', err);
@@ -250,7 +279,9 @@ export class BankAccountsService {
       await this.emailService.sendBankAccountRejectedEmail({
         to: existingAccount.employee.email,
         employeeName: existingAccount.employee.name,
-        maskedAccount: this.maskAccountNumber(existingAccount.accountNumber),
+        maskedAccount: this.maskAccountNumber(
+          EncryptionUtil.decrypt(existingAccount.accountNumber),
+        ),
       });
     } catch (err) {
       console.error('Failed to send bank account rejected email', err);

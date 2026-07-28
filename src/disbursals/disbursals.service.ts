@@ -12,6 +12,7 @@ import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { DisbursalListQueryDto } from './dto/disbursal-list-query.dto';
 import { PlatformFeesService } from '../platform-fees/platform-fees.service';
+import { EncryptionUtil } from '../common/utils/encryption.util';
 
 @Injectable()
 export class DisbursalsService {
@@ -240,9 +241,15 @@ export class DisbursalsService {
             completedAt: new Date(),
             disbursedBy: actorUserId,
             disbursedAmount,
-            // Freeze bank account snapshot
-            disbursalAccountNumber: bankAccount?.accountNumber ?? null,
-            disbursalIfscCode: bankAccount?.ifscCode ?? null,
+            // Freeze bank account snapshot. accountNumber/ifscCode are stored
+            // encrypted on EmployeeBankAccount — decrypt before copying so the
+            // frozen snapshot stays usable for the operator processing the payout.
+            disbursalAccountNumber: bankAccount?.accountNumber
+              ? EncryptionUtil.decrypt(bankAccount.accountNumber)
+              : null,
+            disbursalIfscCode: bankAccount?.ifscCode
+              ? EncryptionUtil.decrypt(bankAccount.ifscCode)
+              : null,
             disbursalBankName: bankAccount?.bankName ?? null,
             disbursalAccountHolderName: bankAccount?.accountHolderName ?? null,
           },

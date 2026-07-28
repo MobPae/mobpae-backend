@@ -64,6 +64,7 @@ export class EmployerSelfProductConfigsController {
   }
 
   @Get(':productType/rules')
+  @RequirePermission(Permission.ORG_SETTINGS_VIEW)
   @ApiOperation({ summary: 'Get active eligibility + pricing rules for a product type (employer view)' })
   getActiveRules(@Param('productType') productType: string) {
     return this.service.findActiveRulesForProductType(productType.toUpperCase());

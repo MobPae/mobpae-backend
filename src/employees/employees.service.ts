@@ -289,18 +289,46 @@ export class EmployeesService {
       throw new NotFoundException('Employee not found');
     }
 
-    const updatedEmployee = await this.prisma.employee.update({
-      where: {
-        id: employeeId,
-      },
-      data: {
-        ...dto,
-        ...(dto.employmentStatus === 'INACTIVE'
-          ? {
-              appActivated: false,
-            }
-          : {}),
-      },
+    // Login email lives on User, not Employee — dto.email must stay in sync
+    // with it (previously this update only touched Employee.email, silently
+    // desyncing the profile-displayed email from the actual login email).
+    let normalizedEmail: string | undefined;
+    if (dto.email) {
+      normalizedEmail = normalizeEmail(dto.email);
+      if (normalizedEmail !== employee.email) {
+        const existingUser = await this.prisma.user.findUnique({
+          where: { email: normalizedEmail },
+        });
+        if (existingUser && existingUser.id !== employee.userId) {
+          throw new ConflictException('Email already in use');
+        }
+      }
+    }
+
+    const updatedEmployee = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.employee.update({
+        where: {
+          id: employeeId,
+        },
+        data: {
+          ...dto,
+          ...(normalizedEmail ? { email: normalizedEmail } : {}),
+          ...(dto.employmentStatus === 'INACTIVE'
+            ? {
+                appActivated: false,
+              }
+            : {}),
+        },
+      });
+
+      if (normalizedEmail && employee.userId) {
+        await tx.user.update({
+          where: { id: employee.userId },
+          data: { email: normalizedEmail },
+        });
+      }
+
+      return updated;
     });
 
     await this.writeAuditLog({

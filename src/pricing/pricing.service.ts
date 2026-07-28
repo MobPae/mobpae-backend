@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 // ── Input / Output types ─────────────────────────────────────────────────────
 
@@ -101,32 +102,43 @@ export class PricingService {
       | 'snapshotInterestDays'
     >,
   ): RepaymentBreakdown {
-    const interestFreeAmount = r2(
-      Math.min(disbursedAmount, snapshot.snapshotInterestFreeThreshold),
-    );
-    const interestBearingAmount = r2(disbursedAmount - interestFreeAmount);
-    const interestAmount = r2(
-      interestBearingAmount *
-        (snapshot.snapshotAnnualInterestRate / 100) *
-        (snapshot.snapshotInterestDays / 365),
-    );
-    const processingFee = r2(
-      disbursedAmount * snapshot.snapshotProcessingFeeRate,
-    );
-    const gstAmount = r2(
-      (interestAmount + processingFee) * snapshot.snapshotGstRate,
-    );
-    const totalAmount = r2(
-      disbursedAmount + interestAmount + processingFee + gstAmount,
-    );
+    // Decimal (not float) math throughout — Prisma.Decimal is the same
+    // decimal.js instance Prisma uses for Decimal(12,2) columns, so this
+    // matches exactly what gets persisted with no float-rounding drift.
+    const principal = new Prisma.Decimal(disbursedAmount);
+    const interestFreeAmount = Prisma.Decimal.min(
+      principal,
+      snapshot.snapshotInterestFreeThreshold,
+    ).toDecimalPlaces(2);
+    const interestBearingAmount = principal
+      .minus(interestFreeAmount)
+      .toDecimalPlaces(2);
+    const interestAmount = interestBearingAmount
+      .times(snapshot.snapshotAnnualInterestRate)
+      .dividedBy(100)
+      .times(snapshot.snapshotInterestDays)
+      .dividedBy(365)
+      .toDecimalPlaces(2);
+    const processingFee = principal
+      .times(snapshot.snapshotProcessingFeeRate)
+      .toDecimalPlaces(2);
+    const gstAmount = interestAmount
+      .plus(processingFee)
+      .times(snapshot.snapshotGstRate)
+      .toDecimalPlaces(2);
+    const totalAmount = principal
+      .plus(interestAmount)
+      .plus(processingFee)
+      .plus(gstAmount)
+      .toDecimalPlaces(2);
 
     return {
-      interestFreeAmount,
-      interestBearingAmount,
-      interestAmount,
-      processingFee,
-      gstAmount,
-      totalAmount,
+      interestFreeAmount: interestFreeAmount.toNumber(),
+      interestBearingAmount: interestBearingAmount.toNumber(),
+      interestAmount: interestAmount.toNumber(),
+      processingFee: processingFee.toNumber(),
+      gstAmount: gstAmount.toNumber(),
+      totalAmount: totalAmount.toNumber(),
     };
   }
 
@@ -159,9 +171,4 @@ export class PricingService {
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     return Math.max(1, Math.ceil((to.getTime() - from.getTime()) / MS_PER_DAY));
   }
-}
-
-/** Round to 2 decimal places (banker-safe for INR). */
-function r2(n: number): number {
-  return Math.round(n * 100) / 100;
 }

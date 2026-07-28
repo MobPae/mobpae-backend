@@ -1,5 +1,8 @@
-import { ForbiddenException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+
+// Test-only key so EncryptionUtil (used by BankAccountsService) can encrypt/
+// decrypt fixture values below — computed, not a real secret.
+process.env.BANK_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 import { AuthService } from './auth/auth.service';
 import { BankAccountsService } from './bank-accounts/bank-accounts.service';
@@ -10,7 +13,7 @@ import { EmployerSettlementsService } from './employer-settlements/employer-sett
 import { EmployersService } from './employers/employers.service';
 import { KycDocumentsService } from './kyc-documents/kyc-documents.service';
 import { PayrollService } from './payroll/payroll.service';
-import { SalaryRequestsService } from './salary-requests/salary-requests.service';
+import { EncryptionUtil } from './common/utils/encryption.util';
 
 const now = new Date('2026-06-18T10:00:00.000Z');
 
@@ -27,6 +30,12 @@ function mockNotifications() {
   };
 }
 
+function mockFiles() {
+  return {
+    canAccess: jest.fn().mockResolvedValue(true),
+  };
+}
+
 function mockEmail() {
   return {
     sendEmployerEnquiryEmail: jest.fn().mockResolvedValue({}),
@@ -37,23 +46,6 @@ function mockEmail() {
     sendDisbursalSuccessfulEmail: jest.fn().mockResolvedValue({}),
     sendSettlementReportEmail: jest.fn().mockResolvedValue({}),
     sendPasswordChangedEmail: jest.fn().mockResolvedValue({}),
-  };
-}
-
-function mockSettings() {
-  return {
-    getAdvanceSettings: jest.fn().mockResolvedValue({
-      advancePercentage: 10,
-      interestChargePercentage: 36,
-      processingFeePercentage: 0,
-      minimumSalary: 10000,
-      maximumAdvance: 10000,
-      requireKyc: true,
-      requireBankVerification: true,
-      allowMultipleRequestsPerCycle: false,
-      allowRequestWithOutstandingBalance: false,
-    }),
-    calculateAvailableAdvance: jest.fn().mockReturnValue(5000),
   };
 }
 
@@ -408,11 +400,13 @@ describe('critical MVP workflow unit coverage', () => {
     const email = mockEmail();
     const audit = mockAudit();
     const notifications = mockNotifications();
+    const files = mockFiles();
     const service = new KycDocumentsService(
       prisma as any,
       email as any,
       audit as any,
       notifications as any,
+      files as any,
     );
 
     await service.create('user-employee', {
@@ -436,19 +430,20 @@ describe('critical MVP workflow unit coverage', () => {
   });
 
   it('verifies bank account and notifies employee with audit', async () => {
+    const encryptedAccountNumber = EncryptionUtil.encrypt('1234567890');
     const prisma = {
       employeeBankAccount: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'bank-1',
           employeeId: 'employee-1',
-          accountNumber: '1234567890',
+          accountNumber: encryptedAccountNumber,
           verified: false,
           employee: { userId: 'user-employee' },
         }),
         update: jest.fn().mockResolvedValue({
           id: 'bank-1',
           employeeId: 'employee-1',
-          accountNumber: '1234567890',
+          accountNumber: encryptedAccountNumber,
           verified: true,
         }),
       },
@@ -476,160 +471,6 @@ describe('critical MVP workflow unit coverage', () => {
       'Bank Account Approved',
       expect.any(String),
     );
-  });
-
-  it('creates, approves, and rejects salary requests with audit and notifications', async () => {
-    const baseRequest = {
-      id: 'request-1',
-      employeeId: 'employee-1',
-      employerId: 'employer-1',
-      amount: 5000,
-      approvedAmount: null,
-      status: 'SUBMITTED',
-      remarks: null,
-      requestedAt: now,
-      employee: {
-        id: 'employee-1',
-        userId: 'user-employee',
-        email: 'arjun@example.com',
-        name: 'Arjun',
-      },
-    };
-    const prisma = {
-      employee: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'employee-1',
-          employerId: 'employer-1',
-          salaryInHand: 54000,
-        }),
-      },
-      kycDocument: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { documentType: 'PAN' },
-            { documentType: 'AADHAR' },
-            { documentType: 'SALARY_SLIP' },
-          ]),
-      },
-      employeeBankAccount: {
-        findUnique: jest.fn().mockResolvedValue({ verified: true }),
-      },
-      salaryRequest: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue(baseRequest),
-        findUnique: jest
-          .fn()
-          .mockResolvedValueOnce({
-            ...baseRequest,
-          })
-          .mockResolvedValueOnce({
-            ...baseRequest,
-            status: 'EMPLOYER_APPROVED',
-          })
-          .mockResolvedValueOnce({
-            ...baseRequest,
-            id: 'request-2',
-          })
-          .mockResolvedValueOnce({
-            ...baseRequest,
-            id: 'request-2',
-            status: 'EMPLOYER_REJECTED',
-            remarks: 'Need more info',
-          }),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-      salaryRequestHistory: {
-        create: jest.fn().mockResolvedValue({ id: 'history-1' }),
-      },
-      repayment: {
-        findFirst: jest.fn().mockResolvedValue(null),
-      },
-      employer: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'employer-1',
-        }),
-      },
-      user: {
-        findMany: jest.fn().mockResolvedValue([{ id: 'admin-1' }]),
-      },
-    };
-    const audit = mockAudit();
-    const notifications = mockNotifications();
-    const email = mockEmail();
-    const service = new SalaryRequestsService(
-      prisma as any,
-      notifications as any,
-      mockSettings() as any,
-      { isActive: jest.fn().mockResolvedValue(true) } as any,
-      email as any,
-      audit as any,
-    );
-
-    await service.create('user-employee', { amount: 5000 });
-    await service.approve('request-1', 'employer-user');
-    await service.reject('request-2', 'Need more info', 'employer-user');
-
-    expect(audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'SALARY_REQUEST_CREATED' }),
-    );
-    expect(audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'SALARY_REQUEST_APPROVED' }),
-    );
-    expect(audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'SALARY_REQUEST_REJECTED' }),
-    );
-    expect(notifications.createSystemNotification).toHaveBeenCalledWith(
-      'user-employee',
-      'Salary Request Approved',
-      expect.any(String),
-    );
-    expect(email.sendSalaryRequestSubmittedEmail).toHaveBeenCalled();
-    expect(email.sendSalaryRequestApprovedEmail).toHaveBeenCalled();
-  });
-
-  it('protects salary request details by employer ownership', async () => {
-    const prisma = {
-      salaryRequest: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'request-1',
-          employerId: 'employer-2',
-          amount: 5000,
-          approvedAmount: null,
-          status: 'SUBMITTED',
-          requestedAt: now,
-          remarks: null,
-          employee: {
-            id: 'employee-1',
-            employeeCode: 'EMP001',
-            name: 'Arjun',
-            email: 'arjun@example.com',
-            phone: '9999999999',
-            salaryInHand: 54000,
-          },
-          repayment: null,
-          disbursal: null,
-        }),
-      },
-      employer: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'employer-1' }),
-      },
-    };
-    const service = new SalaryRequestsService(
-      prisma as any,
-      mockNotifications() as any,
-      mockSettings() as any,
-      { isActive: jest.fn() } as any,
-      mockEmail() as any,
-      mockAudit() as any,
-    );
-
-    await expect(
-      service.findOne('request-1', {
-        role: 'EMPLOYER',
-        userId: 'employer-user',
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('disburses atomically and audits repayment plus disbursal completion', async () => {

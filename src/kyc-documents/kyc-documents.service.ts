@@ -2,6 +2,7 @@ import { KycDocument, KycDocumentType, KycStatus } from '@prisma/client';
 
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { EmailService } from '../email/email.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { REQUIRED_KYC_DOCUMENTS } from '../common/constants/kyc.constants';
 import { NotificationsService } from '../notifications/notifications.service';
+import { FilesService } from '../files/files.service';
 
 import { CreateKycDocumentDto } from './dto/create-kyc-document.dto';
 
@@ -23,6 +25,7 @@ export class KycDocumentsService {
     private readonly emailService: EmailService,
     private readonly auditLogsService: AuditLogsService,
     private readonly notificationsService: NotificationsService,
+    private readonly filesService: FilesService,
   ) {}
 
   async create(userId: string, dto: CreateKycDocumentDto) {
@@ -34,6 +37,17 @@ export class KycDocumentsService {
 
     if (!employee) {
       throw new NotFoundException('Employee not found');
+    }
+
+    // dto.filePath is a client-supplied R2 key from POST /files/upload — make
+    // sure the employee is actually registering their own uploaded file and
+    // not someone else's (key format: employees/{userId}/...).
+    const ownsFile = await this.filesService.canAccess(dto.filePath, {
+      userId,
+      role: 'EMPLOYEE',
+    });
+    if (!ownsFile) {
+      throw new ForbiddenException('You do not have access to this file');
     }
 
     const existingDocument = await this.prisma.kycDocument.findFirst({

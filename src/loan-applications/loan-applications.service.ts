@@ -448,6 +448,13 @@ export class LoanApplicationsService {
           await this.syncApplicationNumberSequence();
           continue;
         }
+        if (this.isActiveAdvanceConflict(err)) {
+          // DB-level backstop for ADR 005 (one active advance per employee):
+          // the eligibility check above can race with a concurrent submission
+          // from the same employee; the partial unique index on
+          // loan_applications(employeeId) catches that here.
+          throw new BadRequestException('Active loan application already exists');
+        }
         throw err;
       }
     }
@@ -1218,6 +1225,24 @@ export class LoanApplicationsService {
       prismaError.code === 'P2002' &&
       (target === 'applicationNumber' ||
         (Array.isArray(target) && target.includes('applicationNumber')))
+    );
+  }
+
+  // Matches the partial unique index from migration
+  // 20260721000000_one_active_advance_index (loan_applications(employeeId)
+  // WHERE status IN <active statuses>). No other unique constraint on
+  // employeeId alone exists on this table.
+  private isActiveAdvanceConflict(error: unknown): boolean {
+    const prismaError = error as {
+      code?: string;
+      meta?: { target?: string | string[] };
+    };
+    const target = prismaError.meta?.target;
+
+    return (
+      prismaError.code === 'P2002' &&
+      (target === 'employeeId' ||
+        (Array.isArray(target) && target.includes('employeeId')))
     );
   }
 
